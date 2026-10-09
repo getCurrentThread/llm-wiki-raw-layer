@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "impl": "claude",
+  "data_root": "<DATA_PARENT>\\notion",
+  "inputs_root": "<DATA_PARENT>\\inputs",
+  "sources": {"nt_archive": "<abs dir>\\notiontok\\archive"},
+  "nt_sync": false,
+  "nt_source": "desktop",
+  "nt_desktop_path": "",
+  "nt_cli": "",
+  "nt_page_ids": [],
+  "nt_comments": true,
+  "nt_max_pages": 0
+}

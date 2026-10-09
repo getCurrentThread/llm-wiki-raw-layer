@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "impl": "claude",
+  "data_root": "<DATA_PARENT>\\discord",
+  "inputs_root": "<DATA_PARENT>\\inputs",
+  "sources": {"dc_archive": "<abs dir>\\discordtok\\archive"},
+  "dc_exclude_patterns": [],
+  "dc_sync": false,
+  "dc_source": "desktop",
+  "dc_desktop_path": "",
+  "dc_token_file": "",
+  "dc_token_type": "auto",
+  "dc_channel_ids": [],
+  "dc_refresh_days": 7
+}

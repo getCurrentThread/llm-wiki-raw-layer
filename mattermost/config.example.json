@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "impl": "claude",
+  "data_root": "<DATA_PARENT>\\mattermost",
+  "inputs_root": "<DATA_PARENT>\\inputs",
+  "sources": {
+    "mm_archive": "<DATA_PARENT>\\mattermost\\archive"
+  },
+  "mm_exclude_patterns": ["<pattern>"],
+  "mm_sync": false,
+  "mm_url": "https://<mattermost host>",
+  "mm_token_file": "<DATA_PARENT>\\mattermost\\token.txt"
+}

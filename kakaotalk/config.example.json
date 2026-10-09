@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "impl": "claude",
+  "data_root": "<DATA_PARENT>\\kakaotalk",
+  "inputs_root": "<DATA_PARENT>\\inputs",
+  "sources": {
+    "merged_out": "<abs path>\\merged.sqlite",
+    "live_out": "<abs path>\\live.sqlite",
+    "backup_decrypted": "<abs dir>\\backup_decrypted",
+    "decrypted_live": "<abs dir>\\decrypted_live",
+    "kakao_user_dir": "<abs dir>\\Kakao\\KakaoTalk\\users\\<live user dir>",
+    "keystore": "<abs path>\\keystore_v2_full.json"
+  },
+  "live_requires_system": true,
+  "mac_db": null
+}

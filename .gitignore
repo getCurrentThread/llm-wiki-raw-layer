@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+# data never lives in this repo
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.jsonl
+*.jsonl.gz
+*.gz
+*.edb
+*.edb-wal
+index/
+raw/
+reports/
+config.json
+.zcode/

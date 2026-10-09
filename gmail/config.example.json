@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "impl": "claude",
+  "data_root": "<DATA_PARENT>\\gmail",
+  "inputs_root": "<DATA_PARENT>\\inputs",
+  "sources": {"gm_archive": "<DATA_PARENT>\\gmail\\archive"},
+  "gm_sync": false,
+  "gm_client_file": "<DATA_PARENT>\\gmail\\client.json",
+  "gm_token_file": "<DATA_PARENT>\\gmail\\token.json",
+  "gm_exclude_labels": ["SPAM", "TRASH", "DRAFT", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"],
+  "gm_volatile_labels": ["UNREAD"],
+  "gm_body_max_bytes": 131072,
+  "gm_partition_max_messages": 1000
+}
