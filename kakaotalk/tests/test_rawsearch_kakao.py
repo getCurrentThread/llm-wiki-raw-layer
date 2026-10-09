@@ -25,7 +25,7 @@ from kakaotalk.tests.edbfix import sidecar
 from kakaotalk.tests.fixtures import TEST_PARENT, Fixture
 
 REPO = conf.PROJECT_DIR
-EDB, MACDB, DLIVE, BACKUP, LIVE, MERGED = (1 << kakao.RANK[o] for o in kakao.PRECEDENCE)
+EDB, MACDB, BACKUP = (1 << kakao.RANK[o] for o in kakao.PRECEDENCE)
 QUERIES = ["10월", "가나다", "api", "메시지", "edb 메시지", "수정", "삭제될", "\"100%\"", "라이브 OR 잡담", "메시지 -edb",
            "사라질", "SQL문", "3시"]
 
@@ -145,7 +145,7 @@ class TestBuild(Scenario):
         self.assertEqual((r1["action"], r1["reason"], r1["seq"], r1["ledger_seq"]), ("rebuilt", "missing", 1, 1))
         self.assertEqual((r2["action"], r2["seq"], r2["manifests"]), ("updated", 2, 1))
         self.assertEqual((r3["action"], r3["seq"], r3["behind"]), ("updated", 3, False))
-        self.assertEqual(r3["rows"], 46)
+        self.assertEqual(r3["rows"], 48)
         self.assertEqual((r3["deleted"], r3["gone"]), (2, 1))
         self.assertGreaterEqual(r3["skipped_hist"], 1)
         self.assertGreaterEqual(r3["skipped_schema"], 1)
@@ -155,7 +155,7 @@ class TestBuild(Scenario):
 
     def test_origins_text_and_flags(self):
         r = self.row(101, 1)
-        self.assertEqual((r["origins"], r["source"], r["message"]), (BACKUP | MERGED, "backup_decrypted", "회의는 10월에 합니다"))
+        self.assertEqual((r["origins"], r["source"], r["message"]), (BACKUP, "backup_decrypted", "회의는 10월에 합니다"))
         self.assertEqual((r["sender"], r["room"], r["author_id"]), ("Alpha", "스터디 방", "11"))
         edited = self.row(301, 5)
         self.assertEqual((edited["message"], edited["edited"], edited["deleted"]), ("수정 후 문장", 1, 0))
@@ -164,12 +164,12 @@ class TestBuild(Scenario):
         self.assertNotIn("qujdrevgr0g", tomb["ng"])
         gone = self.row(301, 7)
         self.assertEqual((gone["gone"], gone["origins"], gone["message"]), (1, 0, "사라질 메시지 칠"))
-        both = self.row(301, 8)            # edb's absent cleared its bit; live_out still holds the key
-        self.assertEqual((both["gone"], both["origins"], both["source"]), (0, LIVE, "live_out"))
-        self.assertEqual(self.row(301, 9)["origins"], EDB | LIVE)
-        local = self.row(201, 3)           # deleted locally and emptied in the room DB; merged keeps the text
+        both = self.row(301, 8)            # edb's absent cleared its bit; the backup still holds the key
+        self.assertEqual((both["gone"], both["origins"], both["source"]), (0, BACKUP, "backup_decrypted"))
+        self.assertEqual(self.row(301, 9)["origins"], EDB | BACKUP)
+        local = self.row(201, 3)           # deleted locally and emptied in the backup; the edb room keeps the text
         self.assertEqual((local["deleted"], local["message"], local["source"], local["origins"]),
-                         (1, "지운 메시지 원문", "merged_out", DLIVE | MERGED))
+                         (1, "지운 메시지 원문", "edb", EDB | BACKUP))
         photo = self.row(101, 7)
         self.assertEqual((photo["message"], photo["type"], photo["ng"]), ("", 2, ""))
         big = self.row(101, L.BIG)
@@ -183,13 +183,25 @@ class TestBuild(Scenario):
             self.assertEqual(names, {"Delta Two"})        # the newest name, on edb rows too
             self.assertEqual({r[0] for r in con.execute("SELECT DISTINCT room FROM kakao WHERE chat_id='401'")},
                              {"Renamed 방"})
+            self.assertEqual({r[0] for r in con.execute("SELECT DISTINCT room FROM kakao WHERE chat_id='601'")},
+                             {"개명된 리스트 방"})          # the client's chat list renamed it in round 2
             rooms = {r["chat_id"]: r for r in con.execute("SELECT * FROM rooms")}
         finally:
             con.close()
-        self.assertEqual(sorted(rooms), ["101", "201", "301", "401", "501"])
+        self.assertEqual(sorted(rooms), ["101", "201", "301", "401", "501", "601"])
         self.assertEqual((rooms["101"]["n"], rooms["101"]["senders"]), (8, 4))
         self.assertEqual((rooms["301"]["n"], rooms["301"]["n_deleted"], rooms["301"]["n_gone"]), (30, 1, 1))
         self.assertEqual(rooms["201"]["title"], "web_dev 채널")
+
+    def test_chat_list_titled_room(self):
+        """Room 601 exists only as an encrypted edb room: its title comes from the client's chat-list database,
+        and the round-2 rename there re-titled every row."""
+        self.assertEqual(search(self.cfg, "--room", "리스트", "--mode", "count")["total"], 2)
+        env = search(self.cfg, "인사", "--room", "개명된")
+        self.assertEqual(keys(env), [k(601, 1), k(601, 2)])
+        self.assertEqual({r["room"] for r in env["rows"]}, {"개명된 리스트 방"})
+        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--list-rooms")
+        self.assertIn("개명된 리스트 방", out)
 
 
     def test_incremental_equals_rebuild(self):
@@ -223,14 +235,14 @@ class TestSearch(Scenario):
         gone = search(self.cfg, "사라질")["rows"][0]
         self.assertEqual((gone["gone"], gone["origins"]), (True, []))
         local = search(self.cfg, "지운", "--include-deleted")["rows"][0]
-        self.assertEqual((local["deleted"], local["source"]), (True, "merged_out"))
+        self.assertEqual((local["deleted"], local["source"]), (True, "edb"))
 
     def test_hit_fields_and_text_output(self):
         h = search(self.cfg, "큰 번호")["rows"][0]
         self.assertEqual((h["log_id"], h["chat_id"], h["key"], h["sender"], h["author_id"]),
                          (str(L.BIG), "101", k(101, L.BIG), "", "15"))
         self.assertEqual(h["cursor"], f"{h['ts']}.{L.BIG}.{h['id']}")
-        self.assertEqual(h["origins"], ["backup_decrypted", "merged_out"])
+        self.assertEqual(h["origins"], ["backup_decrypted"])
         self.assertEqual(h["date"], "2024-11-08 10:00")
         rc, out, _ = rs("kakaotalk", "--config", self.cfg, "가나다")
         self.assertEqual(rc, 0)
@@ -348,7 +360,7 @@ class TestSearch(Scenario):
         env = search(self.cfg, "--list-rooms")
         self.assertEqual([(r["chat_id"], r["label"], r["n"]) for r in env["rows"]],
                          [("301", "Edb 방 301", 30), ("101", "스터디 방", 8), ("401", "Renamed 방", 3),
-                          ("201", "web_dev 채널", 2), ("501", "webXdev 잡담", 1)])
+                          ("201", "web_dev 채널", 2), ("601", "개명된 리스트 방", 2), ("501", "webXdev 잡담", 1)])
         env = search(self.cfg, "--list-rooms", "--room", "web_dev")
         self.assertEqual([r["chat_id"] for r in env["rows"]], ["201"])
         rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--list-rooms")
@@ -411,10 +423,11 @@ class TestEdges(unittest.TestCase):
         fx = Fixture()
         try:
             src = L.KakaoSources(fx)
-            src.merged([L.Msg(101, 1, "1700000000", None, b"\x00\x01", typ="x", sender="777"),
-                        L.Msg(101, 2, None, 5, "정상 메시지", sender="  "),
-                        L.Msg(101, 3, 1700000000, 6, None, typ=None, deleted="1")], {101: None})
-            self.assertEqual(L.capture(fx, ["merged_out"]), 0)
+            src.room_db(101, [L.Msg(101, 1, "1700000000", None, b"\x00\x01", typ="x"),
+                              L.Msg(101, 2, None, 5, "정상 메시지"),
+                              L.Msg(101, 3, 1700000000, 6, None, typ=None, deleted="1")])
+            src.manifest({})
+            self.assertEqual(L.capture(fx, ["backup_decrypted"]), 0)
             rc, out, err = rs("index", "--config", fx.config_path, "--source", "kakaotalk", "--json")
             self.assertEqual(rc, 0, err)
             rep = json.loads(out)["kakaotalk"]
@@ -436,10 +449,13 @@ class TestEdges(unittest.TestCase):
         fx = Fixture()
         try:
             ts = 1_700_000_000
-            msgs = [L.Msg(1, n, ts, 5, f"같은 시각 {n}", sender="Echo") for n in range(1, 7)] + \
-                   [L.Msg(2, n, ts, 6, f"같은 시각 {n}", sender="Foxtrot") for n in range(1, 4)]
-            L.KakaoSources(fx).merged(msgs, {1: "가 방", 2: "나 방"})
-            self.assertEqual(L.capture(fx, ["merged_out"]), 0)
+            msgs = [L.Msg(1, n, ts, 5, f"같은 시각 {n}") for n in range(1, 7)] + \
+                   [L.Msg(2, n, ts, 6, f"같은 시각 {n}") for n in range(1, 4)]
+            src = L.KakaoSources(fx)
+            src.room_db(1, [m for m in msgs if m.chat == 1])
+            src.room_db(2, [m for m in msgs if m.chat == 2])
+            src.manifest({1: "가 방", 2: "나 방"})
+            self.assertEqual(L.capture(fx, ["backup_decrypted"]), 0)
             self.assertEqual(rs("index", "--config", fx.config_path, "--source", "kakaotalk")[0], 0)
             base = ("--since", "2020", "--limit", "2")
             page = search(fx.config_path, *base)
@@ -510,14 +526,15 @@ class TestApplier(unittest.TestCase):
 
     def test_purge_stale_and_bad_records(self):
         key = "kakao:9:msg:1"
-        self.app.record(self.rec("merged_out", key, 1, native={"message": "원문 텍스트", "type": 1}), 1)
+        self.app.record(self.rec("backup_decrypted", key, 1, native={"message": "원문 텍스트", "type": 1}), 1)
         self.app.end_manifest(1)
-        self.assertEqual(self.row(), (MERGED, 0, "원문 텍스트", 0))
-        self.app.record(self.rec("merged_out", key, 1, native={"message": "다른 것"}), 2)     # stale rev
+        self.assertEqual(self.row(), (BACKUP, 0, "원문 텍스트", 0))
+        self.app.record(self.rec("backup_decrypted", key, 1, native={"message": "다른 것"}), 2)  # stale rev
         for bad in (None, [], {"origin": "nowhere", "key": key, "rev": 1, "op": "put"},
-                    self.rec("merged_out", "kakao:x:msg:1", 1), self.rec("merged_out", key, True),
-                    self.rec("merged_out", key, 2, op="erase"), self.rec("edb", "kakao:9", 1, kind="room", derived=7),
-                    self.rec("edb", key, 1, native="not a dict"), self.rec("live_out", "kakao:9:msg:2", 1,
+                    self.rec("backup_decrypted", "kakao:x:msg:1", 1), self.rec("backup_decrypted", key, True),
+                    self.rec("backup_decrypted", key, 2, op="erase"),
+                    self.rec("edb", "kakao:9", 1, kind="room", derived=7),
+                    self.rec("edb", key, 1, native="not a dict"), self.rec("macdb", "kakao:9:msg:2", 1,
                                                                            native={"message": 5, "type": 2 ** 70})):
             self.app.record(bad, 2)
         self.app.end_manifest(2)
@@ -526,44 +543,44 @@ class TestApplier(unittest.TestCase):
         self.assertEqual(counts["bad_record"], 5)
         self.assertEqual(counts["bad_key"], 1)
         self.assertEqual((counts["bad_native"], counts["body_other"]), (1, 1))
-        self.app.record(self.rec("merged_out", key, 2, op="purged"), 3)
+        self.app.record(self.rec("backup_decrypted", key, 2, op="purged"), 3)
         self.app.end_manifest(3)
         origins, gone, message, _d = self.row()
-        self.assertEqual((origins & MERGED, message), (0, ""))
+        self.assertEqual((origins & BACKUP, message), (0, ""))
         self.con.execute("INSERT INTO kakao_fts(kakao_fts, rank) VALUES('integrity-check', 1)")
 
     def test_derive_precedence(self):
         S = kakao._Src
-        d = kakao.derive([S(kakao.RANK["merged_out"], 1, b"m", 0, 10, "1", 1, 0, 1),
+        d = kakao.derive([S(kakao.RANK["backup_decrypted"], 1, b"m", 0, 10, "1", 1, 0, 1),
                           S(kakao.RANK["edb"], 1, None, 1, 20, "1", 0x4001, 0, 0),
-                          S(kakao.RANK["live_out"], 0, b"l", 0, 30, None, 1, 1, 1)])
+                          S(kakao.RANK["macdb"], 0, b"l", 0, 30, None, 1, 1, 1)])
         self.assertEqual((d["th"], d["source"], d["ts"], d["deleted"], d["edited"], d["gone"], d["type"]),
-                         (b"m", "merged_out", 20, 1, 1, 0, 0x4001))
-        self.assertEqual(d["origins"], EDB | MERGED)
+                         (b"m", "backup_decrypted", 20, 1, 1, 0, 0x4001))
+        self.assertEqual(d["origins"], EDB | BACKUP)
         d = kakao.derive([S(kakao.RANK["edb"], 0, b"e", 0, 0, None, None, 0, 1)])
         self.assertEqual((d["gone"], d["th"], d["source"], d["origins"]), (1, b"e", "edb", 0))
         # a holder's OLD text (its latest put had none) does not outrank a lower holder's current text ...
         d = kakao.derive([S(kakao.RANK["edb"], 1, b"old", 1, 20, "1", 1, 0, 0),
-                          S(kakao.RANK["merged_out"], 1, b"new", 0, 20, "1", 1, 1, 1)])
-        self.assertEqual((d["th"], d["source"]), (b"new", "merged_out"))
+                          S(kakao.RANK["backup_decrypted"], 1, b"new", 0, 20, "1", 1, 1, 1)])
+        self.assertEqual((d["th"], d["source"]), (b"new", "backup_decrypted"))
         # ... but with no current text anywhere, the best holder's last text is kept, before a non-holder's
-        d = kakao.derive([S(kakao.RANK["decrypted_live"], 0, b"gone", 0, 20, "1", 1, 0, 0),
-                          S(kakao.RANK["backup_decrypted"], 1, b"kept", 1, 20, "1", 1, 0, 0),
-                          S(kakao.RANK["merged_out"], 1, b"low", 1, 20, "1", 1, 0, 0)])
+        d = kakao.derive([S(kakao.RANK["macdb"], 0, b"gone", 0, 20, "1", 1, 0, 0),
+                          S(kakao.RANK["backup_decrypted"], 1, b"kept", 1, 20, "1", 1, 0, 0)])
         self.assertEqual((d["th"], d["source"]), (b"kept", "backup_decrypted"))
 
     def test_tombstoned_origin_does_not_hide_the_current_text(self):
-        """Review finding: edb and merged_out both put '약속은 3시'; then merged_out puts an edited text and edb a
-        local-delete row with no text. The row shows (and the index finds) the edited text, from merged_out."""
+        """Review finding: edb and backup_decrypted both put '약속은 3시'; then the backup puts an
+        edited text and edb a local-delete row with no text. The row shows (and the index finds) the edited
+        text, from the backup."""
         key = "kakao:9:msg:5"
-        for origin in ("edb", "merged_out"):
+        for origin in ("edb", "backup_decrypted"):
             self.app.record(self.rec(origin, key, 1, native={"message": "약속은 3시", "type": 1}), 1)
         self.app.end_manifest(1)
-        self.app.record(self.rec("merged_out", key, 2, native={"message": "약속은 4시로 변경", "type": 1}), 2)
+        self.app.record(self.rec("backup_decrypted", key, 2, native={"message": "약속은 4시로 변경", "type": 1}), 2)
         self.app.record(self.rec("edb", key, 2, native={"message": "", "type": 1, "deleted": 1}), 2)
         self.app.end_manifest(2)
         r = self.con.execute("SELECT message, source, origins, edited, deleted FROM kakao").fetchone()
-        self.assertEqual(r, ("약속은 4시로 변경", "merged_out", EDB | MERGED, 1, 1))
+        self.assertEqual(r, ("약속은 4시로 변경", "backup_decrypted", EDB | BACKUP, 1, 1))
         q = ti.build_fts_query("변경")
         frm, where, params = ti.sql_parts(q, "kakao", "kakao_fts", alias="t")
         ti.register_functions(self.con)
@@ -575,8 +592,8 @@ class TestApplier(unittest.TestCase):
         kakao.SPEC.create_tables(con)
         app = kakao.SPEC.applier(con, full=True)
         for seq, recs in ((1, [self.rec(o, key, 1, native={"message": "약속은 3시", "type": 1})
-                               for o in ("edb", "merged_out")]),
-                          (2, [self.rec("merged_out", key, 2, native={"message": "약속은 4시로 변경", "type": 1}),
+                               for o in ("edb", "backup_decrypted")]),
+                          (2, [self.rec("backup_decrypted", key, 2, native={"message": "약속은 4시로 변경", "type": 1}),
                                self.rec("edb", key, 2, native={"message": "", "type": 1, "deleted": 1})])):
             for rec in recs:
                 app.record(rec, seq)

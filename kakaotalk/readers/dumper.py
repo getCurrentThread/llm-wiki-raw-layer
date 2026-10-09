@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Generic room-DB dumper shared by backup_decrypted, decrypted_live and edb (SPEC 7.3)."""
+"""Generic room-DB dumper shared by backup_decrypted and edb (SPEC 7.3)."""
 import hashlib
 
 from rawlayer.capture import canon
@@ -52,9 +52,11 @@ def make_row_native(cols, row, base, defaults):
     return out
 
 
-def iter_room_obs(con, chat_id, base_for, notes, asof_s, check_counts=True):
+def iter_room_obs(con, chat_id, base_for, notes, asof_s, check_counts=True, names=None):
     """Yield schema + row observations of one room DB. `base_for(schema_key)` returns the rev-1 column
-    names (or None). Raises ContainerError('error'|'unreadable', ...) when COUNT(*) disagrees."""
+    names (or None). `names`, when given ({str(authorId): account display name}, from the client's user
+    database), labels each message's sender. Raises ContainerError('error'|'unreadable', ...) when COUNT(*)
+    disagrees."""
     tables = list_tables(con)
     for t in tables:
         if t not in TABLE_KIND:
@@ -89,10 +91,14 @@ def iter_room_obs(con, chat_id, base_for, notes, asof_s, check_counts=True):
             raw = dict(zip(cols, row))
             native = make_row_native(cols, row, base, defaults)
             ts = None
+            derived = {}
             if kind == "msg":
                 ts, bad = kakao_ts_ms(raw.get("sendAt"))
                 if bad:
                     notes["ts_out_of_range"] += 1
-            yield Obs(kind, key, native, {}, ts, asof_s)
+                if names:
+                    nm = names.get(canon.as_str(raw.get("authorId")))
+                    derived = {"sender": nm} if isinstance(nm, str) and nm.strip() else {}
+            yield Obs(kind, key, native, derived, ts, asof_s)
         if check_counts and seen != expected:
             raise ContainerError("count_mismatch", "count_mismatch")

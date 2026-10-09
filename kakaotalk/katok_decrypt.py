@@ -143,8 +143,10 @@ def _find_pid(name="KakaoTalk.exe"):
     return None
 
 def memory_candidates(pid=None):
-    """KakaoTalk.exe 의 private-writable 메모리에서 32B 후보 집합 (16정렬, 엔트로피 필터, 중복 제거).
-    (cands, pid) 반환. 미실행/OpenProcess 실패는 RuntimeError — 방 DEK 스캔과 루트 스캔이 공유한다."""
+    """KakaoTalk.exe 의 private-writable 메모리에서 32B 후보 집합 (8정렬, 엔트로피 필터, 중복 제거).
+    (cands, pid) 반환. 미실행/OpenProcess 실패는 RuntimeError — 방 DEK 스캔과 루트 스캔이 공유한다.
+    8바이트 스텝: 열린 방의 DEK는 16정렬에 놓이지만(2026-10-03 실측), 상시 열린 DB(chatListInfo 등)의
+    DEK는 8정렬에만 상주하는 것이 2026-10-10 실측되었다 — 16 스텝은 그 절반을 놓친다."""
     import ctypes, ctypes.wintypes as wt
     pid = pid or _find_pid()
     if not pid: raise RuntimeError("KakaoTalk.exe 미실행")
@@ -167,7 +169,7 @@ def memory_candidates(pid=None):
                 buf=ctypes.create_string_buffer(size); nr=ctypes.c_size_t(0)
                 if k.ReadProcessMemory(h, ctypes.c_void_p(base), buf, size, ctypes.byref(nr)) and nr.value>=32:
                     d=buf.raw[:nr.value]
-                    for o in range(0, len(d)-31, 16):
+                    for o in range(0, len(d)-31, 8):
                         w=d[o:o+32]
                         if w.count(0)<8 and len(set(w))>=18: cands.add(w)
             na=base+size
@@ -178,7 +180,7 @@ def memory_candidates(pid=None):
     return cands, pid
 
 def scan_memory_keys(targets, pid=None):
-    """targets: [(name, ct16, iv), ...]  → {name: key(32B)}  (private-writable, 16정렬, 엔트로피 필터)."""
+    """targets: [(name, ct16, iv), ...]  → {name: key(32B)}  (private-writable, 8정렬, 엔트로피 필터)."""
     cands, _pid = memory_candidates(pid)
     ECB=AES.MODE_ECB; hits={}; ntargets=len(targets)
     for key in cands:

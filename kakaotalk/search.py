@@ -8,15 +8,16 @@
   python -s -B manage.py search kakaotalk --config CFG --room 스터디 --before 1727758980.12345.678
   python -s -B manage.py search kakaotalk --config CFG --list-rooms
 
-WHAT IS INDEXED (extractor "kakao-3")
+WHAT IS INDEXED (extractor "kakao-4")
 -------------------------------------
-Ledger records of the six Kakao origins (the five kakatok ones plus macdb, the macOS client's database).
+Ledger records of the three Kakao origins (backup_decrypted, edb, macdb -- kakao-4 dropped the retired
+kakatok exports merged_out / live_out / decrypted_live: the app reads the client itself now).
 One row per message KEY kakao:<chatId>:msg:<logId> across origins
 (UNIQUE(chat_id, log_id), like the knowledge-base corpus), built from a per-origin fold `ksrc` that keeps the
 latest record of every origin for every key:
 
 * Text: from the highest-precedence origin whose LATEST put carries usable text, precedence
-  edb > macdb > decrypted_live > backup_decrypted > live_out > merged_out (PRECEDENCE). Usable text = a str message with
+  edb > macdb > backup_decrypted (PRECEDENCE). Usable text = a str message with
   something besides whitespace, in a row that is not a delete-for-all tombstone. An origin whose latest put has
   no usable text (a tombstone, a row emptied by a local delete) does not outrank one that currently has text
   with the text it held before (ksrc.has_text). When no origin's latest put has usable text, the last usable text
@@ -30,12 +31,17 @@ latest record of every origin for every key:
   base64 blob, never indexed), a non-zero is_encrypt_delete_msg, or a non-zero `deleted` (local deletion).
   Deleted rows are hidden unless --include-deleted.
 * edited: an origin put a usable text and later a different usable text for the same key.
-* sender: author names come only from merged_out / live_out / macdb (derived.sender, when it is not just
-  digits); rows from the room-DB origins carry only authorId. The authors table keeps, per author id, the name
-  on the newest such message (sendAt, then ledger seq). `sender` on each row is that name ('' when unknown;
-  the author id is shown instead).
-* room: title from room records (merged_out rooms, live_out cursors, macdb rooms): the newest put with a
-  non-empty title (ledger seq; live_out before macdb before merged_out within one capture).
+* sender: author names come from the client's own user database -- TalkUserDB read beside the rooms (edb) and
+  from the backup's decrypted copy (backup_decrypted), plus the macOS database's NTUser (derived.sender, when
+  it is not just digits). The names are the accounts' display names (nickName; the owner's own alias for a
+  friend only where the account has no nickname), the join the kakatok research documented; rows from room
+  DBs without a named author carry only authorId. The authors table
+  keeps, per author id, the name on the newest such message (sendAt, then ledger seq; the live client's names
+  outrank the backup's at a tie). `sender` on each row is that name ('' when unknown; the author id is shown
+  instead).
+* room: title from room records (the client's chat-list database for edb rooms, the manifest titles for the
+  backup's, macdb rooms): the newest put with a non-empty title (ledger seq; edb before macdb before
+  backup_decrypted within one capture).
 * Facets: rooms(chat_id, title, n, senders, first_ts, last_ts, n_deleted, n_gone), n = rows not deleted.
 * Not indexed, only counted (counts table): hist, meta, attachment and schema records, bad keys, odd values.
 
@@ -57,11 +63,11 @@ from rawlayer.search.common import UsageError
 
 NAME = "kakaotalk"
 HELP = "search KakaoTalk messages (index: <data_root>/index/kakaotalk.sqlite)"
-PRECEDENCE = ("edb", "macdb", "decrypted_live", "backup_decrypted", "live_out", "merged_out")  # text, best first
+PRECEDENCE = ("edb", "macdb", "backup_decrypted")  # text, best first
 RANK = {o: i for i, o in enumerate(PRECEDENCE)}
-TITLE_ORDER = ("live_out", "macdb", "merged_out", "decrypted_live", "backup_decrypted", "edb")  # ties within seq
+TITLE_ORDER = ("edb", "macdb", "backup_decrypted")  # ties within seq
 TITLE_RANK = {RANK[o]: i for i, o in enumerate(TITLE_ORDER)}
-NAME_RANK = {"live_out": 1, "macdb": 1, "merged_out": 0}   # origins that carry author names; higher wins a tie
+NAME_RANK = {"edb": 1, "macdb": 1, "backup_decrypted": 0}   # name sources; the live client's names win a tie
 DELETE_ALL = 0x4000
 OPS = ("put", "absent", "purged")
 SKIP_KINDS = ("hist", "meta", "attachment", "schema")
@@ -414,8 +420,8 @@ class KakaoApplier:
 class KakaoIndex(common.SourceIndex):
     name = NAME
     origins = frozenset(PRECEDENCE)
-    schema_version = "kakao-3"        # kakao-3: macdb joined PRECEDENCE/TITLE_ORDER (origin bits shifted)
-    extractor_version = "kakao-3"     # kakao-3: macdb text/titles/names (macdb > decrypted_live, after edb)
+    schema_version = "kakao-4"        # kakao-4: the kakatok exports (merged_out/live_out/decrypted_live) left
+    extractor_version = "kakao-4"     # kakao-4: names from the client's TalkUserDB (edb, backup_decrypted)
     fts_tables = ("kakao_fts",)
 
     def create_tables(self, con):

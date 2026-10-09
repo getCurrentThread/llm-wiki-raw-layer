@@ -11,10 +11,13 @@ _manifest.json ({"decrypted": [{"chatId", "rows", "from", "to"}], "updated"}) re
 
 This owns that directory: a room whose source no longer decrypts loses its stale decrypted file, so capture
 never mistakes an old copy for the backup's current content (the origin's room_gone note reports it).
-TalkUserDB.edb, when present, decrypts too (best-effort; capture only counts it as a non-room file).
+TalkUserDB.edb, when present, decrypts too (best-effort; capture only counts it as a non-room file), and so
+does chat_data/chatListInfo.edb — the client's own chat-list database. Its titles go into the manifest entries
+(the reader passes every manifest field through as the room record's derived fields, so a "title" key needs no
+reader change): rooms only the backup remembers keep the names the client itself gave them.
 
 The registry read needs the KakaoTalk user's own HKCU: it runs from setup, interactively as that user — never
-as the SYSTEM scheduled task (live capture; the task only needs live_out and the .edb rooms).
+as the SYSTEM scheduled task (live capture; the task only needs the .edb rooms).
 
 decrypt_backup returns the old command's exit codes: 0 ok (an empty backup directory is ok) · 2 a refusal to
 run (no backup user directory, registry unreadable, no userId — a skip as far as setup is concerned) · 3 rooms
@@ -28,6 +31,7 @@ import sqlite3
 
 from . import katok_decrypt as kd
 from . import keystore_v2 as kv
+from . import roomlist
 
 _ROOM = re.compile(r"^chatLogs_(\d+)\.edb$", re.IGNORECASE)
 _SQLITE = re.compile(r"^(\d+)\.sqlite$")
@@ -42,6 +46,18 @@ def _rows_of(path):
         return con.execute("SELECT COUNT(*) FROM chatLogs").fetchone()[0]
     finally:
         con.close()
+
+
+def _titles_of(path):
+    """{chatId(str): title} from a decrypted chat-list database; {} when it holds nothing readable."""
+    try:
+        con = sqlite3.connect(path)
+        try:
+            return roomlist.chat_titles(con)
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
 
 
 def _write(path, data):
@@ -82,6 +98,17 @@ def decrypt_backup(cfg, note) -> int:
         return 2
 
     rooms = sorted(glob.glob(os.path.join(bak, "chat_data", "chatLogs_*.edb")))
+    titles = {}
+    cli = os.path.join(bak, "chat_data", "chatListInfo.edb")
+    if os.path.exists(cli):
+        dec, good = kd.eva_decrypt_file(cli, 3, pragma, uid)
+        if good:
+            out_cli = os.path.join(outdir, "chatListInfo.sqlite")
+            _write(out_cli, dec)
+            titles = _titles_of(out_cli)
+            note(f"backup chat-list decrypted: {len(titles)} titled room(s)")
+        else:
+            note("backup chatListInfo.edb did not decrypt (kept going)")
     manifest, ok, failed = [], 0, []
     succeeded = set()
     for p in rooms:
@@ -104,7 +131,10 @@ def decrypt_backup(cfg, note) -> int:
             rows = _rows_of(dst)
         except sqlite3.Error:
             rows = None
-        manifest.append({"chatId": cid, "rows": rows, "from": os.path.basename(p), "to": cid + ".sqlite"})
+        entry = {"chatId": cid, "rows": rows, "from": os.path.basename(p), "to": cid + ".sqlite"}
+        if cid in titles:
+            entry["title"] = titles[cid]
+        manifest.append(entry)
 
     for name in sorted(os.listdir(outdir)):
         m = _SQLITE.match(name)

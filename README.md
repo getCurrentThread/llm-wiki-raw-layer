@@ -7,7 +7,7 @@ roots, ledgers, indexes, configs and scheduled tasks.
 
 | app (folder name) | origins, in ledger order | index under its data root |
 |---|---|---|
-| `kakaotalk` | merged_out, backup_decrypted, decrypted_live, live_out, edb, macdb | `index/kakaotalk.sqlite` |
+| `kakaotalk` | backup_decrypted, edb, macdb | `index/kakaotalk.sqlite` |
 | `mattermost` | mm_archive | `index/mattermost.sqlite` |
 | `discord` | dc_archive | `index/discord.sqlite` |
 | `notion` | nt_archive | `index/notion.sqlite` |
@@ -153,8 +153,7 @@ The action's Command is the selected Python interpreter, WorkingDirectory is `<P
 ```
 
 Paths containing spaces are quoted by the generated definition. `install` checks the config, data root,
-interpreter and app task checks before registration. KakaoTalk requires `live_requires_system: true` for its
-task. Install, run and remove require elevation; status and dry-run do not. Without an app, install and status
+interpreter and app task checks before registration. Install, run and remove require elevation; status and dry-run do not. Without an app, install and status
 operate on every app that has a schedule, using default configs; an explicit `--config` belongs to one app.
 Run and remove require an app when several are discovered.
 

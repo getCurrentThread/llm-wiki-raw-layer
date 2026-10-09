@@ -30,6 +30,19 @@ CREATE TABLE chatLogHistory(logId INTEGER, revision INTEGER, message TEXT, PRIMA
 CREATE TABLE chatLogDrafts(chatId INTEGER PRIMARY KEY, draft TEXT);
 """
 
+# the client's chat-list database (chatListInfo.edb): only the columns roomlist.chat_titles reads
+LIST_DDL = """
+CREATE TABLE chatRoomList(chatId INTEGER PRIMARY KEY, type TEXT, activeMembersCount INTEGER,
+  useCustomChatRoomTitle INTEGER, chatRoomTitle TEXT, titleDisplayMembers TEXT, lastUpdatedAt INTEGER,
+  lastChatMessage TEXT, directChatMemberId INTEGER, linkId INTEGER);
+CREATE TABLE chatMetas(chatId INTEGER, type INTEGER, content TEXT, PRIMARY KEY(chatId, type));
+"""
+
+# the client's user database (TalkUserDB.edb): only the columns roomlist.user_names reads
+USERS_DDL = """
+CREATE TABLE talkUser(userId INTEGER PRIMARY KEY, type INTEGER, nickName TEXT, friendNickName TEXT);
+"""
+
 
 def key_for(n):
     return hashlib.sha256(b"test-key-%d" % n).digest()
@@ -41,7 +54,7 @@ def msg(chat, lid, typ=1, text=None, deleted=0, prev=None, pm=0, nm=0, rev=0):
 
 
 def plain_backup_room(path, rows, hist=()):
-    """A decrypted room DB (backup_decrypted / decrypted_live layout) with the same chatLogs columns."""
+    """A decrypted backup room DB (the backup_decrypted layout) with the same chatLogs columns."""
     con = sqlite3.connect(path)
     con.executescript(EDB_DDL)
     if rows:
@@ -99,15 +112,16 @@ class PlainRoom:
     """A plaintext room DB in WAL mode. snapshot() returns (main bytes, wal bytes) as they are on disk
     while the writer is open; checkpoint() moves everything into main."""
 
-    def __init__(self, path, rows, hist=()):
+    def __init__(self, path, rows, hist=(), ddl=None):
         self.path = Path(path)
         reserve_db(self.path)
         self.con = sqlite3.connect(self.path, isolation_level=None)
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute("PRAGMA wal_autocheckpoint=0")
-        self.con.executescript(EDB_DDL)
-        self.add(rows, hist)
-        self.con.execute("INSERT INTO chatLogDrafts VALUES (1, 'secret draft')")
+        self.con.executescript(ddl or EDB_DDL)
+        if ddl is None:
+            self.add(rows, hist)
+            self.con.execute("INSERT INTO chatLogDrafts VALUES (1, 'secret draft')")
         self.checkpoint()
 
     def add(self, rows, hist=()):
@@ -247,3 +261,83 @@ def place_room(fx, chat, rows, key, salt=None, hist=(), wal_rows=None, keep=Fals
         if p.exists():
             p.unlink()
     return None
+
+
+def place_chat_list(fx, key, rooms, metas=(), salt=None):
+    """The client's chat-list database, encrypted like the real chat_data/chatListInfo.edb.
+    rooms: [(chatId, custom_title_or_None, display_members_or_None)] — a None title falls through to the
+    metas/display-members steps of roomlist's chain. metas: [(chatId, type, content)]."""
+    salt = salt or hashlib.sha256(b"salt-chatlist").digest()[:16]
+    work = Path(fx.base) / "plain"
+    work.mkdir(parents=True, exist_ok=True)
+    pr = PlainRoom(work / "chatListInfo.sqlite", (), ddl=LIST_DDL)
+    pr.con.executemany(
+        "INSERT INTO chatRoomList(chatId, type, activeMembersCount, useCustomChatRoomTitle, chatRoomTitle,"
+        " titleDisplayMembers, lastUpdatedAt, lastChatMessage, directChatMemberId, linkId)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [(int(c), "MultiChat", 3, 1 if t else 0, t, m, 1700000000, f"preview {c}", 0, 0)
+         for c, t, m in rooms])
+    pr.con.executemany("INSERT INTO chatMetas(chatId, type, content) VALUES (?,?,?)",
+                       [(int(c), ty, ct) for c, ty, ct in metas])
+    pr.con.commit()
+    main, wal = pr.snapshot()
+    d = Path(fx.user_dir) / "chat_data"
+    write_list_edb(d, enc_main(key, salt, main), enc_wal(key, salt, wal))
+    pr.close()
+    for suf in ("", "-wal", "-shm"):
+        p = sidecar(pr.path, suf)
+        if p.exists():
+            p.unlink()
+
+
+def write_list_edb(chat_dir, main_enc, wal_enc=b""):
+    p = Path(chat_dir) / "chatListInfo.edb"
+    p.write_bytes(main_enc)
+    w = sidecar(p, "-wal")
+    if wal_enc:
+        w.write_bytes(wal_enc)
+    elif w.exists():
+        w.unlink()
+    return p
+
+
+LIST_REL = "chat_data\\chatListInfo.edb"
+USERS_REL = "TalkUserDB.edb"            # the store wraps it under the user directory's root
+
+
+def write_list_keystore_entry(keys_extra, key):
+    """The keystore entry that keys the chat-list database (chatId null: it is not a room)."""
+    keys_extra[LIST_REL] = {"chatId": None, "key_hex": key.hex(), "wrapped_hex": "00",
+                            "integrity": True, "header_ok": True}
+
+
+def write_users_keystore_entry(keys_extra, key):
+    """The keystore entry that keys the user database."""
+    keys_extra[USERS_REL] = {"chatId": None, "key_hex": key.hex(), "wrapped_hex": "00",
+                             "integrity": True, "header_ok": True}
+
+
+def place_talk_user(user_dir, key, names, salt=None):
+    """The client's user database, encrypted like the real <user dir>/TalkUserDB.edb (at the user directory's
+    root, NOT in chat_data). names: {userId: (nickName, friendNickName)}."""
+    salt = salt or hashlib.sha256(b"salt-talkuser").digest()[:16]
+    work = Path(user_dir).parent / "plain"
+    work.mkdir(parents=True, exist_ok=True)
+    pr = PlainRoom(work / "TalkUserDB.sqlite", (), ddl=USERS_DDL)
+    pr.con.executemany("INSERT INTO talkUser(userId, type, nickName, friendNickName) VALUES (?,?,?,?)",
+                       [(int(u), 0, n, f) for u, (n, f) in sorted(names.items())])
+    pr.con.commit()
+    main, wal = pr.snapshot()
+    p = Path(user_dir) / USERS_REL
+    p.write_bytes(enc_main(key, salt, main))
+    w = sidecar(p, "-wal")
+    ewal = enc_wal(key, salt, wal)
+    if ewal:
+        w.write_bytes(ewal)
+    elif w.exists():
+        w.unlink()
+    pr.close()
+    for suf in ("", "-wal", "-shm"):
+        q = sidecar(pr.path, suf)
+        if q.exists():
+            q.unlink()

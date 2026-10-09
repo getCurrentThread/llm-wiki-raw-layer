@@ -4,8 +4,8 @@
 comparison)."""
 from tests.core import appfix
 
-STATIC = ["merged_out", "backup_decrypted", "decrypted_live"]
-KAKAO = STATIC + ["live_out", "edb"]
+STATIC = ["backup_decrypted"]
+KAKAO = STATIC + ["edb"]
 
 preserved_env = appfix.preserved_env
 records = appfix.records

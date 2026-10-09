@@ -6,11 +6,10 @@ reruns it against the config.json that is already there (the recovery path when 
 `--scan` (the client's memory fallback), `--root` (a root file to install, verified first) and
 `--restart-client` (restart KakaoTalk.exe to rescan a freshly started client).
 
-Defaults (setup_defaults -> fill_defaults): each placeholder source resolves to this machine's kakatok research
-tree when the file is there (the tree this app grew out of: Downloads\\kakatok, Documents\\kakatok), and the
-app's own outputs — keystore, backup_decrypted — to their place under the data root when it is not. The client's
-user directory is detected under %LOCALAPPDATA%\\Kakao\\KakaoTalk\\users (the non-backup folder holding
-appstate.dat). Nothing is printed but the key names.
+Defaults (setup_defaults -> fill_defaults): the client's user directory is detected under
+%LOCALAPPDATA%\\Kakao\\KakaoTalk\\users (the non-backup folder holding appstate.dat), and the app's own
+outputs — keystore, backup_decrypted — default to their place under the data root. Nothing is printed but the
+key names.
 
 The root (setup_provision -> provision): the one input capture cannot read anywhere else. Every room's DEK is
 wrapped under it (KEK = HKDF-SHA256(root, appstate.salt, info_prefix + relpath), keychain.py), and on-disk
@@ -27,8 +26,9 @@ three steps, each verified against the client's own store, unwrap success being 
      caught that way; residency is version-dependent, so this is best-effort).
 
 With a root the keystore follows (write_keystore_for, the derivation the old keys command ran: every entry the
-root unwraps, each key checked against its room file's page-1 header oracle; --scan adds the room-DEK memory
-fallback for rooms the root does not key). The key-source files' (sha256, size, mtime) fingerprint is diffed
+root unwraps, each key checked against its room file's page-1 header oracle — the client's own chat-list
+database's entry among them, which is what names the edb origin's rooms; --scan adds the room-DEK memory
+fallback for rooms the root does not key, the chat-list file riding along as one more target). The key-source files' (sha256, size, mtime) fingerprint is diffed
 against the previous run in <DATA_ROOT>/keys/rotation_state.json, so a logout/re-login rotation is reported the
 moment it is observed. Then the backup user directory decrypts (kakaotalk/backup.py, EvaSQLite: registry
 pragma + userId — needs the KakaoTalk user's own HKCU, which is why provisioning lives in setup, run
@@ -41,6 +41,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -51,15 +52,6 @@ from . import katok_decrypt as kd
 from . import keychain
 from . import keystore_v2 as kv
 
-# the kakatok research tree under the home: the collector outputs this app reads and the root copies it kept.
-# A file is a default only while it exists; the app's own outputs fall back to the data root.
-RESEARCH = {
-    "merged_out": ("Downloads", "kakatok", "merged", "merged.sqlite"),
-    "live_out": ("Documents", "kakatok", "out", "live.sqlite"),
-    "backup_decrypted": ("Downloads", "kakatok", "backup_decrypted"),
-    "decrypted_live": ("Downloads", "kakatok", "decrypted_live"),
-    "keystore": ("Documents", "kakatok", "out", "keystore_v2_full.json"),
-}
 # where a root copy may sit, in the order they are tried (adoption verifies before installing)
 ROOT_FILES = (
     ("Documents", "kakatok", "root_v2.hex"),
@@ -99,20 +91,15 @@ def live_user_dir(users=None) -> str | None:
 
 # ----------------------------------------------------------------- config defaults
 def default_sources(cfg, home=None, users=None) -> dict:
-    """The machine's defaults for config.example.json's placeholder sources: the research tree's files that are
-    there, the detected client user directory, and the app's own outputs under the data root."""
-    home = Path(home) if home is not None else _home()
+    """The machine's defaults for config.example.json's placeholder sources: the detected client user
+    directory and the app's own outputs under the data root."""
     out: dict[str, str] = {}
-    for key, rel in RESEARCH.items():
-        p = home.joinpath(*rel)
-        if p.exists():
-            out[key] = str(p)
     udir = live_user_dir(users)
     if udir:
         out["kakao_user_dir"] = udir
     data_root = Path(cfg["data_root"])
-    out.setdefault("backup_decrypted", str(data_root / "backup_decrypted"))   # backup's output
-    out.setdefault("keystore", str(data_root / "keys" / "keystore.json"))     # keys'/setup's output
+    out["backup_decrypted"] = str(data_root / "backup_decrypted")   # backup's output
+    out["keystore"] = str(data_root / "keys" / "keystore.json")     # keys'/setup's output
     return out
 
 
@@ -162,7 +149,7 @@ def scan_memory_root(store, pid=None, note=None):
     tested with the unwrap oracle instead of the page-1 header."""
     cands, pid = kd.memory_candidates(pid)
     if note is not None:
-        note(f"scanning KakaoTalk.exe (pid {pid}) for the root: {len(cands):,} candidates, a minute or two")
+        note(f"scanning KakaoTalk.exe (pid {pid}) for the root: {len(cands):,} candidates, a few minutes")
     return root_in(sorted(cands), store)
 
 
@@ -247,11 +234,22 @@ def derive_entries(root: bytes, store: dict, udir: str) -> dict:
     return entries
 
 
-def scan_fallback(udir, keyed_chats, note) -> dict:
-    """Room files on disk a live root did not key: recover their DEKs from the running client's memory."""
+def scan_fallback(udir, keyed_chats, note, have=()) -> dict:
+    """Room files on disk a live root did not key: recover their DEKs from the running client's memory. The
+    client's chat-list database rides along when it has no entry yet (one more target of the same walk — the
+    edb origin's room titles come from it)."""
     targets = []
     chat_data = os.path.join(udir, "chat_data")
-    for name in sorted(os.listdir(chat_data)) if os.path.isdir(chat_data) else []:
+    names = sorted(os.listdir(chat_data)) if os.path.isdir(chat_data) else []
+    for name in names:
+        if name == "chatListInfo.edb":
+            if "chat_data\\chatListInfo.edb" not in have:
+                p = os.path.join(chat_data, name)
+                head = kd.read_shared(p, kd.PAGE)
+                if len(head) >= kd.PAGE:
+                    targets.append((p, head[16:32],
+                                    head[kd.PAGE - kd.SC_RESERVE:kd.PAGE - kd.SC_RESERVE + 16]))
+            continue
         p = os.path.join(chat_data, name)
         cid = kv.chatid_of_relpath(name)
         if cid is None or cid in keyed_chats or not os.path.exists(p):
@@ -264,7 +262,8 @@ def scan_fallback(udir, keyed_chats, note) -> dict:
             targets.append((p, head[16:32], head[kd.PAGE - kd.SC_RESERVE:kd.PAGE - kd.SC_RESERVE + 16]))
     if not targets:
         return {}
-    note(f"memory scan of {len(targets)} unkeyed room(s) (KakaoTalk.exe must be running; tens of seconds)")
+    note(f"memory scan of {len(targets)} unkeyed room/chat-list file(s) "
+         "(KakaoTalk.exe must be running; tens of seconds)")
     try:
         hits, ncand = kd.scan_memory_keys(targets)
     except (RuntimeError, OSError) as e:
@@ -276,6 +275,7 @@ def scan_fallback(udir, keyed_chats, note) -> dict:
 
 def write_keystore(path: str, entries: dict) -> None:
     tmp = path + ".tmp"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(entries, fh, ensure_ascii=True, indent=1)
     os.replace(tmp, path)
@@ -290,7 +290,7 @@ def write_keystore_for(cfg, note, root, store, udir, scan=False) -> list:
     entries = derive_entries(root, store, udir) if root is not None else {}
     if scan:
         keyed = {kv.chatid_of_relpath(r) for r in entries}
-        for name, key in scan_fallback(udir, keyed, note).items():
+        for name, key in scan_fallback(udir, keyed, note, have=set(entries)).items():
             relpath = "chat_data\\" + name
             if relpath in entries:
                 continue
@@ -462,5 +462,19 @@ def provision(cfg, note, restart_client=False, home=None, scan=False, root_file=
         return problems
     if st is not None and (st["alive"] or st["partial"]):
         return []
-    return ["no live root on this machine: capture reads the .edb rooms as no_key until one is derived "
+    # a room is read only when its keystore entry holds a verified key, so count those against the room files
+    ks = (cfg.get("sources") or {}).get("keystore")
+    try:
+        keyed = sum(1 for e in json.loads(Path(ks).read_text(encoding="utf-8")).values()
+                    if isinstance(e, dict) and e.get("header_ok") is True)
+    except (OSError, ValueError, TypeError):
+        keyed = 0
+    # the capture's room files: chatLogs_<digits>.edb only (chatListInfo.edb, cli_http_*.edb etc. are not rooms)
+    rooms = sorted(n for n in os.listdir(os.path.join(udir, "chat_data")) if re.fullmatch(r"chatLogs_[0-9]+\.edb", n)) \
+        if udir and os.path.isdir(os.path.join(udir, "chat_data")) else []
+    keyed = min(keyed, len(rooms))
+    if rooms and keyed == len(rooms):
+        return []
+    return [f"no live root on this machine: {keyed} of {len(rooms)} .edb rooms have a verified key and are read; "
+            f"the other {len(rooms) - keyed} read as no_key until a root is derived "
             "(setup --provision [--scan] recovers one)"]

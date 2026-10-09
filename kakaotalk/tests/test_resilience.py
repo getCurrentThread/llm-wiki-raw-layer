@@ -6,9 +6,10 @@ the toy app in tests/core."""
 import shutil
 import unittest
 
+from rawlayer.capture import canon
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.test_hardening import Base
-from kakaotalk.tests.helpers import capture, manifests
+from kakaotalk.tests.helpers import capture, manifests, records
 from kakaotalk.tests.test_m4 import EDB, EdbBase, rows
 
 
@@ -23,18 +24,24 @@ class TestDefectiveInputs(Base):
 
 
 class TestProducerShape(Base):
-    def test_tableless_producer_db_is_skipped_not_a_crash(self):
-        """config-git#0: merged.sqlite without its rooms table: that container is error (note missing_table),
-        the other origins commit, and the run says 'skipped' (75)."""
-        import sqlite3  # noqa: PLC0415
-        con = sqlite3.connect(self.fx.merged)
-        con.execute("DROP TABLE rooms")
-        con.commit()
-        con.close()
+    def test_unreadable_room_file_is_skipped_not_a_crash(self):
+        """A backup room file that is not a database: that container is error, the other rooms commit, and the
+        run says 'skipped' (75)."""
+        (self.fx.backup / "103.sqlite").write_bytes(b"not a database" * 100)
         self.assertEqual(capture(self.fx), 75)
         m = manifests(self.fx)[-1]
-        self.assertEqual(m["origins"]["merged_out"]["notes"].get("missing_table"), 1)
+        self.assertEqual(m["origins"]["backup_decrypted"]["containers"][canon.source_id("103.sqlite")]["status"],
+                         "error")
         self.assertTrue(any(s["origin"] == "backup_decrypted" for s in m["segments"]))
+
+    def test_bad_manifest_and_user_db_degrade_quietly(self):
+        """An unreadable _manifest.json and a corrupt TalkUserDB.sqlite cost their labels only: rooms still
+        capture, untitled and unnamed, exit 0."""
+        (self.fx.backup / "_manifest.json").write_text("{not json", encoding="utf-8")
+        (self.fx.backup / "TalkUserDB.sqlite").write_bytes(b"junk" * 64)
+        self.assertEqual(capture(self.fx), 0)
+        recs = [r for r in records(self.fx) if r["key"] == "kakao:101"]
+        self.assertEqual(recs[0]["derived"], {})            # no manifest entry, no title
 
 
 class TestGuardAtGenesis(EdbBase):

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""setup's kakaotalk side (kakaotalk/provision.py): the default sources this machine's client installation and
-kakatok research tree provide, the root-provisioning chain (an installed root stays while it unwraps the store,
-a research copy is adopted only after it verifies, the memory scan's unwrap oracle), and the setup command end
-to end on a throwaway data parent. Nothing here touches the real client, the real research tree or the real
+"""setup's kakaotalk side (kakaotalk/provision.py): the default sources (the detected client user directory and
+the app's own outputs under the data root), the root-provisioning chain (an installed root stays while it
+unwraps the store, a copy on this machine is adopted only after it verifies, the memory scan's unwrap oracle),
+and the setup command end to end on a throwaway data parent. Nothing here touches the real client or the real
 process: every input is synthetic under a temp directory, and the client lookups are patched out.
 Run from the project root, like every app suite:
 
@@ -31,16 +31,8 @@ class Notes(list):
 
 
 def fake_home(base: Path, with_research=True) -> Path:
-    """A home with the kakatok research tree's shape: the collector outputs, and a root copy."""
+    """A home holding a root copy where the adoption step looks for one."""
     home = base / "home"
-    for rel in (("Documents", "kakatok", "out", "live.sqlite"),
-                ("Documents", "kakatok", "out", "keystore_v2_full.json"),
-                ("Downloads", "kakatok", "merged", "merged.sqlite")):
-        p = home.joinpath(*rel)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(b"")
-    for rel in (("Downloads", "kakatok", "backup_decrypted"), ("Downloads", "kakatok", "decrypted_live")):
-        (home / Path(*rel)).mkdir(parents=True, exist_ok=True)
     if with_research:
         p = home / "Documents" / "kakatok" / "root_v2.hex"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -55,20 +47,16 @@ class TestDefaults(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.fx.base, onerror=lambda *a: None)
 
-    def test_research_tree_and_client_detected(self):
-        home = fake_home(self.fx.base)
+    def test_client_detected_outputs_under_the_data_root(self):
         users = self.fx.base / "users"
         udir = users / "3f"
         udir.mkdir(parents=True)
         (udir / "appstate.dat").write_bytes(b"")
         cfg = {"data_root": str(self.fx.data_root)}
-        d = provision.default_sources(cfg, home=home, users=str(users))
+        d = provision.default_sources(cfg, home=fake_home(self.fx.base), users=str(users))
         self.assertEqual(d, {
-            "merged_out": str(home / "Downloads" / "kakatok" / "merged" / "merged.sqlite"),
-            "live_out": str(home / "Documents" / "kakatok" / "out" / "live.sqlite"),
-            "backup_decrypted": str(home / "Downloads" / "kakatok" / "backup_decrypted"),
-            "decrypted_live": str(home / "Downloads" / "kakatok" / "decrypted_live"),
-            "keystore": str(home / "Documents" / "kakatok" / "out" / "keystore_v2_full.json"),
+            "backup_decrypted": str(self.fx.data_root / "backup_decrypted"),
+            "keystore": str(self.fx.data_root / "keys" / "keystore.json"),
             "kakao_user_dir": str(udir),
         })
 
@@ -81,21 +69,18 @@ class TestDefaults(unittest.TestCase):
                              "keystore": str(self.fx.data_root / "keys" / "keystore.json")})
 
     def test_fill_defaults_fills_placeholders_only(self):
-        home = fake_home(self.fx.base)
         cfg = {"data_root": str(self.fx.data_root), "sources": {
-            "merged_out": "<abs path>\\merged.sqlite",
-            "live_out": "C:\\elsewhere\\live.sqlite",          # the user's own value stays
-            "keystore": "<abs path>\\keystore_v2_full.json",
+            "backup_decrypted": "<abs dir>\\backup_decrypted",   # the placeholder is replaced
+            "keystore": "C:\\elsewhere\\keystore.json",          # the user's own value stays
         }}
         notes = Notes()
-        filled = provision.fill_defaults(cfg, home=home, users=str(self.fx.base / "no-users"), note=notes)
-        self.assertEqual(sorted(filled), ["backup_decrypted", "decrypted_live", "keystore", "merged_out"])
-        self.assertEqual(cfg["sources"]["live_out"], "C:\\elsewhere\\live.sqlite")
-        self.assertEqual(cfg["sources"]["merged_out"],
-                         str(home / "Downloads" / "kakatok" / "merged" / "merged.sqlite"))
-        self.assertEqual(cfg["sources"]["keystore"],
-                         str(home / "Documents" / "kakatok" / "out" / "keystore_v2_full.json"))
-        self.assertEqual(notes, ["default sources set: backup_decrypted, decrypted_live, keystore, merged_out"])
+        filled = provision.fill_defaults(cfg, home=fake_home(self.fx.base),
+                                         users=str(self.fx.base / "no-users"), note=notes)
+        self.assertEqual(sorted(filled), ["backup_decrypted"])
+        self.assertEqual(cfg["sources"]["keystore"], "C:\\elsewhere\\keystore.json")
+        self.assertEqual(cfg["sources"]["backup_decrypted"],
+                         str(self.fx.data_root / "backup_decrypted"))
+        self.assertEqual(notes, ["default sources set: backup_decrypted"])
 
 
 class TestRootOracle(unittest.TestCase):
@@ -251,15 +236,12 @@ class TestSetupCommand(unittest.TestCase):
         self.assertEqual(rc, 0)
         cfg = json.loads((self.parent / "kakaotalk" / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["sources"]["kakao_user_dir"], str(self.fx.user_dir))
-        self.assertEqual(cfg["sources"]["live_out"], str(self.home / "Documents" / "kakatok" / "out" / "live.sqlite"))
         self.assertEqual(cfg["sources"]["backup_decrypted"],
-                         str(self.home / "Downloads" / "kakatok" / "backup_decrypted"))
-        self.assertEqual(cfg["sources"]["keystore"], str(self.home / "Documents" / "kakatok" / "out"
-                                                         / "keystore_v2_full.json"))
+                         str(self.parent / "kakaotalk" / "backup_decrypted"))
+        self.assertEqual(cfg["sources"]["keystore"], str(self.parent / "kakaotalk" / "keys" / "keystore.json"))
         root = keychain.read_root_hex(str(self.parent / "kakaotalk" / "keys" / "root_v2.hex"))
         self.assertEqual(root, ROOT)
-        ks = json.loads((self.home / "Documents" / "kakatok" / "out" / "keystore_v2_full.json")
-                        .read_text(encoding="utf-8"))
+        ks = json.loads((self.parent / "kakaotalk" / "keys" / "keystore.json").read_text(encoding="utf-8"))
         self.assertEqual(len(ks), 2)                                # the keystore shape capture loads
         # the keystore the setup wrote re-derives cleanly (the --provision rerun's core step)
         cfgdict = json.loads((self.parent / "kakaotalk" / "config.json").read_text(encoding="utf-8"))

@@ -29,30 +29,38 @@ machine-specific paths. `<DATA_ROOT>` conventionally means `<DATA_PARENT>/kakaot
 `DATA_PARENT`, outside git work trees, with the parent's required ACL and Search exclusion. Frozen input sets
 need an existing `inputs_root`; live input resolution does not require it to exist.
 
-Capture reads the decrypted exports and room databases, and encrypted `.edb` room files read-only.
-Origins, in ledger order, are `merged_out`, `backup_decrypted`, `decrypted_live`, `live_out`, `edb`, and
-`macdb` (the macOS client's decrypted database; see the macOS section).
-The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`, `msg`, `room`,
-`hist`, `meta`, and `attachment`. The `edb` origin
-uses guarded pending-to-absent detection when a key disappears from a completely read room.
+Capture reads the decrypted backup room databases and the client's encrypted `.edb` room files read-only.
+Origins, in ledger order, are `backup_decrypted`, `edb`, and `macdb` (the macOS client's decrypted database;
+see the macOS section). The kakatok-era export origins (`merged_out`, `live_out`, `decrypted_live`) are gone:
+the app reads the client itself now, and the labels those exports carried come from the client's own
+databases. The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
+`msg`, `room`, `hist`, `meta`, and `attachment`. The `edb` origin
+uses guarded pending-to-absent detection when a key disappears from a completely read room, and titles its
+rooms from the client's own chat-list database (`chat_data/chatListInfo.edb`, decrypted with the room keys —
+the same store wraps its DEK): the client-materialised `chatRoomTitle` first, then the type-3 room-title meta,
+then the displayed member names, the Windows reading of the macOS reader's title chain. The same store keys
+the client's user database (`TalkUserDB.edb`, at the user directory's root), whose `talkUser` names label the
+senders: the account's display name (`nickName`), with the owner's own alias (`friendNickName`) only where
+the account has none — the join the kakatok research documented as the sender reconstruction. Both are read
+best-effort — a missing key means untitled or unnamed
+rooms, never an error — and only label-bearing columns are read, so records change only when the labels
+themselves change. The backup keeps its names the same way: setup's backup step decrypts the backup's own
+chat-list database and writes each room's title into the `_manifest.json` entry the `backup_decrypted` reader
+passes through as the room record's derived fields, while the decrypted `TalkUserDB.sqlite` beside the rooms
+names its senders.
 
 | `sources` key | input |
 |---|---|
-| `merged_out` | merged SQLite export of messages and rooms |
-| `live_out` | live collector SQLite database of messages and cursors |
 | `backup_decrypted` | directory of decrypted backup room databases |
-| `decrypted_live` | directory of decrypted live room databases |
 | `kakao_user_dir` | client user directory; encrypted rooms are under `chat_data` |
 | `keystore` | decryption keystore file |
 
-`live_requires_system` is a boolean (default false). True makes live capture refuse to read `live_out` unless
-running as SYSTEM; the scheduled task requires true, as in `config.example.json`. `mac_db` is an optional
+`mac_db` is an optional
 top-level path (default null): the macOS client's decrypted database, what the `macdb` origin captures. It is
 an option, not a source, so configs on machines without macOS inputs stay valid with no placeholder; when
 set, its parent directory must exist (setup's provisioning writes the file there).
-For frozen `T1`/`T2` inputs, `live_out` comes from `<inputs_root>/<set>/live/live.sqlite` and encrypted rooms
-from `<inputs_root>/<set>/kakao_user/chat_data`. Static inputs remain at their configured paths and are checked
-against the freeze's hashes.
+For frozen `T1`/`T2` inputs, encrypted rooms come from `<inputs_root>/<set>/kakao_user/chat_data`. Static
+inputs remain at their configured paths and are checked against the freeze's hashes.
 
 The record format, canonical hashes and commit protocol follow `SPEC.md` and `SPEC-CLARIFICATIONS.md` of the
 `llm-wiki` checkout. Committed records are kept in `<DATA_ROOT>/raw/ledger/<origin>/<YYYY>/` as gzipped JSONL
@@ -69,7 +77,7 @@ package:
 |---|---|
 | `kakaotalk/keystore_v2.py` | parses the client's CBOR keystore `appstate.dat` / `keystore.bin` (`info_prefix`, `salt`, `wrapped_dek_map`); the authoritative room inventory |
 | `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek`; the key-source rotation fingerprint |
-| `kakaotalk/katok_decrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe) |
+| `kakaotalk/katok_decrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
 
 Setup turns that into capture inputs (see "First-run setup" below); after it, `collect` reads the `.edb` rooms
 and the decrypted backups exactly as before — the ledger contract is unchanged; only the producers of the
@@ -82,13 +90,10 @@ keystore and `backup_decrypted` moved into this repo.
 no command can read anywhere else, the root key:
 
 - **Config defaults.** Each placeholder source the machine can name is filled before the config is written: the
-  kakatok research tree's collector outputs under the home (`Downloads\kakatok\merged\merged.sqlite`,
-  `Documents\kakatok\out\live.sqlite`, `backup_decrypted`, `decrypted_live`,
-  `Documents\kakatok\out\keystore_v2_full.json`) when those files are there, the client's live user directory
-  detected under `%LOCALAPPDATA%\Kakao\KakaoTalk\users` (the non-backup folder holding `appstate.dat`), and the
-  app's own outputs (`backup_decrypted`, `keystore`) under the data root when the tree is not. A value already
-  set — a user's own `--from` config — is never replaced; what stays a `<...>` placeholder is named after the
-  write.
+  client's live user directory detected under `%LOCALAPPDATA%\Kakao\KakaoTalk\users` (the non-backup folder
+  holding `appstate.dat`), and the app's own outputs (`backup_decrypted`, `keystore`) under the data root. A
+  value already set — a user's own `--from` config — is never replaced; what stays a `<...>` placeholder is
+  named after the write.
 - **Root provisioning.** Every room DEK is wrapped under the 32-byte root, and on-disk artifacts do not hold it
   (`profile.dat`'s plaintext is a stray value; the live root comes out of the client's Themida-VM transform —
   the kakatok research). Setup installs it in three steps, each verified against the client's own store, unwrap
@@ -154,12 +159,12 @@ Two pieces put a Mac into the ledger:
   and `room` records titled the way the client names rooms (`chatName`, the
   `NTChatMeta` type-3 title, the open-link name, the direct-chat partner). Message keys
   are the ones every origin uses, so a message seen on both a PC and a Mac is one row across origins; search
-  takes macdb text after `edb` and before `decrypted_live`, its titles after `live_out`, and its sender names
-  (from `NTUser`) at `live_out`'s rank. A database without `NTChatMessage` (a placeholder) is noted `not_mac`
-  and captures nothing. The search index stamps moved to `kakao-3` for the widened origin set: the first
-  index step after upgrading rebuilds once.
+  takes macdb text after `edb` and before `backup_decrypted`, its titles after `edb`, and its sender names
+  (from `NTUser`) at the live client's rank. A database without `NTChatMessage` (a placeholder) is noted `not_mac`
+  and captures nothing. The search index stamps moved to `kakao-4` when the retired kakatok export origins left
+  and the client's own user database began naming senders: the first index step after upgrading rebuilds once.
 
-A minimal macOS deployment: the same config with the six kakatok sources pointing at placeholder files
+A minimal macOS deployment: the same config with the PC-only sources pointing at placeholder files
 (an empty file is a valid empty SQLite database for the origins you do not capture), `"mac_db"` set to the
 decrypted database path, then `manage.py setup kakaotalk` and `manage.py collect kakaotalk --origins macdb`.
 
@@ -213,16 +218,18 @@ python -s -B manage.py search kakaotalk --room "<title fragment>" --before <curs
 python -s -B manage.py search kakaotalk --list-rooms
 ```
 
-- **One row per message key.** Each key `kakao:<chatId>:msg:<logId>` has one row across the six Kakao
+- **One row per message key.** Each key `kakao:<chatId>:msg:<logId>` has one row across the three Kakao
   origins.
 - **Text.** It comes from the best origin whose latest capture of the message has text, in the order edb >
-  macdb > decrypted_live > backup_decrypted > live_out > merged_out. An origin that has since tombstoned or
+  macdb > backup_decrypted. An origin that has since tombstoned or
   emptied the message does not outrank another origin's current text with its old one. A message deleted for
   everyone, or deleted locally, keeps the last text that was captured.
 - **Flags.** `deleted` rows are hidden unless `--include-deleted`. `gone` means no origin holds the message
   any more. `edited` means an origin's text changed between captures.
-- **Labels.** Sender names come from the merged and live exports and the macOS database's NTUser, room titles
-  from the newest capture.
+- **Labels.** Sender names come from the client's own user database — `TalkUserDB` read beside the rooms
+  (`edb`) and from the backup's decrypted copy (`backup_decrypted`; the accounts' display names, the live
+  client's winning a tie) — and the macOS database's NTUser; room titles from the newest capture (the
+  client's chat-list database for `edb` rooms, the manifest titles for the backup's).
   Renames relabel old rows.
 - **Filters.** `--room` (title substring or chat id, repeatable), `--sender` (name substring or author id),
   `--since` / `--until`.

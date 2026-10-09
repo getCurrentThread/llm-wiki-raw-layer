@@ -310,28 +310,10 @@ class TestEdbPolicy(EdbBase):
 
 
 class TestEdbMixedLayout(EdbBase):
-    """One hand-made layout across edb, backup_decrypted and live_out (deleted and 0x4000 rows, a revised row with
-    history, a file without a key, a key without a file, a header_ok false entry), then a round in which an edb file
-    disappears and live gains a chat without a cursor. Formerly the C1/C5/C6/C7 fixture; what is asserted here is
+    """One hand-made layout across edb and backup_decrypted (deleted and 0x4000 rows, a revised row with
+    history, a file without a key, a key without a file, a header_ok false entry), then a round in which an edb
+    file disappears and a new room arrives. Formerly the C1/C5/C6/C7 fixture; what is asserted here is
     capture's side: exit codes, room statuses, what each origin recorded, and the ledger invariants."""
-
-    def live(self, rooms, cursors):
-        """rooms: {chat: [(lid, type, deleted, message)]}, cursors: {chat: last_logId}."""
-        from kakaotalk.tests.test_m3 import LIVE_DDL  # noqa: PLC0415
-        import sqlite3  # noqa: PLC0415
-        if self.fx.live.exists():
-            self.fx.live.unlink()
-        con = sqlite3.connect(self.fx.live)
-        con.executescript(LIVE_DDL)
-        for chat, rs in rooms.items():
-            for lid, typ, deleted, text in rs:
-                con.execute("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (str(chat), str(lid), E.T0 + lid * 60, "7", typ, deleted, text, "s", "t", "d", "live", 5))
-        for chat, last in cursors.items():
-            n = len(rooms.get(chat, []))
-            con.execute("INSERT INTO cursors VALUES (?,?,?,?,?,?,?)", (str(chat), str(last), "r", n, 0, 0, 0))
-        con.commit()
-        con.close()
 
     def test_mixed_layout(self):
         m = E.msg
@@ -351,38 +333,29 @@ class TestEdbMixedLayout(EdbBase):
                             [m(301, 1), m(301, 2, text="abc"), m(301, 3, text="orig"), m(301, 4, text="same4"),
                              m(301, 5, text="y"), m(301, 7), m(301, 8, text="old8")])
         E.plain_backup_room(self.fx.backup / "302.sqlite", rows(302, 1, 2))
-        self.live({301: [(2, 1, 0, "abc"), (3, 1, 0, "orig"), (4, 1, 0, "same4"), (5, 1, 0, "y"), (8, 1, 0, "new8"),
-                         (9, 1, 0, "n9"), (11, 1, 0, "hi")],
-                   304: [(1, 1, 0, "a")], 305: [(1, 1, 0, "e305-1")]},
-                  {301: 11, 304: 1, 305: 0})
-        self.assertEqual(capture(self.fx, ["backup_decrypted", "live_out", "edb"]), 0)
+        self.assertEqual(capture(self.fx, ["backup_decrypted", "edb"]), 0)
         self.assertEqual(invariants(self.fx)[0], {})
         self.assertEqual({c: self.cont(c)["status"] for c in (301, 303, 305, 306, 309)},
                          {301: "clean", 303: "clean", 305: "clean", 306: "clean", 309: "no_key"})
         rooms = {o: sorted(r["key"] for r in records(self.fx) if r["origin"] == o and r["kind"] == "room")
-                 for o in ("edb", "backup_decrypted", "live_out")}
+                 for o in ("edb", "backup_decrypted")}
         self.assertEqual(rooms, {"edb": ["kakao:301", "kakao:303", "kakao:305", "kakao:306"],
-                                 "backup_decrypted": ["kakao:301", "kakao:302"],
-                                 "live_out": ["kakao:301", "kakao:304", "kakao:305"]})
+                                 "backup_decrypted": ["kakao:301", "kakao:302"]})
         msgs = {o: sorted(int(r["key"].split(":")[3]) for r in records(self.fx)
                           if r["origin"] == o and r["key"].startswith("kakao:301:msg:"))
-                for o in ("edb", "backup_decrypted", "live_out")}
-        self.assertEqual(msgs, {"edb": [1, 2, 3, 4, 5, 6, 8, 11], "backup_decrypted": [1, 2, 3, 4, 5, 7, 8],
-                                "live_out": [2, 3, 4, 5, 8, 9, 11]})
+                for o in ("edb", "backup_decrypted")}
+        self.assertEqual(msgs, {"edb": [1, 2, 3, 4, 5, 6, 8, 11], "backup_decrypted": [1, 2, 3, 4, 5, 7, 8]})
         edb = {r["key"]: r for r in records(self.fx) if r["origin"] == "edb"}
         self.assertEqual(edb["kakao:301:msg:2"]["native"]["type"], 1 | 0x4000)
         self.assertIn("kakao:301:hist:8:1", edb)
-        # next round: an edb file disappears, and live gains a chat with messages but no cursor
+        # next round: an edb file disappears, and a new room arrives
         (self.cd / "chatLogs_303.edb").unlink()
-        self.live({301: [(2, 1, 0, "abc"), (3, 1, 0, "orig"), (4, 1, 0, "same4"), (5, 1, 0, "y"), (8, 1, 0, "new8"),
-                         (9, 1, 0, "n9"), (11, 1, 0, "hi")],
-                   304: [(1, 1, 0, "a")], 305: [(1, 1, 0, "e305-1")], 310: [(1, 1, 0, "b")]},
-                  {301: 11, 304: 1, 305: 0})
-        self.assertEqual(capture(self.fx, ["live_out", "edb"]), 0)
+        self.room(310, [m(310, 1, text="b")])
+        self.assertEqual(capture(self.fx, ["backup_decrypted", "edb"]), 0)
         o = self.edb()
         self.assertEqual((o["status"], o["notes"].get("room_gone"), o["pending"]["add"]), ("ok", 1, []))
         new = sorted(r["key"] for r in records(self.fx) if r["seq"] == 2)
-        self.assertEqual(new, ["kakao:310:msg:1"])
+        self.assertEqual(new, ["kakao:310", "kakao:310:msg:1", "kakao:310@chatLogHistory", "kakao:310@chatLogs"])
         self.assertEqual(invariants(self.fx)[0], {})
         self.assertEqual(replay_diff(self.fx), 0)
 

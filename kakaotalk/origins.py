@@ -19,50 +19,20 @@ class KakaoOrigin(Origin):
         kstate.apply_schema_base(cur, rec)
 
 
-class MergedOut(KakaoOrigin):
-    """kakatok's merged.sqlite (messages + rooms), one container."""
-    name = "merged_out"
-
-    def read(self, ctx):
-        return out.merged_containers(ctx)
-
-
 class BackupDecrypted(KakaoOrigin):
-    """Decrypted talk-backup room DBs, <chatId>.sqlite (static)."""
+    """Decrypted talk-backup room DBs, <chatId>.sqlite (static), titled and named by the backup's own
+    client databases through the manifest and the sibling TalkUserDB.sqlite."""
     name = "backup_decrypted"
 
     def read(self, ctx):
-        return out.static_room_containers(ctx, self.name)
-
-
-class DecryptedLive(KakaoOrigin):
-    """Room DBs kakatok decrypted from the running client, <chatId>.sqlite (static)."""
-    name = "decrypted_live"
-
-    def read(self, ctx):
-        return out.static_room_containers(ctx, self.name)
-
-
-class LiveOut(KakaoOrigin):
-    """kakatok's live collector DB (messages + cursors), copied into memory in one step (SPEC 10.2)."""
-    name = "live_out"
-
-    def read(self, ctx):
-        return out.live_containers(ctx)
-
-    def estimate_peak(self, inputs):
-        # main + WAL: an upper bound for its spill of new records
-        p = Path(inputs.live_out)
-        return fsio.size(p) + fsio.size(p.with_name(p.name + "-wal"))
-
-    def requires_system(self, cfg, input_set):
-        return input_set == "live" and cfg.live_requires_system
+        return out.backup_containers(ctx)
 
 
 class Edb(PendingAbsentMixin, KakaoOrigin):
     """The PC client's encrypted room DBs, chat_data/chatLogs_<chatId>.edb (SPEC 10.3, 10.4): a room that does not
     read completely is routine (no key yet, rekeyed, mid-write), so missing keys go through pending -> absent
-    behind the shrink guard."""
+    behind the shrink guard. The client's own chat-list and user databases beside the rooms title the rooms
+    and name the senders."""
     name = "edb"
     statuses = PendingAbsentMixin.statuses | {"rekeyed", "no_key", "unreadable"}
     fail_statuses = frozenset({"unstable", "rekeyed", "no_key", "unreadable"})
@@ -107,4 +77,4 @@ class MacDb(KakaoOrigin):
         return fsio.size(p) if p is not None else 0
 
 
-ORIGINS = (MergedOut, BackupDecrypted, DecryptedLive, LiveOut, Edb, MacDb)
+ORIGINS = (BackupDecrypted, Edb, MacDb)

@@ -38,7 +38,7 @@ class TestCapture(Base):
         self.assertIn("kakao:101:hist:1:1", recs)
         self.assertIn("kakao:101:meta:2:3", recs)
         self.assertEqual(recs["kakao:101"]["native"], {"chatId": "101"})            # Q1
-        self.assertEqual(recs["kakao:101"]["derived"], {"from": "a", "rows": 3, "to": "b"})
+        self.assertEqual(recs["kakao:101"]["derived"], {"from": "a", "rows": 3, "to": "b", "title": "r"})
         for r in recs.values():
             self.assertEqual(r["h"], canon.record_h(r["native"], r["derived"]))
         blob = b"".join(gzip.open(Config(self.fx.config_path).raw.joinpath(*s["path"].split("/"))).read()
@@ -61,10 +61,11 @@ class TestCapture(Base):
         bad, nums = invariants(self.fx)
         self.assertEqual(bad, {})
         self.assertEqual(nums["containers_skipped"], 0)
-        self.assertEqual(nums["containers_checked"], 4)        # merged, 101, 102, 201
+        self.assertEqual(nums["containers_checked"], 2)        # the backup rooms 101, 102
         self.assertEqual(replay_diff(self.fx), 0)
-        # the merged rows of the standard fixture: 10 messages from three rooms (2^53 row included)
-        self.assertEqual(sum(1 for r in records(self.fx) if r["origin"] == "merged_out" and r["kind"] == "msg"), 10)
+        # the backup rooms of the standard fixture: 6 messages (the 2^53 row included)
+        self.assertEqual(sum(1 for r in records(self.fx) if r["origin"] == "backup_decrypted"
+                             and r["kind"] == "msg"), 6)
 
     def test_pk_bad(self):
         p = self.fx.backup / "103.sqlite"
@@ -109,19 +110,15 @@ class TestCapture(Base):
         con.execute("UPDATE chatLogs SET message='changed' WHERE logId=2")
         con.commit()
         con.close()
-        con = sqlite3.connect(self.fx.dlive / "201.sqlite")
-        con.execute("UPDATE chatLogs SET message='changed' WHERE logId=1")
-        con.commit()
-        con.close()
         self.assertEqual(capture(self.fx), 3)
         m = manifests(self.fx)[1]
         self.assertEqual(m["origins"]["backup_decrypted"]["status"], "suspect")
         self.assertEqual(m["origins"]["backup_decrypted"]["notes"]["vanished"], 1)
         self.assertEqual(m["origins"]["backup_decrypted"]["counts"]["put"], 0)
-        self.assertEqual({s["origin"] for s in m["segments"]}, {"decrypted_live"})
+        self.assertEqual(m["segments"], [])                    # the suspect origin commits nothing
         bad, nums = invariants(self.fx)
         self.assertEqual(bad, {})                                   # Q2: facts skip the suspect origin
-        self.assertEqual((nums["containers_checked"], nums["containers_skipped"]), (2, 2))   # backup: 101, 102
+        self.assertEqual((nums["containers_checked"], nums["containers_skipped"]), (0, 2))   # backup: 101, 102
 
     def test_determinism_two_roots(self):
         self.assertEqual(capture(self.fx), 0)

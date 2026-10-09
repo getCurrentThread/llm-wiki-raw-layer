@@ -41,6 +41,10 @@ CREATE TABLE chatLogDrafts(chatId INTEGER PRIMARY KEY, draft TEXT);
 CREATE TABLE chatLogOutdated(logId INTEGER PRIMARY KEY);
 """
 
+USER_DDL = """
+CREATE TABLE talkUser(userId INTEGER PRIMARY KEY, type INTEGER, nickName TEXT, friendNickName TEXT);
+"""
+
 T0 = 1_600_000_000
 
 
@@ -58,6 +62,14 @@ def make_room(path, chat, n=3, extra_rows=(), hist=(), meta=(), att=(), draft=Tr
     return rows
 
 
+def make_user_db(path, names):
+    """The backup's decrypted user database: {userId: (nickName, friendNickName)}. Replaces the file."""
+    path = Path(path)
+    if path.exists():
+        path.unlink()
+    _db(path, USER_DDL, {"talkUser": [(uid, 0, nick, friend) for uid, (nick, friend) in sorted(names.items())]})
+
+
 class Fixture:
     """A full set of input paths plus a data root, laid out like config.json expects. Every path is a Path."""
 
@@ -66,19 +78,13 @@ class Fixture:
         b = self.base
         self.inputs = b / "in"
         self.data_root = b / "data"
-        self.merged = self.inputs / "merged" / "merged.sqlite"
-        self.live = self.inputs / "live" / "live.sqlite"
         self.backup = self.inputs / "backup_decrypted"
-        self.dlive = self.inputs / "decrypted_live"
         self.user_dir = self.inputs / "kakao_user"
         self.keystore = self.inputs / "keys" / "keystore.json"
-        for d in (self.merged.parent, self.live.parent, self.backup, self.dlive, self.user_dir / "chat_data",
-                  self.keystore.parent, self.data_root):
+        for d in (self.backup, self.user_dir / "chat_data", self.keystore.parent, self.data_root):
             d.mkdir(parents=True, exist_ok=True)
         with self.keystore.open("w", encoding="utf-8") as fh:
             json.dump({}, fh)
-        for p in (self.merged, self.live):          # empty files are valid empty SQLite databases
-            p.write_bytes(b"")
         self.config_path = b / "config.json"
         self.write_config()
 
@@ -95,8 +101,7 @@ class Fixture:
         # config.json holds text: a data_root the caller passed as a str is written as given
         cfg = {"v": 1, "impl": "claude", "data_root": os.fspath(data_root or self.data_root),
                "inputs_root": str(frozen),
-               "sources": {"merged_out": str(self.merged), "live_out": str(self.live),
-                           "backup_decrypted": str(self.backup), "decrypted_live": str(self.dlive),
+               "sources": {"backup_decrypted": str(self.backup),
                            "kakao_user_dir": str(self.user_dir), "keystore": str(self.keystore)},
                "kb_search": str(kb), "kakatok_oracle_dir": str(oracle)}
         with self.config_path.open("w", encoding="utf-8") as fh:
@@ -104,36 +109,25 @@ class Fixture:
         return self.config_path
 
     def standard(self):
-        """Two backup rooms, one decrypted_live room, merged built by the build_merged rule, a live db."""
+        """Two backup rooms (titled by the manifest, senders named by the TalkUserDB beside them)."""
         r101 = make_room(self.backup / "101.sqlite", 101, 3,
                          hist=[(1, 1, "old")], meta=[(2, 0, 3, "c", None)], att=[(3, b"\x00\x01")])
         r102 = make_room(self.backup / "102.sqlite", 102, 2,
                          extra_rows=[(BIG, 102, 1, 7, b"\xffbin", None, T0 + 99, 0, 2)])
-        r201 = make_room(self.dlive / "201.sqlite", 201, 4)
-        _db(self.backup / "TalkUserDB.sqlite", "CREATE TABLE t(a);", {})
-        self.write_producer_manifest(self.backup, {"101": len(r101), "102": len(r102)})
-        self.write_producer_manifest(self.dlive, {"201": len(r201)})
-        merged = []
-        for chat, rows, src in ((201, r201, "live"), (101, r101, "backup"), (102, r102, "backup")):
-            for (lid, _c, typ, author, msg, _a, send, deleted, _p) in rows:
-                merged.append((str(chat), str(lid), send, str(author), typ, deleted, msg, "s", "t", "d", src))
-        _db(self.merged, """
-            CREATE TABLE messages(chatId TEXT, logId TEXT, sendAt INTEGER, authorId TEXT, type INTEGER,
-              deleted INTEGER, message TEXT, sender TEXT, type_name TEXT, date TEXT, source TEXT);
-            CREATE TABLE rooms(chatId TEXT, title TEXT, messages INTEGER, first TEXT, last TEXT, sources TEXT);""",
-            {"messages": merged, "rooms": [("101", "r", 3, "a", "b", "backup"), ("201", "r", 4, "a", "b", "live")]})
-        _db(self.live, """
-            CREATE TABLE messages(chatId TEXT, logId TEXT, sendAt INTEGER, authorId TEXT, type INTEGER,
-              deleted INTEGER, message TEXT, sender TEXT, type_name TEXT, date TEXT, source TEXT, captured_at INTEGER);
-            CREATE TABLE cursors(chatId TEXT, last_logId TEXT, title TEXT, count INTEGER, first_ts INTEGER,
-              last_ts INTEGER, updated_at INTEGER);""", {})
+        make_user_db(self.backup / "TalkUserDB.sqlite", {7: ("Beta", None)})
+        self.write_producer_manifest(self.backup, {"101": len(r101), "102": len(r102)},
+                                     titles={"101": "r", "102": "r2"})
         return self
 
     @staticmethod
-    def write_producer_manifest(root, rows_by_chat):
-        d = {"decrypted": [{"chatId": c, "rows": n, "from": "a", "to": "b"} for c, n in sorted(rows_by_chat.items())],
-             "updated": "x"}
+    def write_producer_manifest(root, rows_by_chat, titles=None):
+        entries = []
+        for c, n in sorted(rows_by_chat.items()):
+            e = {"chatId": c, "rows": n, "from": "a", "to": "b"}
+            t = (titles or {}).get(c)
+            if t:
+                e["title"] = t
+            entries.append(e)
         with (Path(root) / "_manifest.json").open("w", encoding="utf-8") as fh:
-            json.dump(d, fh)
-
+            json.dump({"decrypted": entries, "updated": "x"}, fh)
 

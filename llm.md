@@ -853,7 +853,24 @@ Recovery:
 
 ### 6.5 kakaotalk
 
-Owner-only (rule 2). This file contains no procedure for it.
+Owner-triggered only (rule 2). Run these steps only when the owner names kakaotalk in that request; a general
+"set up the apps" or "check health" request does not cover them. Read only the summary lines each command prints,
+never config values, room names or message text. Stop and report on any refusal.
+
+1. **Setup.** `python -s -B manage.py setup kakaotalk`: creates the data root and `config.json`, sets the default
+   sources, decrypts the backup. Exit 0, or exit 3 with `fill in config.json: <keys>`. `bootstrap.py config` refuses
+   kakaotalk, so the owner fills those keys by hand; the agent does not write them.
+2. **Live root (scan).** `python -s -B manage.py setup kakaotalk --provision --scan --restart-client`: scans the
+   running `KakaoTalk.exe` memory for the root key, restarting the client first so the key is in memory. It can take
+   up to 1200 s. Preconditions: the owner is at the machine and has saved or closed anything open in KakaoTalk, since
+   the restart closes the client. Run it with a command timeout of at least 1200 s, or in the background and poll its
+   output every 60 s until it exits. Do not kill it part-way. Report the summary lines: a live root found, or `the client's memory holds no root` (then capture reads the
+   `.edb` rooms as `no_key` until a root is derived).
+3. **Check.** `python -s -B manage.py check kakaotalk`: report its pass/fail lines.
+4. **Index.** `python -s -B manage.py collect kakaotalk` builds the index. Run it only when the owner asks for it
+   separately (AGENTS.md).
+5. **Schedule.** `python -s -B manage.py schedule install kakaotalk --dry-run` first, which changes nothing.
+   `install` (elevated) only after the owner has seen the dry-run result and confirmed it.
 
 ## 7. Human-in-the-loop handshakes
 

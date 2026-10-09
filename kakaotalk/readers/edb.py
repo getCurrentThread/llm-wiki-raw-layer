@@ -6,11 +6,17 @@ first 16 bytes (the salt) in clear. The WAL is applied up to its last valid comm
 cumulative frame checksums over the stored (encrypted) bytes. The plaintext image only ever exists in
 raw/.work/<run>/ and is removed as soon as the room is dumped.
 
+Room titles come from the client's own chat-list database beside the rooms (chatListInfo.edb, the same page
+format and key store; the title chain is roomlist's). It is read best-effort — no key for it, or a file that
+does not read, means untitled rooms, never an error — and only the title-bearing columns are looked at, so a
+room record changes only when its title itself changes.
+
 kakatok's edb_reader is a test oracle only; nothing here imports it."""
 import hashlib
 import json
 import re
 import secrets
+import sqlite3
 import struct
 import time
 from pathlib import Path
@@ -21,6 +27,7 @@ from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Container, ContainerError, Obs
 
 from . import dumper
+from .. import roomlist
 from ..state import base_for, edb_salt
 
 PAGE = 4096
@@ -32,6 +39,8 @@ SQLITE_MAGIC = b"SQLite format 3\x00"
 WAL_MAGICS = (0x377F0682, 0x377F0683)
 _FILE = re.compile(r"^chatLogs_([0-9]+)\.edb$")
 _KEY_REL = re.compile(r"^chat_data\\chatLogs_([0-9]+)\.edb$")
+LIST_FILE = "chatListInfo.edb"
+LIST_REL = "chat_data\\" + LIST_FILE
 ATTEMPTS = 3
 
 
@@ -64,6 +73,86 @@ def load_keystore(path):
 def chat_of(name):
     m = _FILE.fullmatch(name)
     return m.group(1) if m else None
+
+
+def load_list_key(path):
+    """The chat-list database's own key from the keystore (chatListInfo.edb is not a room, but its DEK is
+    wrapped in the same store and setup's derivation carries it), or None. Keys never leave this process."""
+    return load_extra_key(path, LIST_REL)
+
+
+def load_extra_key(path, rel):
+    """Any non-room database's key from the keystore (its DEK is wrapped in the same store), or None."""
+    d = json.loads(fsio.read_shared(path))
+    if not isinstance(d, dict):
+        raise ValueError("keystore shape")
+    e = d.get(rel)
+    if not isinstance(e, dict) or e.get("header_ok") is not True:
+        return None
+    try:
+        k = bytes.fromhex(e.get("key_hex") or "")
+    except (ValueError, TypeError):
+        return None
+    return k if len(k) == 32 else None
+
+
+def list_titles(d, key, work_dir):
+    """{chatId: title} from the client's chat-list database next to the rooms (chatListInfo.edb, the same page
+    format and WAL rules), or {} when it does not read or names nothing. Best-effort by design: the rooms are
+    the origin's business, the list only titles them, so a missing key or an unreadable file degrades to
+    untitled rooms -- never an error."""
+    try:
+        main, wal, _st = stable_read(d / LIST_FILE, d / (LIST_FILE + "-wal"))
+        img, _facts = build_image(key, main, wal)
+        del main, wal
+        if img is None or not header_ok(img):
+            return {}
+        tmp = Path(work_dir) / (secrets.token_hex(8) + ".sqlite")
+        try:
+            tmp.write_bytes(img)
+            del img
+            con = fsio.connect_ro(tmp, immutable=True)
+            try:
+                return roomlist.chat_titles(con)
+            finally:
+                con.close()
+        finally:
+            fsio.remove_file(tmp)
+            for suf in ("-wal", "-shm", "-journal"):
+                fsio.remove_file(tmp.with_name(tmp.name + suf))
+    except (ContainerError, sqlite3.Error, OSError, ValueError):
+        return {}
+
+
+USERS_FILE = "TalkUserDB.edb"
+USERS_REL = USERS_FILE          # the store wraps it under the user directory's root
+
+
+def user_names(user_dir, key, work_dir):
+    """Sender names from the client's own user database beside the rooms (TalkUserDB.edb at the user
+    directory's root, the same page format and key store), or {} -- best-effort, like the titles. The names
+    are the accounts' display names (nickName; the owner's own alias only where the account has none)."""
+    try:
+        main, wal, _st = stable_read(Path(user_dir) / USERS_FILE, Path(user_dir) / (USERS_FILE + "-wal"))
+        img, _facts = build_image(key, main, wal)
+        del main, wal
+        if img is None or not header_ok(img):
+            return {}
+        tmp = Path(work_dir) / (secrets.token_hex(8) + ".sqlite")
+        try:
+            tmp.write_bytes(img)
+            del img
+            con = fsio.connect_ro(tmp, immutable=True)
+            try:
+                return roomlist.user_names(con)
+            finally:
+                con.close()
+        finally:
+            fsio.remove_file(tmp)
+            for suf in ("-wal", "-shm", "-journal"):
+                fsio.remove_file(tmp.with_name(tmp.name + suf))
+    except (ContainerError, sqlite3.Error, OSError, ValueError):
+        return {}
 
 
 def edb_sid(chat):
@@ -194,11 +283,22 @@ def stable_read(main_p, wal_p, sleep=None):
 def edb_containers(ctx):
     d = Path(ctx.inputs.edb_dir)
     keys, _all, _ok = load_keystore(ctx.inputs.keystore)
+    titles, names = {}, {}
+    lkey = load_list_key(ctx.inputs.keystore)
+    if lkey is not None and (d / LIST_FILE).exists():
+        titles = list_titles(d, lkey, ctx.work_dir)
+        if titles:
+            ctx.origin_notes["edb"]["titled"] = len(titles)
+    ukey = load_extra_key(ctx.inputs.keystore, USERS_REL)
+    if ukey is not None and (d.parent / USERS_FILE).exists():
+        names = user_names(d.parent, ukey, ctx.work_dir)
+        if names:
+            ctx.origin_notes["edb"]["named"] = len(names)
     notes = ctx.origin_notes["edb"]
-    names = sorted(p.name for p in d.iterdir())  # no chat_data directory is a broken input (origin error), not 0 rooms
+    names = names or None
     out = []
     present = set()
-    for name in names:
+    for name in sorted(p.name for p in d.iterdir()):  # no chat_data directory is a broken input (origin error)
         if not name.endswith(".edb"):
             continue
         m = _FILE.fullmatch(name)
@@ -207,7 +307,7 @@ def edb_containers(ctx):
             continue
         chat = m.group(1)
         present.add(chat)
-        out.append(_room(ctx, d, name, chat, keys.get(chat)))
+        out.append(_room(ctx, d, name, chat, keys.get(chat), titles.get(chat), names))
     before = {r[0][len("kakao:"):] for r in ctx.state.execute(
         "SELECT key FROM heads WHERE origin='edb' AND kind='room' AND op='put'")}
     gone = len(before - present)
@@ -216,7 +316,7 @@ def edb_containers(ctx):
     return out
 
 
-def _room(ctx, d, name, chat, key):
+def _room(ctx, d, name, chat, key, title=None, names=None):
     rel = "chat_data/" + name
     main_p = d / name
     wal_p = d / (name + "-wal")
@@ -251,8 +351,10 @@ def _room(ctx, d, name, chat, key):
         if con.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise ContainerError("unreadable", "quick_check")
         c.tables = dumper.table_counts(con)
-        yield Obs("room", f"kakao:{chat}", {"chatId": chat, "salt_fp": salt_fp}, {}, None, c.asof_s)
-        yield from dumper.iter_room_obs(con, chat, base_for(ctx, "edb"), c.notes, c.asof_s)
+        yield Obs("room", f"kakao:{chat}",
+                  {"chatId": chat, "salt_fp": salt_fp},
+                  {"title": title} if title else {}, None, c.asof_s)
+        yield from dumper.iter_room_obs(con, chat, base_for(ctx, "edb"), c.notes, c.asof_s, names=names)
         # immutable=1 never writes beside the image; a sidecar means it was not read as one frozen file
         if any(tmp.with_name(tmp.name + suf).exists() for suf in ("-wal", "-shm", "-journal")):
             raise ContainerError("unreadable", "sidecar_left")
