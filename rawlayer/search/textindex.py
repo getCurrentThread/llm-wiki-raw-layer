@@ -74,6 +74,14 @@ A literal term is checked with rs_contains() (see register_functions()) and, whe
 narrowed through the index by a phrase that is a necessary condition: the term tokenised the same
 way, minus the token of a Latin run that is open on the left, with a prefix `*` on a Latin run
 that is open on the right.
+
+TITLE COLUMN (opt-in: fts_ddl(title=True))
+------------------------------------------
+An index whose rows carry a title (a mail subject, a page title) may add a second shadow column
+`tng` = title_ng(title, ng): the title's tokens, but only when they occur as one contiguous run of
+`ng`, else ''. Every phrase found in `tng` is then also found in `ng`, so the extra column never
+changes which rows a query matches (the truth above stays exact); title_rank() makes the FTS
+table's `rank` weigh a `tng` match TITLE_WEIGHT times an `ng` match, so title hits rank first.
 """
 
 import re
@@ -389,11 +397,25 @@ def register_functions(con) -> None:
     con.create_function(CONTAINS_FN, 2, contains, deterministic=True)
 
 
-def fts_ddl(content_table: str, fts_table: str = "", rowid_col: str = "id") -> str:
-    """CREATE statement for the external-content FTS5 index over `content_table`.ng."""
+def fts_ddl(content_table: str, fts_table: str = "", rowid_col: str = "id", title: bool = False) -> str:
+    """CREATE statement for the external-content FTS5 index over `content_table`.ng (and .tng with title)."""
     fts_table = fts_table or content_table + "_fts"
-    return (f"CREATE VIRTUAL TABLE {fts_table} USING fts5(ng, content='{content_table}', "
+    return (f"CREATE VIRTUAL TABLE {fts_table} USING fts5({'ng, tng' if title else 'ng'}, content='{content_table}', "
             f"content_rowid='{rowid_col}', tokenize='{FTS_TOKENIZE}')")
+
+
+TITLE_WEIGHT = 3.0
+
+
+def title_ng(title: str, ng: str) -> str:
+    """The `tng` value of a row: ng_text(title) if its tokens are one contiguous run of `ng`, else ''."""
+    t = ng_text(title)
+    return t if t and f" {t} " in f" {ng} " else ""
+
+
+def title_rank(fts_table: str) -> str:
+    """Statement that stores the rank function of a title index (run once, after fts_ddl(title=True))."""
+    return f"INSERT INTO {fts_table}({fts_table}, rank) VALUES('rank', 'bm25(1.0, {TITLE_WEIGHT})')"
 
 
 def sql_parts(q: Query, content_table: str, fts_table: str = "", *, alias: str = "t",

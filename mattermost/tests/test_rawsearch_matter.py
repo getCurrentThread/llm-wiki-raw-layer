@@ -235,6 +235,19 @@ class TestBuild(Scenario):
 
 
 class TestSearch(Scenario):
+    def test_chunk_units_cover_the_live_posts_in_order(self):
+        from rawlayer.search import dense
+        con, _meta, _fresh = common.open_search(self.dr, matter.SPEC)
+        self.addCleanup(con.close)
+        units = {c: matter.DRIVER.chunk_units(con, c) for c in matter.DRIVER.changed_containers(con, 0)}
+        live = {r[0] for r in con.execute("SELECT post_id FROM matter WHERE deleted=0 AND system=0 AND message!=''")}
+        self.assertEqual(sorted(u[0] for _, us in units.values() for u in us), sorted(live))
+        for label, us in units.values():
+            self.assertTrue(label or not us)
+            self.assertEqual([u[1] for u in us], sorted(u[1] for u in us))
+        chunks, _containers = dense.plan(con, matter.DRIVER, 0)
+        self.assertTrue(chunks and all(set(v[1]) <= live for v in chunks.values()))
+
     def test_tokenizer_regressions_end_to_end(self):
         self.assertEqual(keys(search(self.cfg, "10월")), [k("pa01"), k("pa13")])        # '10월' finds '10월에'
         self.assertEqual(keys(search(self.cfg, "3시")), [k("pb01")])
@@ -244,8 +257,26 @@ class TestSearch(Scenario):
         self.assertEqual(keys(search(self.cfg, "rapid")), [k("pa05")])
         self.assertEqual(keys(search(self.cfg, "\"100%\"")), [k("pb04")])
 
+    def test_korean_normalization(self):
+        env = search(self.cfg, "회의는")                  # pa01 "회의는 10월에 합니다", pa15 "회의록.hwp ..."
+        self.assertEqual((env["normalized_query"], env["relaxed"]), ("회의", False))
+        self.assertEqual(ids(env)[0], "pa01")             # the typed form first
+        self.assertIn("pa15", ids(env))
+        self.assertEqual(env["total"], search(self.cfg, "회의")["total"])
+        lit = search(self.cfg, "회의는", "--literal")
+        self.assertEqual((ids(lit), lit["normalized_query"]), (["pa01"], None))
+        self.assertEqual(search(self.cfg, "회의는", "--mode", "count")["total"], env["total"])
+        env = search(self.cfg, "회의는 존재안함")          # no row has both: any of them, flagged
+        self.assertEqual((env["relaxed"], env["normalized_query"]), (True, "회의 OR 존재안"))
+        self.assertEqual(sorted(ids(env)), ["pa01", "pa15"])
+        self.assertEqual(search(self.cfg, "회의는 존재안함", "--literal")["total"], 0)
+        self.assertEqual(search(self.cfg, "회의는 존재안함", "--mode", "count")["total"], 0)     # counts never relax
+
     def test_hidden_and_kept_text(self):
-        self.assertEqual(search(self.cfg, "답글 둘")["total"], 0)
+        self.assertEqual(search(self.cfg, "답글 둘", "--mode", "count")["total"], 0)
+        env = search(self.cfg, "답글 둘")                  # relaxed to 답글: still not the deleted reply
+        self.assertTrue(env["relaxed"])
+        self.assertNotIn("pa07", ids(env))
         env = search(self.cfg, "답글 둘", "--include-deleted")
         self.assertEqual((keys(env), env["rows"][0]["deleted"], env["rows"][0]["text"]),
                          ([k("pa07")], True, "배포 스레드 답글 둘"))
@@ -259,7 +290,8 @@ class TestSearch(Scenario):
 
     def test_versions_search(self):
         for q in ("수정 전", "초안"):          # a replaced text is not searchable, deleted or not
-            self.assertEqual(search(self.cfg, q, "--include-deleted", "--include-system")["total"], 0, q)
+            self.assertEqual(search(self.cfg, q, "--include-deleted", "--include-system", "--mode", "count")["total"],
+                             0, q)
         h = search(self.cfg, "최종 문장")["rows"][0]
         self.assertEqual((h["post_id"], h["edited"]), ("pa17", True))
         self.assertEqual(search(self.cfg, "rapid")["rows"][0]["reply_count"], 3)

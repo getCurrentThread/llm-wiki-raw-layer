@@ -15,7 +15,8 @@ CREATE TABLE nrows(
  ts INTEGER NOT NULL, ts_ms INTEGER NOT NULL, user_id TEXT NOT NULL,
  sender TEXT NOT NULL DEFAULT '', page_title TEXT NOT NULL DEFAULT '',
  own_deleted INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
- ord INTEGER, depth INTEGER, message TEXT NOT NULL, ng TEXT NOT NULL);
+ ord INTEGER, depth INTEGER, message TEXT NOT NULL, ng TEXT NOT NULL, tng TEXT NOT NULL DEFAULT '',
+ btype TEXT NOT NULL DEFAULT '');
 CREATE INDEX nrows_page ON nrows(page_id,ord);
 CREATE INDEX nrows_time ON nrows(ts_ms,key);
 CREATE TABLE page_src(page_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, seq INTEGER NOT NULL,
@@ -199,7 +200,7 @@ class NotionApplier:
         if op != "put":
             self.con.execute("UPDATE nrows SET rev=?,seq=?,held=0,own_deleted=1 WHERE key=?", (rev, seq, key))
             if op == "purged":
-                self.con.execute("UPDATE nrows SET message='',ng='' WHERE key=?", (key,))
+                self.con.execute("UPDATE nrows SET message='',ng='',tng='' WHERE key=?", (key,))
         else:
             ts_ms = iso_ms(n.get("last_edited_time") or n.get("created_time"))
             if ts_ms is None or not 0 < ts_ms < 2 ** 63:
@@ -211,11 +212,15 @@ class NotionApplier:
             if not text and cur and n.get("_removed_at"):
                 text = cur[1]
             own_deleted = int(bool(n.get("_removed_at") or n.get("in_trash") or n.get("archived")))
+            ng = ti.ng_text(text)
+            tng = ti.title_ng(page_title(n), ng) if kind == "page" else ""
+            btype = _s(n.get("type")) if kind == "block" else ""
             self.con.execute("""INSERT INTO nrows(key,kind,native_id,page_id,rev,seq,held,ts,ts_ms,user_id,
-             own_deleted,message,ng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET
+             own_deleted,message,ng,tng,btype) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET
              rev=excluded.rev,seq=excluded.seq,held=excluded.held,ts=excluded.ts,ts_ms=excluded.ts_ms,
-             user_id=excluded.user_id,own_deleted=excluded.own_deleted,message=excluded.message,ng=excluded.ng""",
-                             (key, kind, ident, pid, rev, seq, held, ts_ms // 1000, ts_ms, uid, own_deleted, text, ti.ng_text(text)))
+             user_id=excluded.user_id,own_deleted=excluded.own_deleted,message=excluded.message,ng=excluded.ng,
+             tng=excluded.tng,btype=excluded.btype""",
+                             (key, kind, ident, pid, rev, seq, held, ts_ms // 1000, ts_ms, uid, own_deleted, text, ng, tng, btype))
         self.touched.add(pid)
 
     def end_manifest(self, seq):
@@ -241,15 +246,16 @@ class NotionApplier:
 class NotionIndex(common.SourceIndex):
     name = NAME
     origins = frozenset({ORIGIN})
-    schema_version = extractor_version = "notion-1"
+    schema_version = extractor_version = "notion-2"
     fts_tables = ("nrows_fts",)
 
     def create_tables(self, con):
         con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("nrows"))
+        con.execute(ti.fts_ddl("nrows", title=True))
+        con.execute(ti.title_rank("nrows_fts"))
 
     def create_triggers(self, con):
-        common.create_triggers(con, "nrows", "nrows_fts")
+        common.create_triggers(con, "nrows", "nrows_fts", title=True)
 
     def applier(self, con, full):
         return NotionApplier(con, full)
@@ -300,6 +306,14 @@ class NotionSearch(drv.SearchDriver):
     group_modes = {"senders": "t.user_id", "pages": "t.page_id"}
     list_flag, in_page_key, page_group = "list_pages", "pages_in_page", "page_id"
     hits_noun, browse_hint, Filters = "rows", "give a query or --page/--sender/--since/--until", Filters
+    key_col, container_col, container_src = "key", "page_id", "page_src"
+
+    def chunk_units(self, con, container):
+        rows = con.execute("SELECT key, ts, message, btype FROM nrows WHERE page_id=? AND deleted=0 AND message!='' "
+                           "ORDER BY CASE kind WHEN 'page' THEN 0 WHEN 'block' THEN 1 ELSE 2 END,ord,key",
+                           (container,)).fetchall()
+        return " › ".join(self.breadcrumb(con, container)), [
+            (r["key"], r["ts"], r["message"], r["btype"].startswith("heading_")) for r in rows]
 
     def check_args(self, a):
         if a.page_text is not None:

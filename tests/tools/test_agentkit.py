@@ -13,7 +13,7 @@ from unittest import mock
 
 from tools import agentkit as K
 
-APPS = ["discord", "gmail", "kakaotalk", "mattermost", "notion"]
+APPS = ["claudecode", "discord", "gmail", "kakaotalk", "mattermost", "notion"]
 LEGACY = ("# llm-wiki-raw-layer\r\n\r\nRepo: `X:\\checkout`\r\n\r\n## Core rules\r\n\r\n- old rule\r\n\r\n"
           "# Other notes\r\n\r\n- keep me\r\n")
 OTHER = "\ufeff# Mine\n\n- a rule of my own"               # a BOM, no newline at the end

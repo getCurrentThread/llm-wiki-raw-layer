@@ -11,5 +11,9 @@
   "dc_token_file": "",
   "dc_token_type": "auto",
   "dc_channel_ids": [],
-  "dc_refresh_days": 7
+  "dc_refresh_days": 7,
+  "dc_wiki_project": "",
+  "dc_wiki_include": [],
+  "dc_wiki_exclude": [],
+  "dc_wiki_since": ""
 }

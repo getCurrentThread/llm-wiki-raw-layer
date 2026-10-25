@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -77,6 +78,27 @@ class PathState(Temp):
                 self.assertEqual(B.path_state(v, kind), want)
 
 
+class ClaudeCodeProbe(Temp):
+    def test_local_source_folder_is_probed(self):
+        from rawlayer import registry, schedule
+        from rawlayer.capture.config import ConfigError
+
+        source = self.tmp / "claude"
+        source.mkdir()
+        cfg = self.tmp / "config.json"
+        cfg.write_text(json.dumps({"cc_claude_dir": str(source)}), encoding="utf-8")
+        app = SimpleNamespace(source_keys=(), options=(Option("cc_claude_dir", "", text),))
+        with mock.patch.object(registry, "select", return_value=SimpleNamespace(apps=[app])), \
+                mock.patch.object(schedule, "task_settings", return_value=None), \
+                mock.patch("rawlayer.management.base.default_config", return_value=cfg), \
+                mock.patch("rawlayer.capture.config.Config", side_effect=ConfigError("synthetic")):
+            self.assertEqual(B.probe("claudecode")["config"]["files"]["cc_claude_dir"], "there")
+            source.rmdir()
+            self.assertEqual(B.probe("claudecode")["config"]["files"]["cc_claude_dir"], "missing")
+            source.write_text("synthetic", encoding="utf-8")
+            self.assertEqual(B.probe("claudecode")["config"]["files"]["cc_claude_dir"], "wrong_kind")
+
+
 class Masking(unittest.TestCase):
     def setUp(self):
         B._MASKS = None
@@ -122,6 +144,11 @@ OK_INDEX = {"state": "ok", "total": 10}
 
 
 class NextStep(unittest.TestCase):
+    def test_claudecode_source_and_gates(self):
+        self.assertEqual(B.KINDS["cc_claude_dir"], "dir")
+        for gate in ("6.6", "6.6.1", "6.6.2", "6.6.3"):
+            self.assertIn(gate, B.GATES)
+
     def step(self, app, p, idx=OK_INDEX):
         return B.next_step(app, p, idx)[0]
 
@@ -139,6 +166,10 @@ class NextStep(unittest.TestCase):
                                            files={"mm_token_file": "there"}), OK_INDEX, "6.4"),
             ("mm token", "mattermost", probe(values_set=["mm_url", "mm_token_file"],
                                              files={"mm_token_file": "missing"}), OK_INDEX, "6.4"),
+            ("cc source missing", "claudecode", probe(files={"cc_claude_dir": "missing"}), None, "6.6"),
+            ("cc source wrong kind", "claudecode", probe(files={"cc_claude_dir": "wrong_kind"}), None, "6.6"),
+            ("cc source ready", "claudecode", probe(sync_key="cc_sync", files={"cc_claude_dir": "there"}),
+             {"state": "missing"}, "5.5"),
             ("dc desktop", "discord", probe(source="desktop", files={"dc_desktop_path": "wrong_kind"}), None, "6.2"),
             ("dc api", "discord", probe(source="api", files={"dc_token_file": "missing"}), None, "6.2"),
             ("nt desktop", "notion", probe(source="desktop", files={"nt_desktop_path": "unset"}), None, "6.3"),
@@ -209,7 +240,7 @@ class NextStep(unittest.TestCase):
                     card, _, n = num.rpartition(".")
                     self.assertTrue(card.startswith("6.") and f"### {card} " in doc, g)
                     body = doc[doc.index(f"### {card} "):]
-                    body = body[:body.index("\n### ", 1)]
+                    body = re.split(r"\n#{2,3} ", body, maxsplit=1)[0]
                     self.assertIn("\nSteps:\n", body, g)
                     self.assertIn(f"\n{n}. ", body[body.index("\nSteps:\n") + 7:], g)
         for by_source in B.NEEDS.values():

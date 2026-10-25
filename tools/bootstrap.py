@@ -52,17 +52,19 @@ PROBE_TIMEOUT = 300
 # gmail's card has its own steps for the genesis (6.1.7) and turning sync on (6.1.8)
 CARD_STEPS = {"gmail": {"5.5": "6.1.7", "5.6": "6.1.8"}}
 # The step ids `checkpoint mark` takes, as llm.md 5.0 lists them: the steps of sections 5 and 8, gmail's numbered
-# steps, the other cards (6.2-6.4) and their numbered steps (6.<card>.<step>), and genesis_complete (5.5)
+# steps, the other cards (6.2-6.4, 6.6) and their numbered steps (6.<card>.<step>), and genesis_complete (5.5)
 GATES = ("5.1", "5.2", "5.3", "5.4", "5.5", "genesis_complete", "5.6", "5.7", "5.8", "5.9", "5.10",
          "6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.6", "6.1.7", "6.1.8", "6.1.9",
          "6.2", "6.2.1", "6.2.2", "6.2.3", "6.3", "6.3.1", "6.3.2", "6.3.3", "6.4", "6.4.1", "6.4.2", "6.4.3", "6.4.4",
-         "8")
+         "6.6", "6.6.1", "6.6.2", "6.6.3", "8")
 FIELDS = ("rc", "head_seq", "total", "errors", "limited", "messages_written", "posts_written", "channels", "pages",
           "excluded", "unavailable", "differing_rows")
 # What each app needs before its first collection, by its source option (llm.md section 6): (key, kind, step, why).
 # kind: file/dir (the config path must be there), value (the option set), checkpoint (that step recorded, or rows
 # already captured)
 NEEDS = {
+    "claudecode": {None: [("cc_claude_dir", "dir", "6.6", "the Claude Code source folder is not set or not there: "
+                           "run config defaults claudecode, then check cc_claude_dir")]},
     "gmail": {None: [("gm_client_file", "file", "6.1.2", "the Desktop client JSON is not in place yet: start at 6.1.2 "
                       "(ask whether the Google account already has the project before 6.1.3 creates one)"),
                      ("gm_token_file", "file", "6.1.5", "no token yet: the owner's consent (7.3)")]},
@@ -434,7 +436,7 @@ def probe(app):
     for k in a.source_keys:
         files[f"sources.{k}"] = path_state(sources.get(k), "dir")
     for k, default in defaults.items():
-        if k.endswith(("_file", "_path")):
+        if k.endswith(("_file", "_path", "_dir")):
             files[k] = path_state(raw.get(k, default), KINDS.get(k, "any"))
     c["files"] = files
     c["values_set"] = sorted(k for k, default in defaults.items()

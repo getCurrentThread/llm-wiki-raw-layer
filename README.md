@@ -12,6 +12,7 @@ roots, ledgers, indexes, configs and scheduled tasks.
 | `discord` | dc_archive | `index/discord.sqlite` |
 | `notion` | nt_archive | `index/notion.sqlite` |
 | `gmail` | gm_archive | `index/gmail.sqlite` |
+| `claudecode` | cc_archive | `index/claudecode.sqlite` |
 
 Python standard library is used throughout, with pycryptodome for KakaoTalk `.edb` decryption. Message data and
 machine configs belong outside the repository. The record format, keys, canonical form, hashes, change detection
@@ -24,7 +25,7 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
 
 1. Prerequisites on Windows: Python 3.12 or newer from python.org (a real interpreter, not the Microsoft Store
    alias), Git for Windows installed machine-wide (the SYSTEM task runs `git`), and PowerShell 7.3 or newer for
-   the runbook's commands. Nothing is installed with pip for the four apps that use the standard library only.
+   the runbook's commands. Nothing is installed with pip for the five apps that use the standard library only.
 2. Clone the repository under your user profile (`%USERPROFILE%\...`): the scheduled tasks run as SYSTEM and
    find the data parent through the profile that holds the checkout.
 3. From the checkout, run `python -s -B manage.py check`; it ends with `check: ok errors=0 refused=0`.
@@ -54,6 +55,7 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
   discord/                     DCE JSON archive reader and message/thread search (see discord/README.md)
   notion/                      page snapshot reader and block search (see notion/README.md)
   gmail/                       Gmail API archive reader and mail/thread search (see gmail/README.md)
+  claudecode/                  Claude Code conversation archive and session/project search (see claudecode/README.md)
     apps.py                    AppConfig: label, source keys, options, schedule and task checks
     origins.py                 origins in processing and commit order
     inputs.py                  live and frozen input paths
@@ -67,6 +69,7 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
   tools/appsetup.py            the apps' shared setup defaults (AppConfig.setup_defaults)
   tools/agentkit.py            the agent integration (bootstrap.py agents): global install, sync-repo
+  tools/wikiexport.py          an app's index as Markdown sources of an LLM Wiki project (llm.md 13)
   tools/agent_templates/       the one source of the skills, the subagent and the global CLAUDE.md block
   tests/tools/                 tests of tools/ (run with the core suite)
   .claude/skills/, .claude/agents/, .agents/skills/
@@ -77,8 +80,8 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
   CORE.md, CORE_SHA256SUMS     core contract and checksums
 ```
 
-The app modules shown above also apply to `kakaotalk/`, `mattermost/`, `discord/` and `notion/`. The core consists of `manage.py`,
-`CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`, as defined by `rawlayer/coreset.py`.
+The app modules shown above also apply to `kakaotalk/`, `mattermost/`, `discord/`, `notion/` and `claudecode/`.
+The core consists of `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`, as defined by `rawlayer/coreset.py`.
 `CORE_SHA256SUMS` pins those files; line endings do not affect the checksums.
 
 ## Discovery, selection and settings
@@ -110,7 +113,7 @@ and `T2` inputs require `inputs_root`; live capture does not require it to exist
 
 Run from `<PROJECT>`, always as `python -s -B manage.py <command> [<app>] ...`. `help` lists commands;
 `help <command>` gives a synopsis, and a command's `--help` gives its options. `--config` is optional at this
-entry point and defaults to `<DATA_PARENT>/<app>/config.json`. Six commands are the whole surface: the steps
+entry point and defaults to `<DATA_PARENT>/<app>/config.json`. Seven commands are the whole surface: the steps
 between them (capture, index, replay, export-state, the per-app input derivations) run inside `collect`, `check`
 and `setup`, not as commands of their own.
 
@@ -119,6 +122,7 @@ and `setup`, not as commands of their own.
 | `setup <app> [--from CFG\|-] [--force] [--provision] [--scan] [--root HEXFILE] [--restart-client]` | prepare the data parent, app data root and config; `-` reads config from stdin; force replaces an existing config; the app fills its own config defaults and runs its provisioning (kakaotalk: the root key, keystore, decrypted backup, and on a Mac the client database); `--provision` reruns only that provisioning — the recovery path when a credential rotated — with `--scan` (memory fallback), `--root` (a root file to install, verified first) and `--restart-client` |
 | `collect <app> [--config CFG] [--input-set live\|T1\|T2] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
 | `search <app> [QUERY] [--config CFG] [options]` | search the app's index; query options are in the app README and `search <app> --help` |
+| `embed <app> [--config CFG] [--model M] [--dims N] [--url U] [--limit N] [--dry-run] [--rebuild]` | build or refresh the optional dense sidecar that `search --hybrid` reads; needs Ollama on a loopback address and sqlite-vec's windows-x86_64 build (llm.md 12) |
 | `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts, collisions and core checksums; with an app, load its config and verify the folded state against the ledger (the old replay --check); `--export-state` also dumps every record's (origin, key, rev, op, h) (the old export-state), `--rebuild-state` rebuilds the state from the ledger (the old replay) |
 | `test [core\|<app> ...] [-k PATTERN] [-v] [-f]` | run core and app suites, each in its own process; defaults to all suites |
 | `schedule install\|status\|run\|remove [<app>] [--config CFG] [--python EXE] [--run-now\|--dry-run]` | register, inspect, start once or unregister the app's Windows task; status compares the registered definition, reports the last result and the task log, and returns 3 when attention is needed |
@@ -145,6 +149,7 @@ Each app's `AppConfig.schedule` in `<app>/apps.py` defines one Windows SYSTEM ta
 | `discord` | `\llm-wiki\discord-capture` | 00:14 / 3 hours | 1 hour |
 | `notion` | `\llm-wiki\notion-capture` | 03:29 / 6 hours | 1 hour |
 | `gmail` | `\llm-wiki\gmail-capture` | 00:44 / 3 hours | 1 hour |
+| `claudecode` | `\llm-wiki\claudecode-capture` | 02:44 / 3 hours | 1 hour |
 
 The action's Command is the selected Python interpreter, WorkingDirectory is `<PROJECT>`, and Arguments are:
 
@@ -169,19 +174,21 @@ attention.
 ```
 python -s -B manage.py test
 python -s -B manage.py test core
-python -s -B manage.py test core discord gmail mattermost notion
+python -s -B manage.py test core claudecode discord gmail mattermost notion
 python -s -B manage.py check
 ```
 
 `tests/core/` tests the framework on `toyapp` and `toyapp2` without importing the real apps. Each app's `tests/`
 selects that app and builds synthetic source data and ledgers in temporary directories; no binary fixtures or
 real conversation data are committed. The default test command runs every suite and ends with
-`core ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok`
+`core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok`
 when all suites pass. Agents run the named form above, which leaves kakaotalk out (AGENTS.md).
 
-Discord, Notion, Gmail and Mattermost include app-owned collectors; enable `dc_sync` / `nt_sync` / `gm_sync` /
-`mm_sync` to fetch before live capture. Discord and Notion support token-free desktop-cache sources; their API
-sources use Discord credentials or the official `ntn` keychain. Desktop caches provide partial coverage and never
+Discord, Notion, Gmail, Mattermost and Claude Code include app-owned collectors; enable `dc_sync` / `nt_sync` /
+`gm_sync` / `mm_sync` / `cc_sync` to fetch before live capture. Claude Code reads local conversation files from
+`cc_claude_dir` (setup fills `<HOME>\.claude`) without credentials:
+`python -s -B -m claudecode.collector [--max-items N] [--capture]`.
+Discord and Notion support token-free desktop-cache sources; their API sources use Discord credentials or the official `ntn` keychain. Desktop caches provide partial coverage and never
 treat eviction as deletion. Gmail reads the Gmail API with a read-only OAuth token, and Mattermost's collector (a
 port of the mattertok archiver, REST API v4 with a session token) writes mattertok's archive format. Their READMEs
 define the options, archive contracts and authentication boundaries. Core files remain unchanged.

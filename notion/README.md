@@ -123,3 +123,9 @@ remain separate containers; synced blocks fetch original children. It queries co
 of assuming page-level queries include inline discussions. Failed child/comment requests cannot mark a page
 gone: only an inaccessible page lookup does so. Backoff handles throttling/transient failures. See
 [third-party references](../THIRD_PARTY.md) for SQLite cache and API sources.
+
+## LLM Wiki export
+
+`nt_wiki_project`, `nt_wiki_include`, `nt_wiki_exclude` and `nt_wiki_since` configure `tools/wikiexport.py notion` (llm.md 13), which
+writes one Markdown file per page (headings kept) into an LLM Wiki project's `raw/sources/notion/`. Empty by
+default: nothing is exported.

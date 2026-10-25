@@ -1,5 +1,6 @@
 from rawlayer.registry import AppConfig, Option
 from tools.archiveio import boolean, text, nonnegative, identifiers
+from tools.wikiexport import options as wiki_options
 
 
 def _patterns(value):
@@ -27,7 +28,7 @@ class DiscordConfig(AppConfig):
                Option("dc_sync", False, boolean), Option("dc_token_file", "", text),
                Option("dc_token_type", "auto", _token_type), Option("dc_channel_ids", [], identifiers),
                Option("dc_refresh_days", 7, nonnegative), Option("dc_source", "api", _source),
-               Option("dc_desktop_path", "", text))
+               Option("dc_desktop_path", "", text)) + wiki_options("dc")
     schedule = {"task": r"\llm-wiki\discord-capture", "start": "00:14",
                 "every_hours": 3, "limit_hours": 1,
                 "description": "Capture Discord archive and update its search index"}

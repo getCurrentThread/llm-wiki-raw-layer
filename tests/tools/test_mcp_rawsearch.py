@@ -176,7 +176,7 @@ class Protocol(unittest.TestCase):
         # a flag a typed argument owns, an abbreviation (argparse would take it), a name the app does not have
         bad += [{"app": "alpha", "filters": f} for f in ({"config": "elsewhere.json"}, {"json": True}, {"cont": "9"},
                                                           {"wid": "9999"}, {"que": "y"}, {"chan": "x"},
-                                                          {"nosuch": "a b"}, ["channel"])]
+                                                          {"nosuch": "a b"}, ["channel"], {"hybrid": True})]
         for rid, args in enumerate(bad, 10):
             with self.subTest(args=args):
                 self.error_text(self.call(rid, "raw_search", args))
@@ -191,6 +191,10 @@ class Protocol(unittest.TestCase):
         self.assertIn("filters names", self.error_text(self.call(35, "raw_read", {"app": "alpha"})))
         env = self.payload(self.call(36, "raw_read", {"app": "alpha", "filters": {"label": "a b"}}))
         self.assertIn("--label=a b", env["argv"])           # an exact flag with a space in its value still passes
+        env = self.payload(self.call(37, "raw_search", {"app": "alpha", "query": "q", "hybrid": True}))
+        self.assertIn("--hybrid", env["argv"])
+        env = self.payload(self.call(38, "raw_search", {"app": "alpha", "query": "q", "hybrid": False}))
+        self.assertNotIn("--hybrid", env["argv"])
 
     def test_timeout_and_cancel(self):
         t0 = time.monotonic()

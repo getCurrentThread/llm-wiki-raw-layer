@@ -1,6 +1,6 @@
 ---
 name: raw-search
-description: Answer a question from the owner's raw ledgers of KakaoTalk, Mattermost, Discord, Notion and Gmail (what was said, who, when, how many; find a conversation, mail or page) with cited, masked records. Use for requests like "카톡에서 송금 얘기 찾아줘", "지난주 마터모스트 배포 논의", "노션 회의록", "지메일 영수증 몇 통".
+description: Answer a question from the owner's raw ledgers of KakaoTalk, Mattermost, Discord, Notion, Gmail and Claude Code (what was said, who, when, how many; find a conversation, mail or page) with cited, masked records. Use for requests like "카톡에서 송금 얘기 찾아줘", "지난주 마터모스트 배포 논의", "노션 회의록", "지메일 영수증 몇 통".
 argument-hint: <question or search terms>
 allowed-tools: {{MCP_TOOLS}}, {{BASH_SEARCH}}
 ---

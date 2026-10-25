@@ -491,6 +491,13 @@ class MatterSearch(drv.SearchDriver):
     browse_hint = ("give a query, or --channel / --team / --sender / --since / --until to browse, "
                    "or --thread / --list-channels")
     Filters = _Filters
+    key_col, container_col, container_src, chunk_gap_s = "post_id", "channel_id", "ch_src", 1800
+
+    def chunk_units(self, con, container):
+        rows = con.execute("SELECT post_id, ts, team, channel, sender, user_id, message FROM matter WHERE channel_id=? "
+                           "AND deleted=0 AND system=0 AND message!='' ORDER BY ts_ms, post_id", (container,)).fetchall()
+        label = " › ".join(p for p in (rows[-1]["team"], rows[-1]["channel"] or container) if p) if rows else ""
+        return label, [(r["post_id"], r["ts"], f"{r['sender'] or r['user_id']}: {r['message']}", False) for r in rows]
 
     def check_args(self, a):
         if a.thread is not None and a.list_channels:

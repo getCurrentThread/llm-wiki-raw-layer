@@ -15,11 +15,12 @@ paths.DATA_PARENT = Path(tempfile.gettempdir())
 MID, OTHER, THREAD = "abc123", "abc124", "def123"
 
 
-def raw_message(ident=MID, body="synthetic deployment 배포계획", labels=None, html=None, attachment=None):
+def raw_message(ident=MID, body="synthetic deployment 배포계획", labels=None, html=None, attachment=None,
+                subject="Synthetic deployment"):
     msg = EmailMessage(policy=policy.default)
     msg["From"] = "Invented Sender <sender@example.org>"
     msg["To"] = "Invented Recipient <recipient@example.net>"
-    msg["Subject"] = "Synthetic deployment"
+    msg["Subject"] = subject
     msg["Date"] = "Tue, 01 Oct 2024 00:00:00 +0000"
     msg["Message-ID"] = "<synthetic@example.com>"
     msg.set_content(body)

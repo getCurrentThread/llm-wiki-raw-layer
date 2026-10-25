@@ -11,7 +11,7 @@ These files are identical in every project and listed with their sha256 in `CORE
 (`rawlayer/coreset.py` says which; line endings do not count):
 
 ```
-manage.py           the single entry point: setup | collect | search | check | test | schedule
+manage.py           the single entry point: setup | collect | search | embed | check | test | schedule
 CORE.md             this file
 rawlayer/           the framework: capture pipeline (rawlayer/capture), search driver (rawlayer/search), registry,
                     collect (the scheduled task's body), schedule (registers that task), management commands
@@ -61,7 +61,7 @@ registry loads, and by `manage.py check`):
 | `origins.py` | `ORIGINS`: the app's `Origin` subclasses, in processing and commit order |
 | `inputs.py` | `resolve(cfg, input_set, frozen_root)` -> {input attribute: path}; `static_roots(inputs)` -> {freeze label: (root, closed)} |
 | `vocab.py` | `WORDS`, `PATTERNS`: the strings its readers put in manifests and console lines |
-| `search.py` | optional: a search source (`SPEC` a `SourceIndex`, `HELP`, `add_arguments`, `run`; the query half can subclass `rawlayer/search/search.py`'s `SearchDriver`) for `manage.py search <label>` |
+| `search.py` | optional: a search source (`SPEC` a `SourceIndex`, `HELP`, `add_arguments`, `run`; the query half can subclass `rawlayer/search/search.py`'s `SearchDriver`) for `manage.py search <label>`. A `DRIVER` that sets `key_col`, `container_col` and implements `chunk_units` can be embedded (`manage.py embed <label>`, `search --hybrid`: `rawlayer/search/dense.py`) |
 
 An origin is a class (`rawlayer/capture/origins.py`). It sets `name`, `kinds` and the optional `day_kinds`,
 `ok_statuses`, `complete_status`, `statuses`, `state_tables`, `fail_statuses`, `fail_default`, and

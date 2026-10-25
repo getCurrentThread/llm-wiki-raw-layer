@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "impl": "claude",
+  "data_root": "<DATA_PARENT>\\claudecode",
+  "inputs_root": "<DATA_PARENT>\\inputs",
+  "sources": {"cc_archive": "<abs dir>\\archive"},
+  "cc_sync": false,
+  "cc_claude_dir": ""
+}

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from rawlayer.registry import AppConfig, Option
 from tools.archiveio import boolean, text
+from tools.wikiexport import options as wiki_options
 
 
 def _patterns(v):
@@ -23,7 +24,8 @@ class MatterConfig(AppConfig):
     # mm_sync: live capture runs the app's collector first (mattermost/collector.py); mm_url is the server and
     # mm_token_file a private file under the data parent holding the session token `--login` writes.
     options = (Option("mm_exclude_patterns", [], _patterns, attr="mm_exclude"),
-               Option("mm_sync", False, boolean), Option("mm_url", "", _url), Option("mm_token_file", "", text))
+               Option("mm_sync", False, boolean), Option("mm_url", "", _url),
+               Option("mm_token_file", "", text)) + wiki_options("mm")
     # The scheduled task `manage.py schedule install mattermost` registers: `manage.py collect mattermost --config
     # <CFG>` as SYSTEM, daily from `start` (local time) and every `every_hours` hours after it, at most `limit_hours`
     # hours per run. 02:14, 05:14, ... stay clear of kb-corpus-refresh (:44), kb-curate (05:40, 17:40), kb-brief

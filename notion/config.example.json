@@ -10,5 +10,9 @@
   "nt_cli": "",
   "nt_page_ids": [],
   "nt_comments": true,
-  "nt_max_pages": 0
+  "nt_max_pages": 0,
+  "nt_wiki_project": "",
+  "nt_wiki_include": [],
+  "nt_wiki_exclude": [],
+  "nt_wiki_since": ""
 }

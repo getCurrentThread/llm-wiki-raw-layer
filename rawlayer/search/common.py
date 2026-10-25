@@ -326,22 +326,24 @@ def clean(s):
         return s.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
 
 
-def fts_triggers(table, fts):
-    """The three FTS maintenance triggers of a content table with an ng shadow column (SourceIndex
-    create_triggers: one statement per con.execute, never executescript -- see the module docstring)."""
+def fts_triggers(table, fts, title=False):
+    """The three FTS maintenance triggers of a content table with an ng (and, with title, tng) shadow column
+    (SourceIndex create_triggers: one statement per con.execute, never executescript -- see the module docstring)."""
+    cols = "ng, tng" if title else "ng"
+    new, old = ("new.ng, new.tng", "old.ng, old.tng") if title else ("new.ng", "old.ng")
     return (
         f"CREATE TRIGGER {table}_ai AFTER INSERT ON {table} BEGIN\n"
-        f"  INSERT INTO {fts}(rowid, ng) VALUES (new.id, new.ng);\nEND;",
+        f"  INSERT INTO {fts}(rowid, {cols}) VALUES (new.id, {new});\nEND;",
         f"CREATE TRIGGER {table}_ad AFTER DELETE ON {table} BEGIN\n"
-        f"  INSERT INTO {fts}({fts}, rowid, ng) VALUES ('delete', old.id, old.ng);\nEND;",
-        f"CREATE TRIGGER {table}_au AFTER UPDATE OF ng ON {table} BEGIN\n"
-        f"  INSERT INTO {fts}({fts}, rowid, ng) VALUES ('delete', old.id, old.ng);\n"
-        f"  INSERT INTO {fts}(rowid, ng) VALUES (new.id, new.ng);\nEND;",
+        f"  INSERT INTO {fts}({fts}, rowid, {cols}) VALUES ('delete', old.id, {old});\nEND;",
+        f"CREATE TRIGGER {table}_au AFTER UPDATE OF {cols} ON {table} BEGIN\n"
+        f"  INSERT INTO {fts}({fts}, rowid, {cols}) VALUES ('delete', old.id, {old});\n"
+        f"  INSERT INTO {fts}(rowid, {cols}) VALUES (new.id, {new});\nEND;",
     )
 
 
-def create_triggers(con, table, fts):
-    for stmt in fts_triggers(table, fts):
+def create_triggers(con, table, fts, title=False):
+    for stmt in fts_triggers(table, fts, title):
         con.execute(stmt)
 
 
@@ -837,6 +839,12 @@ def add_search_arguments(p, modes):
     p.add_argument("--include-deleted", action="store_true", help="also show deleted messages (hidden by default)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--explain", action="store_true", help="print the translated FTS5 expression")
+    p.add_argument("--literal", action="store_true",
+                   help="match the terms as typed: no Korean particle/ending stripping, no verb forms, no relaxing "
+                        "a query that matched nothing")
+    p.add_argument("--hybrid", action="store_true",
+                   help="also rank by meaning: fuse the keyword hits with the nearest chunks of the dense sidecar "
+                        "(manage.py embed); hits gain sources/rrf/context, and without embeddings this is a plain search")
 
 
 def query_text(a):

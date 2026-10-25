@@ -2,8 +2,8 @@ import json
 import sqlite3
 import unittest
 from contextlib import closing
-from rawlayer.search import common
-from discord.search import SPEC, DiscordApplier, msg_text
+from rawlayer.search import common, dense
+from discord.search import SPEC, DRIVER, DiscordApplier, msg_text
 from .fixtures import Fixture, CID, MID, UID, message
 from . import helpers as h
 
@@ -24,6 +24,20 @@ class SearchTests(unittest.TestCase):
         with closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
                     for t in ("msgs", "ch_src", "guild_src", "users", "channels", "counts")}
+
+    def test_chunk_units_cover_the_live_rows_in_order(self):
+        con, _meta, _fresh = common.open_search(self.fx.data_root, SPEC)
+        self.addCleanup(con.close)
+        units = {c: DRIVER.chunk_units(con, c) for c in DRIVER.changed_containers(con, 0)}
+        live = {r[0] for r in con.execute("SELECT key FROM msgs WHERE deleted=0 AND message!=''")}
+        self.assertEqual(sorted(u[0] for _, us in units.values() for u in us), sorted(live))
+        for label, us in units.values():
+            self.assertTrue(label or not us)
+            self.assertEqual([u[1] for u in us], sorted(u[1] for u in us))
+            self.assertTrue(all(": " in u[2] and u[3] is False for u in us))
+        self.assertEqual(DRIVER.changed_containers(con, 10 ** 9), [])
+        chunks, _containers = dense.plan(con, DRIVER, 0)
+        self.assertTrue(chunks and all(set(v[1]) <= live for v in chunks.values()))
 
     def test_incremental_equals_rebuild_three_rounds(self):
         for text in ("edited deployment", "synthetic deployment"):

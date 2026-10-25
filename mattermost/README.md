@@ -255,3 +255,9 @@ App tests synthesize inputs in code under temporary directories. Search tests ca
 `mattermost/tests/ledgerfix.py` and compare incremental indexing with rebuilds, including resets, mid-commit,
 defects, crashes, version checks, locks, threads, search modes and filters. Core tests use toy apps without
 importing the real apps. See the root README for the full command table and core maintenance.
+
+## LLM Wiki export
+
+`mm_wiki_project`, `mm_wiki_include`, `mm_wiki_exclude` and `mm_wiki_since` configure `tools/wikiexport.py mattermost` (llm.md 13), which
+writes each channel's closed months, packed into Markdown files of about 16,000 characters, into an LLM Wiki
+project's `raw/sources/mattermost/`. Empty by default: nothing is exported.

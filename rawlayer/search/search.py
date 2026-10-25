@@ -15,6 +15,8 @@ its own dispatch (mattermost's --thread) through check_args/extra_result."""
 import sys
 
 from . import common
+from . import dense
+from . import normalize
 from . import textindex as ti
 from .common import UsageError
 
@@ -60,6 +62,12 @@ class SearchDriver:
     page_group = ""                  # the hit field that names the group (chat_id / channel_id)
     hits_noun = "messages"           # "--before/--after page through <noun> (--mode hits) only"
     browse_hint = ""                 # the usage error when neither a query nor a selector is given
+    # dense retrieval (dense.py); a source without container_col has no embeddings and --hybrid falls back
+    key_col = ""                     # the stable record key column: survives an index rebuild (never id)
+    container_col = ""               # what a chunk never crosses: the room / channel / page / mail column
+    container_src = ""               # a table keyed by container_col whose seq marks a label change ('' none)
+    chunk_gap_s = None               # chat: seconds of silence that start a new chunk; documents: None
+    chunk_version = "1"              # bump when chunk_units() output changes (embed then re-chunks every container)
 
     def __init__(self, spec):
         self.spec = spec             # the module's SourceIndex (open_search/warn_if_stale stamp against it)
@@ -111,7 +119,62 @@ class SearchDriver:
         """The mode check_args() named."""
         raise NotImplementedError
 
+    # ---- the dense retrieval hooks (dense.py)
+    def rec_key(self, r):
+        """A row's stable key (a str) -- what the sidecar stores."""
+        return r[self.key_col]
+
+    def key_where(self, keys):
+        """(sql, params) selecting the rows t with these stable keys."""
+        return f"t.{self.key_col} IN ({','.join('?' * len(keys))})", list(keys)
+
+    def changed_containers(self, con, seq):
+        """Containers with a row folded after ledger seq `seq` (every container for 0), or whose label changed."""
+        sql, params = f"SELECT DISTINCT {self.container_col} FROM {self.table} WHERE seq > ?", [seq]
+        if self.container_src:
+            sql += f" UNION SELECT {self.container_col} FROM {self.container_src} WHERE seq > ?"
+            params.append(seq)
+        return [r[0] for r in con.execute(sql, params)]
+
+    def chunk_units(self, con, container):
+        """(label, [(rec_key, ts_s, text, brk)]) of one container in reading order, by one query with a stable
+        tie-break: no deleted, system or empty rows; chat text as "<sender>: <message>"; brk=True (a heading) starts a
+        new chunk."""
+        raise NotImplementedError
+
     # ---- the shared queries
+    def compile(self, query, literal=False):
+        """(q, exact, normalized): the compiled query to run, the query as typed when normalization changed it
+        (else None), and the normalized query string (else None). The typed query is compiled first, so its errors
+        are the ones reported; a rewrite the compiler refuses (a literal term next to the OR it added) is retried
+        without the added alternatives."""
+        try:
+            typed = ti.build_fts_query(query)
+        except ti.QueryError as e:
+            raise UsageError(f"bad query: {e}") from None
+        if literal:
+            return typed, None, None
+        canonical = normalize.canonical(query)
+        for expand in (True, False):
+            nq = normalize.rewrite(query, expand)
+            if nq == canonical:
+                break
+            try:
+                return ti.build_fts_query(nq), typed, nq
+            except ti.QueryError:
+                continue
+        return typed, None, None
+
+    def loosen(self, query, literal):
+        """(q, query string) with the terms OR-ed, for a hits search that matched nothing; None when there is none."""
+        loose = None if literal else normalize.relax(query)
+        if loose:
+            try:
+                return ti.build_fts_query(loose), loose
+            except ti.QueryError:
+                pass
+        return None
+
     def cursor(self, r):
         """A row's keyset cursor: its sort key values, "."-joined."""
         return ".".join(str(r[c]) for c in self.sort_cols)
@@ -125,11 +188,54 @@ class SearchDriver:
         params = list(params) + flt.params + list(extra_params)
         return f"FROM {frm} WHERE " + (" AND ".join(where) or "1"), params
 
-    def hits(self, con, a, q, flt, tz):
+    def order(self, q):
+        return (f"{self.fts_table}.rank, " if q.fts else "") + ", ".join(f"t.{c} DESC" for c in self.sort_cols)
+
+    def ranked(self, con, q, flt, n):
+        """One retriever's ranked candidates: the ids of the best n rows matching q (rank, then recency)."""
+        body, params = self.body(q, flt)
+        return [r[0] for r in con.execute(f"SELECT t.id {body} ORDER BY {self.order(q)} LIMIT ?", params + [n])]
+
+    def rows_by_id(self, con, ids):
+        """The rows with these ids, in that order."""
+        got = {}
+        for i in range(0, len(ids), 500):           # below SQLite's bound-parameter limit
+            part = ids[i:i + 500]
+            got.update((r["id"], r) for r in con.execute(
+                f"SELECT t.* FROM {self.table} t WHERE t.id IN ({','.join('?' * len(part))})", part))
+        return [got[i] for i in ids if i in got]
+
+    def rows_by_key(self, con, keys, q, flt):
+        """{rec_key: row} of the rows with these stable keys that pass the filters and q's excluded terms."""
+        frm, where, params = ti.sql_parts(q._replace(fts="", verify=[], weak=[]), self.table, self.fts_table, alias="t")
+        keys, out = list(keys), {}
+        for i in range(0, len(keys), 400):
+            kw, kp = self.key_where(keys[i:i + 400])
+            for r in con.execute(f"SELECT t.* FROM {frm} WHERE " + " AND ".join(where + flt.where + [kw]),
+                                 params + flt.params + kp):
+                out[self.rec_key(r)] = r
+        return out
+
+    def filtered_keys(self, con, q, flt, n):
+        """The stable keys of the rows that pass the filters and q's excluded terms, or None when more than n do
+        (only key_col is read: a source whose rec_key() needs more overrides this too)."""
+        body, params = self.body(q._replace(fts="", verify=[], weak=[]), flt)
+        k = self.key_col
+        keys = [self.rec_key(r) for r in con.execute(f"SELECT t.{k} AS {k} {body} LIMIT ?", params + [n + 1])]
+        return None if len(keys) > n else keys
+
+    def hits(self, con, a, q, flt, tz, exact=None):
+        """The best --limit rows matching q; with `exact` (the query as typed, before normalization: its rows are
+        a subset of q's), the rows matching the typed terms come first."""
         body, params = self.body(q, flt)
         total = con.execute(f"SELECT count(*) {body}", params).fetchone()[0]
-        order = (f"{self.fts_table}.rank, " if q.fts else "") + ", ".join(f"t.{c} DESC" for c in self.sort_cols)
-        rows = con.execute(f"SELECT t.* {body} ORDER BY {order} LIMIT ?", params + [a.limit]).fetchall()
+        if exact is None:
+            rows = con.execute(f"SELECT t.* {body} ORDER BY {self.order(q)} LIMIT ?", params + [a.limit]).fetchall()
+        else:
+            first = self.ranked(con, exact, flt, a.limit)
+            seen = set(first)
+            rows = self.rows_by_id(con, (first + [i for i in self.ranked(con, q, flt, a.limit + len(first))
+                                                  if i not in seen])[:a.limit])
         out = []
         for r in rows:
             h = self.hit(r, tz, q.marks, a.width)
@@ -195,12 +301,13 @@ class SearchDriver:
                 cursor = ("before",) + self.parse_cursor(a.before, "--before", before=True)
             elif a.after:
                 cursor = ("after",) + self.parse_cursor(a.after, "--after", before=False)
-        q = None
+        if a.hybrid and (a.mode != "hits" or query is None or cursor or extra is not None
+                         or (self.list_flag and getattr(a, self.list_flag))):
+            raise UsageError("--hybrid ranks hits: give a query, with --mode hits and no --before/--after")
+        q = exact = normalized = None
+        relaxed = False
         if query is not None and extra is None:
-            try:
-                q = ti.build_fts_query(query)
-            except ti.QueryError as e:
-                raise UsageError(f"bad query: {e}") from None
+            q, exact, normalized = self.compile(query, a.literal)
         con, meta, fresh = common.open_search(data_root, self.spec)
         try:
             common.warn_if_stale(self.spec, fresh)
@@ -216,6 +323,7 @@ class SearchDriver:
                     raise UsageError(f"--before/--after page through {self.hits_noun} (--mode hits) only")
                 if q is not None:
                     if a.explain and not a.json:
+                        print(f"# normalized query: {normalized or '(as typed)'}")
                         print(f"# fts5 index expr : {common.show_fts(q.fts) or '(none -- full scan)'}")
                         print(f"# literal verify  : {q.verify or '-'}   exclude: {q.exclude or '-'}   "
                               f"weak: {q.weak or '-'}   exclude expr: {common.show_fts(q.exclude_fts) or '-'}")
@@ -227,11 +335,35 @@ class SearchDriver:
                 if a.mode == "hits" and (q is None or cursor):
                     res = self.browse(con, a, q, flt, cursor, tz)
                 elif a.mode == "hits":
-                    res = self.hits(con, a, q, flt, tz)
+                    res, hy = None, None
+                    if a.hybrid:
+                        body, params = self.body(q, flt)
+                        # its keyword list relaxes as plain hits do
+                        lo = None if con.execute(f"SELECT 1 {body} LIMIT 1", params).fetchone() else \
+                            self.loosen(normalized or query, a.literal)
+                        if lo:
+                            (q, normalized), exact, relaxed = lo, None, True
+                        res, hy = dense.hybrid(self, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed)
+                        if res is None:
+                            common.note(f"--hybrid unavailable ({hy['reason']}): keyword hits only")
+                        elif hy["stale"]:
+                            common.note(f"the embeddings are behind the index: what changed since rank by keyword "
+                                        f"only until `manage.py embed {self.name}` runs")
+                    if res is None:
+                        res = self.hits(con, a, q, flt, tz, exact)
+                        lo = self.loosen(normalized or query, a.literal) if not res["total"] and not relaxed else None
+                        if lo:
+                            (q, normalized), relaxed = lo, True
+                            res = self.hits(con, a, q, flt, tz)
+                    if relaxed:
+                        common.note("no row matched every term, so these rows match any of them (relaxed)")
+                    if hy is not None:
+                        res["hybrid"] = hy
                 else:
                     res = self.aggregate(con, a, q, flt, tz)
             if a.json:
-                env = {"source": self.name, "mode": res["mode"], "query": query,
+                env = {"source": self.name, "mode": res["mode"], "query": query, "normalized_query": normalized,
+                       "relaxed": relaxed,
                        "fts": common.show_fts(q.fts) if q else None,
                        "exclude_fts": common.show_fts(q.exclude_fts) if q else None,
                        "weak": q.weak if q else [], "verify": q.verify if q else [], "exclude": q.exclude if q else [],

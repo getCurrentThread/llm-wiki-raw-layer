@@ -8,9 +8,9 @@ import xml.etree.ElementTree as ET
 from tests.core import appfix
 from rawlayer import collect, schedule
 from rawlayer.capture.config import Config
-from rawlayer.search import common
+from rawlayer.search import common, textindex as ti
 from gmail.collector import sync, sync_config
-from gmail.search import SPEC, GmailApplier
+from gmail.search import SPEC, DRIVER, GmailApplier, mail_paragraphs
 from gmail.origins import GmArchive
 from gmail import inputs
 from .fixtures import Fixture, Transport, MID, OTHER, THREAD, raw_message
@@ -86,6 +86,34 @@ class IntegrationTests(unittest.TestCase):
         newer = self.query("--thread", THREAD, "--limit", "1", "--after", older["page"]["after"])
         self.assertEqual(first["rows"][0]["msg_id"], newer["rows"][0]["msg_id"])
         self.assertTrue(self.query("deployment", "--context", "1")["rows"][0]["context"])
+
+    def test_subject_match_ranks_first(self):
+        self.http.messages["abc125"] = raw_message("abc125", body="정기 예산 예산 예산 점검")
+        self.http.messages["abc126"] = raw_message("abc126", body="첨부 확인", subject="예산 보고")
+        sync(self.fx.root, self.http.client(), full=True)
+        self.build()
+        self.assertEqual([r["msg_id"] for r in self.query("예산")["rows"]], ["abc126", "abc125"])
+        with contextlib.closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
+            self.assertEqual(dict(con.execute("SELECT msg_id, tng FROM msgs")),
+                             {"abc126": ti.ng_text("예산 보고")} | {m: ti.ng_text("Synthetic deployment") for m in (MID, OTHER, "abc125")})
+
+    def test_mail_paragraphs_and_chunk_units(self):
+        body = ("안녕하세요.\n\n일정 확인 부탁드립니다.\n> 이전 메일 인용\n\n"
+                "2024년 10월 1일 (화) 오후 3:00, Invented <a@example.org>님이 작성:\n> 원문\n")
+        self.assertEqual(mail_paragraphs(body), ["안녕하세요.", "일정 확인 부탁드립니다."])
+        self.assertEqual(mail_paragraphs("본문\n-- \n서명\n"), ["본문"])
+        self.assertEqual(mail_paragraphs("Hi\n\nOn Tue, Oct 1, 2024 Invented wrote:\n> old"), ["Hi"])
+        self.assertEqual(mail_paragraphs("위\n-----Original Message-----\n아래"), ["위"])
+        self.assertEqual(mail_paragraphs("보고서 작성: 담당자\n본문"), ["보고서 작성: 담당자\n본문"])
+        self.build()
+        con, _meta, _fresh = common.open_search(self.fx.data_root, SPEC)
+        self.addCleanup(con.close)
+        self.assertEqual(set(DRIVER.changed_containers(con, 0)) >= {MID, OTHER}, True)
+        label, units = DRIVER.chunk_units(con, OTHER)
+        self.assertTrue(label.startswith("Synthetic deployment / "))
+        self.assertEqual({u[0] for u in units}, {"gm:msg:" + OTHER})
+        self.assertEqual(units[-1][2], "attachments: synthetic.bin")
+        self.assertEqual(DRIVER.chunk_units(con, "fffffffffffffff0"), ("", []))
 
     def test_usage_errors(self):
         self.build()

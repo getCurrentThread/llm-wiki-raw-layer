@@ -15,13 +15,17 @@ from rawlayer.search import textindex as ti
 from rawlayer.search.textindex import QueryError, build_fts_query
 
 
-def make_db(bodies):
+def make_db(bodies, titles=None):
+    """titles: one per body -> a title index (tng column, title_rank) like gmail's and notion's."""
     con = sqlite3.connect(":memory:")
     ti.register_functions(con)
-    con.execute("CREATE TABLE docs(id INTEGER PRIMARY KEY, message TEXT NOT NULL, ng TEXT NOT NULL)")
-    con.execute(ti.fts_ddl("docs"))
-    con.executemany("INSERT INTO docs(id, message, ng) VALUES(?,?,?)",
-                    [(i + 1, b, ti.ng_text(b)) for i, b in enumerate(bodies)])
+    con.execute("CREATE TABLE docs(id INTEGER PRIMARY KEY, message TEXT NOT NULL, ng TEXT NOT NULL, tng TEXT NOT NULL)")
+    con.execute(ti.fts_ddl("docs", title=titles is not None))
+    if titles is not None:
+        con.execute(ti.title_rank("docs_fts"))
+    ngs = [ti.ng_text(b) for b in bodies]
+    con.executemany("INSERT INTO docs(id, message, ng, tng) VALUES(?,?,?,?)",
+                    [(i + 1, b, ng, ti.title_ng(titles[i], ng) if titles else "") for i, (b, ng) in enumerate(zip(bodies, ngs))])
     con.execute("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
     return con
 
@@ -258,6 +262,43 @@ class KbBehaviour(unittest.TestCase):
         self.assertEqual(ti.ng_text(""), "")
         self.assertIn("tokenize='ascii'", ti.fts_ddl("item"))
 
+    def test_title_ng_only_when_contiguous(self):
+        ng = ti.ng_text("회의록 정리\n본문 API문서")
+        self.assertEqual(ti.title_ng("회의록 정리", ng), ti.ng_text("회의록 정리"))
+        self.assertEqual(ti.title_ng("API문서", ng), "api 문 문서")
+        for title in ("정리 회의록", "회의 정리", "", "!!", "가", "문서 api"):   # not one run of ng
+            self.assertEqual(ti.title_ng(title, ng), "", title)
+        self.assertEqual(ti.title_ng("a", ti.ng_text("ab")), "")
+
+    def test_title_column_ranks_title_hits_first(self):
+        bodies = ["예산 예산 예산 회의\n다른 내용", "예산안 검토\n본문", "본문만 예산 이야기 예산"]
+        titles = ["다른 제목", "예산안 검토", "x"]
+        for con, first in ((make_db(bodies), 1), (make_db(bodies, titles), 2)):
+            try:
+                frm, where, params = ti.sql_parts(build_fts_query("예산"), "docs")
+                ids = [r[0] for r in con.execute(f"SELECT t.id FROM {frm} WHERE {' AND '.join(where)} "
+                                                 "ORDER BY docs_fts.rank, t.id", params)]
+                self.assertEqual(sorted(ids), [1, 2, 3])
+                self.assertEqual(ids[0], first, ids)
+            finally:
+                con.close()
+
+    def test_title_triggers_keep_the_index_consistent(self):
+        from rawlayer.search import common
+        con = make_db(["회의 안건", "잡담"], ["회의 안건", "잡담"])
+        try:
+            common.create_triggers(con, "docs", "docs_fts", title=True)
+            ng = ti.ng_text("예산 회의")
+            con.execute("INSERT INTO docs(message, ng, tng) VALUES(?,?,?)", ("예산 회의", ng, ti.title_ng("예산", ng)))
+            con.execute("UPDATE docs SET message='', ng='', tng='' WHERE id=1")
+            con.execute("DELETE FROM docs WHERE id=2")
+            con.execute("INSERT INTO docs_fts(docs_fts, rank) VALUES('integrity-check', 1)")
+            self.assertEqual(run_query(con, build_fts_query("회의")), {3})
+            self.assertEqual(run_query(con, build_fts_query("예산")), {3})
+            self.assertIn("bm25(1.0, 3.0)", con.execute("SELECT v FROM docs_fts_config WHERE k='rank'").fetchone()[0])
+        finally:
+            con.close()
+
     def test_tokens_have_no_dropped_characters(self):
         for s in ["a,b", "가!나", "  x  ", "\U0001F600", "é가", "C++ 2.0"]:
             toks = ti.ng_tokens(s)
@@ -362,7 +403,9 @@ class PropertyTest(unittest.TestCase):
             corpora += 1
             self.assertLess(corpora, 2000, f"generator stalled (seed={seed})")
             bodies = [gen_body(rng) for _ in range(rng.randint(10, 40))]
-            con = make_db(bodies)
+            # every other corpus is a title index: tng (a prefix of the body, or another body) must not change a match
+            con = make_db(bodies, [b[:rng.randint(0, len(b))] if rng.random() < 0.7 else rng.choice(bodies)
+                                   for b in bodies] if corpora % 2 else None)
             try:
                 for _ in range(25):
                     items = gen_items(rng, bodies)

@@ -7,6 +7,8 @@
   python -s -B manage.py search kakaotalk --config CFG --room 스터디                (browse: newest page first)
   python -s -B manage.py search kakaotalk --config CFG --room 스터디 --before 1727758980.12345.678
   python -s -B manage.py search kakaotalk --config CFG --list-rooms
+  python -s -B manage.py embed kakaotalk --config CFG            # dense sidecar: rooms as containers, 30 min gap
+  python -s -B manage.py search kakaotalk --config CFG 회의 --hybrid
 
 WHAT IS INDEXED (extractor "kakao-4")
 -------------------------------------
@@ -469,6 +471,12 @@ def type_name(t):
     return base + (" (deleted for all)" if t & DELETE_ALL else "")
 
 
+def rec_key(chat_id, log_id):
+    """The stable record key of a message row -- what hit()["key"] shows and the dense sidecar stores. kakao has
+    no single key column, so the key is this composite string; hit() and SearchDriver.rec_key share it here."""
+    return f"kakao:{chat_id}:msg:{log_id}"
+
+
 class _Filters(drv.Filters):
     def __init__(self, a, tz):
         super().__init__(a, tz)
@@ -507,10 +515,62 @@ class KakaoSearch(drv.SearchDriver):
     hits_noun = "messages"
     browse_hint = "give a query, or --room / --sender / --since / --until to browse, or --list-rooms"
     Filters = _Filters
+    # dense retrieval (rawlayer/search/dense.py): rooms are the containers (a chunk never leaves its room);
+    # room_src.seq marks a retitle, which re-chunks that room. key_col stays "": the stable key is the composite
+    # string rec_key() builds, so rec_key/key_where below override the column-based defaults.
+    container_col, container_src, chunk_gap_s = "chat_id", "room_src", 1800
+
+    def rec_key(self, r):
+        return rec_key(r["chat_id"], r["log_id"])
+
+    def key_where(self, keys):
+        """(sql, params) selecting the rows behind these rec_key strings. Both columns are TEXT, so the parsed
+        groups bind as they are; a key that does not parse (or is not a str) is skipped."""
+        vals = []
+        for key in keys:
+            m = _MSG_KEY.fullmatch(key) if isinstance(key, str) else None
+            if m:
+                vals += [m.group(1), _clean(m.group(2))]
+        if not vals:
+            return "1=0", []
+        return ("(t.chat_id, t.log_id) IN (VALUES " + ",".join(["(?,?)"] * (len(vals) // 2)) + ")"), vals
+
+    def filtered_keys(self, con, q, flt, n):
+        """The stable keys of the rows that pass the filters and q's excluded terms, or None when more than n do
+        (the base reads only key_col, which kakao has none of: the composite key needs both columns)."""
+        body, params = self.body(q._replace(fts="", verify=[], weak=[]), flt)
+        keys = [self.rec_key(r) for r in con.execute(f"SELECT t.chat_id, t.log_id {body} LIMIT ?", params + [n + 1])]
+        return None if len(keys) > n else keys
+
+    def changed_containers(self, con, seq):
+        """Rooms with a change folded after ledger seq `seq` (every room for 0). The kakao table has no seq column
+        (rows are updated in place, never re-inserted), so the per-origin fold stands in: ksrc.seq is the ledger seq
+        of the last record folded for that key and origin -- a text, deletion or authorship change moves it; a
+        retitle moves room_src.seq; and a renamed author (authors.c_seq, reached through kakao_author) re-chunks
+        every room that author wrote in, because the chunk texts carry the sender name."""
+        sql = ("SELECT DISTINCT k.chat_id FROM ksrc s JOIN kakao k ON k.id = s.mid WHERE s.seq > ?"
+               " UNION SELECT chat_id FROM room_src WHERE seq > ?"
+               " UNION SELECT DISTINCT chat_id FROM kakao WHERE author_id IN"
+               " (SELECT author_id FROM authors WHERE c_seq > ?)")
+        return [r[0] for r in con.execute(sql, (seq, seq, seq))]
+
+    def chunk_units(self, con, container):
+        """One room's live messages as chat units (dense.pack joins them into chunks): not deleted, with text,
+        and not a system (type 0) or join/leave feed (type 52) row -- the other content types are already empty
+        of text, and a NULL type is kept (unknown, not known-system). Browse order (ts, log_no, id) with the
+        row id as the stable tie-break; the label is the room's current title ('' when untitled)."""
+        rows = con.execute(
+            "SELECT chat_id, log_id, ts, sender, author_id, message FROM kakao WHERE chat_id=? AND deleted=0 "
+            f"AND message!='' AND (type IS NULL OR (type & {~DELETE_ALL}) NOT IN (0, 52)) ORDER BY ts, log_no, id",
+            (container,)).fetchall()
+        t = con.execute("SELECT title FROM rooms WHERE chat_id=?", (container,)).fetchone()
+        return (t[0] if t else ""), [
+            (rec_key(r["chat_id"], r["log_id"]), r["ts"],
+             f"{r['sender'] or r['author_id'] or ''}: {r['message']}", False) for r in rows]
 
     def hit(self, r, tz, marks, width):
         msg = r["message"]
-        return {"id": r["id"], "key": f"kakao:{r['chat_id']}:msg:{r['log_id']}", "chat_id": r["chat_id"],
+        return {"id": r["id"], "key": rec_key(r["chat_id"], r["log_id"]), "chat_id": r["chat_id"],
                 "log_id": r["log_id"], "ts": r["ts"], "date": common.fmt_ts(r["ts"], tz), "room": r["room"],
                 "sender": r["sender"], "author_id": r["author_id"], "type": r["type"],
                 "type_name": type_name(r["type"]),

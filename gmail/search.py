@@ -12,7 +12,7 @@ CREATE TABLE msgs(id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, msg_id TEXT 
  thread_id TEXT NOT NULL, rev INTEGER NOT NULL, seq INTEGER NOT NULL, held INTEGER NOT NULL,
  ts INTEGER NOT NULL, ts_ms INTEGER NOT NULL, sender TEXT NOT NULL, subject TEXT NOT NULL,
  recipients TEXT NOT NULL, body_text TEXT NOT NULL, attachments TEXT NOT NULL,
- deleted INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL, ng TEXT NOT NULL);
+ deleted INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL, ng TEXT NOT NULL, tng TEXT NOT NULL DEFAULT '');
 CREATE INDEX msgs_time ON msgs(ts_ms,msg_id);
 CREATE INDEX msgs_thread ON msgs(thread_id,ts_ms);
 CREATE TABLE states(msg_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, seq INTEGER NOT NULL,
@@ -56,7 +56,7 @@ class GmailApplier:
         if op != "put":
             self.con.execute(f"UPDATE {table} SET rev=?,seq=?,held=0 WHERE {col}=?", (rev, seq, ident))
             if kind == "msg" and op == "purged":
-                self.con.execute("UPDATE msgs SET subject='',sender='',recipients='',body_text='',attachments='',message='',ng='' WHERE msg_id=?", (ident,))
+                self.con.execute("UPDATE msgs SET subject='',sender='',recipients='',body_text='',attachments='',message='',ng='',tng='' WHERE msg_id=?", (ident,))
         elif kind == "msg":
             ts = n.get("internal_date_ms")
             if type(ts) is not int or not 0 <= ts <= MAX_MS or gm_id(n.get("thread_id")) is None:
@@ -67,14 +67,15 @@ class GmailApplier:
             files = n.get("attachments", [])
             attachments = "\n".join(_s(v.get("filename")) for v in files if isinstance(v, dict)) if isinstance(files, list) else ""
             text = "\n".join((subject, sender, recipients, body, attachments))
+            ng = ti.ng_text(text)
             self.con.execute("""INSERT INTO msgs(key,msg_id,thread_id,rev,seq,held,ts,ts_ms,sender,subject,
-             recipients,body_text,attachments,message,ng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             recipients,body_text,attachments,message,ng,tng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(msg_id) DO UPDATE SET rev=excluded.rev,seq=excluded.seq,held=excluded.held,
              thread_id=excluded.thread_id,ts=excluded.ts,ts_ms=excluded.ts_ms,sender=excluded.sender,
              subject=excluded.subject,recipients=excluded.recipients,body_text=excluded.body_text,
-             attachments=excluded.attachments,message=excluded.message,ng=excluded.ng""",
+             attachments=excluded.attachments,message=excluded.message,ng=excluded.ng,tng=excluded.tng""",
              (key, ident, n["thread_id"], rev, seq, held, ts // 1000, ts, sender, subject,
-              recipients, body, attachments, text, ti.ng_text(text)))
+              recipients, body, attachments, text, ng, ti.title_ng(subject, ng)))
         elif kind == "lbls":
             labels = n.get("label_ids")
             if not isinstance(labels, list) or not all(isinstance(v, str) and pk_text(v) for v in labels):
@@ -106,15 +107,16 @@ class GmailApplier:
 
 class GmailIndex(common.SourceIndex):
     name, origins = NAME, frozenset({ORIGIN})
-    schema_version = extractor_version = "gmail-1"
+    schema_version = extractor_version = "gmail-2"
     fts_tables = ("msgs_fts",)
 
     def create_tables(self, con):
         con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("msgs"))
+        con.execute(ti.fts_ddl("msgs", title=True))
+        con.execute(ti.title_rank("msgs_fts"))
 
     def create_triggers(self, con):
-        common.create_triggers(con, "msgs", "msgs_fts")
+        common.create_triggers(con, "msgs", "msgs_fts", title=True)
 
     def applier(self, con, full):
         return GmailApplier(con, full)
@@ -163,12 +165,38 @@ class Filters(drv.Filters):
                 "thread": a.thread, "include_removed": a.include_removed}
 
 
+# Where a reply's quoted history or the signature starts: the rest of the body is not this mail's own text.
+_CUT = re.compile(r"(-- |On .{1,300} wrote:|.{1,300}님이 작성:|-{2,} ?(Original Message|원본 메시지) ?-{2,})\s*", re.I)
+
+
+def mail_paragraphs(body):
+    """A mail body's own paragraphs: no quoted (>) lines, nothing from a reply header or the signature on."""
+    kept = []
+    for line in body.splitlines():
+        if _CUT.fullmatch(line):
+            break
+        if not line.lstrip().startswith(">"):
+            kept.append(line)
+    return [p.strip() for p in re.split(r"\n\s*\n", "\n".join(kept)) if p.strip()]
+
+
 class GmailSearch(drv.SearchDriver):
     name, table, fts_table = NAME, "msgs", "msgs_fts"
     sort_cols = ("ts_ms", "msg_id")
     group_modes = {"senders": "t.sender", "threads": "t.thread_id", "labels": "m.label_id"}
     in_page_key, page_group = "threads_in_page", "thread_id"
     hits_noun, browse_hint, Filters = "messages", "give a query or --label/--from/--thread/--since/--until", Filters
+    key_col, container_col, container_src = "key", "msg_id", "states"
+
+    def chunk_units(self, con, container):
+        r = con.execute("SELECT key, ts, subject, sender, body_text, attachments FROM msgs WHERE msg_id=? AND deleted=0",
+                        (container,)).fetchone()
+        if r is None:
+            return "", []
+        units = [(r["key"], r["ts"], p, False) for p in mail_paragraphs(r["body_text"])]
+        if r["attachments"]:
+            units.append((r["key"], r["ts"], "attachments: " + ", ".join(r["attachments"].splitlines()), False))
+        return f"{r['subject']} / {r['sender']}", units or [(r["key"], r["ts"], r["subject"], False)]
 
     def check_args(self, a):
         if a.thread and gm_id(a.thread) is None:

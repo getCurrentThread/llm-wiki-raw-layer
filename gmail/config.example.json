@@ -10,5 +10,9 @@
   "gm_exclude_labels": ["SPAM", "TRASH", "DRAFT", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"],
   "gm_volatile_labels": ["UNREAD"],
   "gm_body_max_bytes": 131072,
-  "gm_partition_max_messages": 1000
+  "gm_partition_max_messages": 1000,
+  "gm_wiki_project": "",
+  "gm_wiki_include": [],
+  "gm_wiki_exclude": [],
+  "gm_wiki_since": ""
 }

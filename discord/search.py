@@ -229,6 +229,13 @@ class DiscordSearch(drv.SearchDriver):
     group_modes = {"senders": "t.user_id", "channels": "t.channel_id"}
     list_flag, in_page_key, page_group = "list_channels", "channels_in_page", "channel_id"
     hits_noun, browse_hint, Filters = "messages", "give a query or --channel/--guild/--sender/--since/--until", Filters
+    key_col, container_col, container_src, chunk_gap_s = "key", "channel_id", "ch_src", 1800
+
+    def chunk_units(self, con, container):
+        rows = con.execute("SELECT key, ts, guild, channel, sender, user_id, message FROM msgs WHERE channel_id=? "
+                           "AND deleted=0 AND message!='' ORDER BY ts_ms, sid", (container,)).fetchall()
+        label = " › ".join(p for p in (rows[-1]["guild"], rows[-1]["channel"] or container) if p) if rows else ""
+        return label, [(r["key"], r["ts"], f"{r['sender'] or r['user_id']}: {r['message']}", False) for r in rows]
 
     def check_args(self, a):
         if a.thread is not None:

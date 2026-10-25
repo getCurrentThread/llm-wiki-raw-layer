@@ -1,6 +1,6 @@
 ---
 name: llm-wiki-setup
-description: Install, configure, turn on scheduled collection, health-check or recover the llm-wiki raw layer apps (gmail, discord, notion, mattermost) on this Windows machine, following the repository's gated runbook llm.md and its tools/bootstrap.py. Use when asked to set up or bring up an app, enable capture or its schedule, check health or fix a failed run (e.g. "gmail 수집 켜줘", "디스코드 스케줄 등록", "수집 상태 점검", "노션 캡처 복구"), or to install the agent integration.
+description: Install, configure, turn on scheduled collection, health-check or recover the llm-wiki raw layer apps (gmail, discord, notion, mattermost, claudecode) on this Windows machine, following the repository's gated runbook llm.md and its tools/bootstrap.py. Use when asked to set up or bring up an app, enable capture or its schedule, check health or fix a failed run (e.g. "gmail 수집 켜줘", "디스코드 스케줄 등록", "수집 상태 점검", "노션 캡처 복구"), or to install the agent integration.
 ---
 
 Operate the llm-wiki raw layer by its runbook, `llm.md`, and the checkout's rules, `AGENTS.md`:

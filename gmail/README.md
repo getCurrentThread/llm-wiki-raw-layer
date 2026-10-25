@@ -167,3 +167,9 @@ message bodies stay partition-bounded. Raw API responses and MIME parsing still 
 Snapshots preserve the final state observed per sync, not every intermediate label event between captures.
 OAuth/GCP setup and live Google behavior require user verification; tests use only temporary synthetic data
 and an injected fake HTTP transport.
+
+## LLM Wiki export
+
+`gm_wiki_project`, `gm_wiki_include`, `gm_wiki_exclude` and `gm_wiki_since` configure `tools/wikiexport.py gmail` (llm.md 13), which
+writes the closed months, packed into Markdown files of about 16,000 characters with a section per mail, into an
+LLM Wiki project's `raw/sources/gmail/`. Empty by default: nothing is exported.

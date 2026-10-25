@@ -48,7 +48,7 @@ repeating them.
 | `<PROJECT>` | this checkout, the folder holding `manage.py` |
 | `<HOME>` | the profile folder the checkout sits in, e.g. `C:\Users\<user>` |
 | `<DATA_PARENT>` | `<HOME>\llm-wiki-data` (`config/settings.py`) |
-| `<app>` | `gmail`, `discord`, `notion` or `mattermost` |
+| `<app>` | `gmail`, `discord`, `notion`, `mattermost` or `claudecode` |
 | `<DATA_ROOT>` | `<DATA_PARENT>\<app>` |
 | `<CFG>` | `<DATA_ROOT>\config.json` |
 | `<PY>` | absolute path of the Python interpreter the scheduled task will start (0.2) |
@@ -95,7 +95,7 @@ repeating them.
    schedule, kakaotalk included (`run` and `remove` refuse).
 7. Do not change code while operating. A bug found during operations is reported (symptom, command, exit code),
    not fixed.
-8. Apps in scope: discord, gmail, mattermost, notion, and kakaotalk under rule 2. Do not create other apps; slack
+8. Apps in scope: claudecode, discord, gmail, mattermost, notion, and kakaotalk under rule 2. Do not create other apps; slack
    and telegram apps must not be implemented.
 9. Never commit or push this repository while operating. The only push allowed is the owner-approved public site
    of 6.1.4, from its own folder.
@@ -114,6 +114,7 @@ repeating them.
 | `-m gmail.collector --auth` | 0 `auth_ready` · 2 every failure; `status` names the cause (7.3) |
 | `-m mattermost.collector --login` | 0 `auth_ready` · 2 every failure; `status` names the cause (6.4) |
 | `search` | 0 (also for zero hits) · 2 usage, query or missing/outdated index · 75 retry later · 1 |
+| `embed` (section 12) | 0 ok, also with chunks left by `--limit` · 2 usage, no or another sqlite-vec, another model or dims without `--rebuild` · 75 another embed holds the lock, or the embedding server failed (what was embedded is kept) · 1 error |
 | `check` | 0 · 1 errors (including `differing_rows>0`) · 2 config refused. It does not test the ACL or Windows Search. |
 | `setup` | 0 ready · 3 placeholders remain, the config refused, or an ACL/Windows Search problem (read every line) · 2 refused (usage, or the config is already there) · 1 error |
 | `schedule` | 0 · 2 refused or not elevated · 1 `schtasks` failed · 3 needs attention (from a non-elevated prompt, possibly only "not readable") |
@@ -122,7 +123,7 @@ repeating them.
 - **`check <app>` lines:**
   - `config: ok`
   - `replay check=yes differing_rows=N head_seq=N`
-  - `core: ok files=69`
+  - `core: ok files=74`
   - `check: ok errors=0 refused=0`
 
   While a capture runs (often the scheduled task), the replay line is replaced by
@@ -212,8 +213,8 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 |---|---|---|
 | 0.1 | Prerequisites. This checkout sits under the owner's profile (`<HOME>\...`): outside a profile the owner's commands still work, but every SYSTEM run fails at start (`1 (capture error)`, no task.log block), so never move the checkout yourself. Git for Windows is installed machine-wide on PATH: the SYSTEM task's precheck runs `git` and refuses the data root when it cannot. PowerShell 7.3 or newer. `gh` (GitHub CLI) only for the site in 6.1.4; its block checks for it. The four apps use the standard library only; no pip installs. If `pwsh` or `git` is missing: **[human]** the owner installs it (the Microsoft Store package of PowerShell needs no UAC prompt; an MSI or a machine-wide Git install shows one), then restart the agent session in pwsh. | `git --version` succeeds; `([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';').Where({ $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }).Count` is 1 or more (the SYSTEM task sees only the machine PATH); `$PSVersionTable.PSVersion` is 7.3 or newer; `$PSNativeCommandArgumentPassing` is not `Legacy` |
 | 0.2 | Choose `<PY>`. In a shell opened after any Python install: `python -s -B -c "import sys; print(sys.executable)"` (if `python` is missing or opens the Store, use `py -c ...`). `(Get-Command python).Source` is not the test: the python.org install manager's `python` is a `WindowsApps` alias that starts a real interpreter. If nothing qualifies: **[human]** install Python 3.12+ from python.org: the Python install manager needs no UAC prompt; the classic installer shows one unless **Use admin privileges when installing py.exe** is unticked. Then open a new shell and repeat. Wherever bare `python` does not start `<PY>`, run `& '<PY>' -s -B` in place of `python -s -B`. | `<PY>` is not under `\WindowsApps\`; `& '<PY>' -s -B --version` is 3.12 or newer |
-| 0.3 | `python -s -B manage.py check`, then `python -s -B -c "from pathlib import Path; from rawlayer import conf; print(Path(conf.PROJECT_DIR).is_relative_to(Path.home().resolve()))"` | exit 0 with `apps: 5 apps, no collision`, `core: ok files=69`, `check: ok errors=0 refused=0`; the second command prints `True` |
-| 0.4 | Optional: `python -s -B manage.py test core discord gmail mattermost notion`. This is the full suite an agent may run. A request for "all tests" does not name kakaotalk: run this and say that kakaotalk was skipped. Run `manage.py test kakaotalk` only when the owner names kakaotalk, and read only its final `test:` line. | exit 0 and the last line `test: core ok; discord ok; gmail ok; mattermost ok; notion ok` |
+| 0.3 | `python -s -B manage.py check`, then `python -s -B -c "from pathlib import Path; from rawlayer import conf; print(Path(conf.PROJECT_DIR).is_relative_to(Path.home().resolve()))"` | exit 0 with `apps: 5 apps, no collision`, `core: ok files=74`, `check: ok errors=0 refused=0`; the second command prints `True` |
+| 0.4 | Optional: `python -s -B manage.py test core claudecode discord gmail mattermost notion`. This is the full suite an agent may run. A request for "all tests" does not name kakaotalk: run this and say that kakaotalk was skipped. Run `manage.py test kakaotalk` only when the owner names kakaotalk, and read only its final `test:` line. | exit 0 and the last line `test: core ok; claudecode ok; discord ok; gmail ok; mattermost ok; notion ok` |
 | 0.5 | **[human]**, deferred to 5.1. If `<DATA_PARENT>` does not exist yet, skip this row in Phase 0: 5.1 creates it and sends you back here. Windows Search must not index `<DATA_PARENT>`; on a new profile it usually does. The owner excludes it: Indexing Options → Modify → untick the folder. This covers every app. | if `<DATA_PARENT>` exists, the 5.1 probe prints `search: ok`; otherwise the row is deferred to 5.1 |
 | 0.6 | Confirm the owner is available for [human] and UAC steps in this session. | the owner confirms, or names a time; until then run no [human] or [elevated] step |
 
@@ -237,6 +238,7 @@ names and states, never config values. It refuses kakaotalk.
   - gmail (6.1): `6.1.1`, `6.1.2`, `6.1.3`, `6.1.4`, `6.1.5`, `6.1.6`, `6.1.7`, `6.1.8`, `6.1.9`;
   - discord (6.2): `6.2`, `6.2.1`, `6.2.2`, `6.2.3`; notion (6.3): `6.3`, `6.3.1`, `6.3.2`, `6.3.3`;
     mattermost (6.4): `6.4`, `6.4.1`, `6.4.2`, `6.4.3`, `6.4.4`;
+    claudecode (6.6): `6.6`, `6.6.1`, `6.6.2`, `6.6.3`;
   - the health routine: `8`.
 
   `6.<card>.<n>` is numbered step `<n>` of a card whose steps are a numbered list, and a bare card id is a gate
@@ -317,7 +319,7 @@ keys still to set.
 **5.4 Authenticate** (apps with a collector). Do the app card's auth steps, then
 `python -s -B -m <app>.collector --auth-check --config <CFG>`
 Gate: exit 0 with `"status": "authenticated"` (gmail, and the `api` source of discord or notion) or
-`"status": "local_ready"` (the `desktop` source).
+`"status": "local_ready"` (the `desktop` source or claudecode, which needs no authentication).
 
 **5.5 Bounded first collection.** Always run the collector before the first `collect`: capture of an empty
 archive exits 75.
@@ -417,6 +419,7 @@ alone, with a new `<T0>`.
 | discord | `\llm-wiki\discord-capture` | 00:14 / 3 h / 1 h | `dc_source` (the example sets `desktop`), then `config defaults discord` after changing it; `dc_desktop_path` when the cache is not at its standard place | `dc_sync` | [discord/README.md](discord/README.md) |
 | notion | `\llm-wiki\notion-capture` | 03:29 / 6 h / 1 h | `nt_source` (the example sets `desktop`); `nt_desktop_path` when the database is not at its standard place | `nt_sync` | [notion/README.md](notion/README.md) |
 | mattermost | `\llm-wiki\mattermost-capture` | 02:14 / 3 h / 1 h | `mm_url`, `mm_exclude_patterns` (the owner's values) | `mm_sync` | [mattermost/README.md](mattermost/README.md) |
+| claudecode | `\llm-wiki\claudecode-capture` | 02:44 / 3 h / 1 h | none: `setup` fills `sources.cc_archive` and `cc_claude_dir` (`<HOME>\.claude`) | `cc_sync` | [claudecode/README.md](claudecode/README.md) |
 
 ### 6.1 gmail (Gmail API, read-only OAuth)
 
@@ -872,6 +875,31 @@ never config values, room names or message text. Stop and report on any refusal.
 5. **Schedule.** `python -s -B manage.py schedule install kakaotalk --dry-run` first, which changes nothing.
    `install` (elevated) only after the owner has seen the dry-run result and confirmed it.
 
+### 6.6 claudecode
+
+The collector reads the owner's local Claude Code files read-only. No human step, credential or sign-in is
+needed. It keeps prompts, reply text and one-line tool-call summaries; tool results, thinking and attachments
+are not kept. Secrets typed into prompts or the first 200 characters of Bash commands are kept as typed:
+never echo conversation text or commands. See [claudecode/README.md](claudecode/README.md).
+
+Steps:
+1. Run 5.1–5.3, then `python -s -B tools/bootstrap.py config defaults claudecode`. Defaults fill
+   `sources.cc_archive` = `<DATA_ROOT>\archive` and `cc_claude_dir` = `<HOME>\.claude`. The source must be an
+   absolute existing folder because SYSTEM has another home. Gate: `Test-Path -LiteralPath` on the configured
+   `cc_claude_dir` with `-PathType Container` is True; print only the boolean, never its contents. A missing
+   folder is a stop: report `source_missing`, without creating it. Run 5.4; gate: `"status": "local_ready"` and
+   `"authentication_required": false`.
+2. First run `python -s -B -m claudecode.collector --max-items 20 --config <CFG>`; it bounds changed source
+   files and prints counts only. Gate: exit 0, `"errors": 0`; `"limited": true` means files remain. Then run
+   `python -s -B -m claudecode.collector --capture --config <CFG>` without a bound. Gate: exit 0,
+   `"errors": 0`, `"limited": false`, then all 5.5 check and search gates. Record `genesis_complete` as in 5.5.
+3. Run `python -s -B tools/bootstrap.py config set claudecode cc_sync true`, pass 5.6's gates, then run
+   5.7–5.10 for the shared dry run, installation and SYSTEM proof.
+
+Recovery: `source_missing` means `cc_claude_dir` is not an absolute existing folder; correct it with
+`config set claudecode cc_claude_dir` (5.3), then repeat the source gate. Nonzero `errors` is a stop: report
+counts only. Source files removed by Claude Code's cleanup remain archived; do not delete archive partitions.
+
 ## 7. Human-in-the-loop handshakes
 
 **7.1 Asking.**
@@ -1050,7 +1078,7 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | `search` exit 2, index damaged or another version | outdated or broken index | `collect <app> --config <CFG> --rebuild-index` |
 | `check` exit 1, `differing_rows>0` | folded state disagrees with the ledger | report it. With the owner's approval (it rebuilds the folded state from the ledger and changes neither the ledger nor the index), run `check <app> --config <CFG> --rebuild-state`. It prints `replay check=no differing_rows=N head_seq=N`, where N is what it found before rebuilding, and exits 0. `ledger busy` instead means nothing was rebuilt: retry after the run. Then `check` again: `differing_rows=0`, `head_seq` unchanged. If it still differs, stop and report |
 | capture 75 on a first run | empty archive (no manifest yet) | run the collector before `collect` |
-| capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.9 step 5), check both numbers again |
+| capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.9 step 5), check both numbers again |
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`collect`, a collector's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
 | `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires client and token files`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
@@ -1122,3 +1150,129 @@ output says so). Both take `--dry-run`.
 The checkout's own copies (`.claude/skills`, `.claude/agents`, `.agents/skills`) come from the same templates
 with commands run from `<PROJECT>`: after editing a template, run `agents sync-repo`. `agents sync-repo --check`
 exits 3 while they differ, and a test fails.
+
+## 12. Dense retrieval (optional)
+
+`search <app> --hybrid` fuses the keyword hits with a ranking by meaning, read from
+`<DATA_ROOT>\index\<app>.vec.sqlite`. `manage.py embed <app>` builds that file from the app's index with a local
+embedding model. Nothing leaves the machine: the model runs in Ollama on a loopback address (embed and search
+refuse any other URL and ignore proxies) and sqlite-vec stores the vectors. Without the file, `--hybrid` returns the
+plain keyword hits, with `hybrid.available: false` and the reason. The file holds vectors and record keys, no text,
+but the vectors are derived from private text: it stays in `<DATA_ROOT>\index` like the index. Run `embed` only when
+the owner asks. Like `collect --rebuild-index`, `embed --rebuild` needs no approval (rule 10): it rebuilds derived
+data only.
+
+**12.1 Ollama.** `winget install --id Ollama.Ollama -e`, then `ollama pull bge-m3` (the default model;
+`qwen3-embedding:4b` also works, but embeds more slowly). Gate: `Invoke-RestMethod http://127.0.0.1:11434/api/version` answers;
+`Get-NetTCPConnection -LocalPort 11434 -State Listen | Select-Object -ExpandProperty LocalAddress` lists only
+`127.0.0.1` or `::1`; `OLLAMA_HOST` is set neither for the user nor for the machine.
+
+**12.2 sqlite-vec.** From the asg017/sqlite-vec GitHub release v0.1.9, download
+`sqlite-vec-0.1.9-loadable-windows-x86_64.tar.gz` into a new, empty folder under `$env:TEMP`. Compare its
+`Get-FileHash` with the SHA-256 digest that the release page lists for that asset; stop if they differ. Extract
+`vec0.dll` into `<DATA_PARENT>\sqlite-vec\v0.1.9\`. Gate: `(Get-FileHash '<DATA_PARENT>\sqlite-vec\v0.1.9\vec0.dll').Hash`
+equals, ignoring case, what `python -s -B -c "from rawlayer.search import dense; print(dense.VEC_SHA256)"` prints.
+
+**12.3 Count.** `python -s -B manage.py embed <app> --dry-run --config <CFG>`. Gate: exit 0 and a line with
+`chunks=N pending=N`. Nothing is written.
+
+**12.4 Trial.** `python -s -B manage.py embed <app> --limit 32 --config <CFG>`. Gate: exit 0 with `embedded=32`, and
+`python -s -B manage.py search <app> "<a word the owner names>" --hybrid --json --config <CFG> | ConvertFrom-Json | Select-Object -ExpandProperty hybrid`
+shows `available: True`. Look only at that field: the rows are private text.
+
+**12.5 Full run.** `python -s -B manage.py embed <app> --config <CFG>`. It prints progress lines to stderr; the rate
+depends on the GPU and the model. Gate: exit 0 with `pending=0`, and `src_seq` equal
+to `seq`. An interrupted run, or one that exits 75, resumes where it stopped: run the same command again.
+
+**12.6 Keeping it current.** No scheduled task runs `embed`: run it after collects, when the owner decides. It
+re-chunks only the containers that changed since its last complete run. `hybrid.stale: true` in a search result
+(also a `# note:` line) means that the index holds rows changed since the embeddings were made, or that a code
+update changed the chunker: a plain `embed <app>` then re-chunks every container and embeds only the chunks that
+came out different (a Gmail run that changed only labels sets it too; the embed then embeds nothing). To change the
+model or the dims, run `embed <app> --model <model> --rebuild`. A sidecar that
+another sqlite-vec version made is refused at search time with that reason. A batch the server fails is retried
+twice (after 2 and 10 seconds) before the run exits 75.
+
+## 13. LLM Wiki (nashsu/llm_wiki)
+
+The wiki layer on top of the ledgers is LLM Wiki, a desktop app (github.com/nashsu/llm_wiki) that watches its
+project's `raw\sources\` folder and ingests every new or changed file with the LLM the owner picks in it.
+`tools/wikiexport.py <app>` renders an app's index as Markdown sources under `<DATA_PARENT>\wiki\raw\sources\<app>\`.
+Discord, Mattermost and KakaoTalk get files per channel or room, and Gmail gets files of all its mail: closed months
+are packed into files of about 16,000 characters, each named after its first month. A month is written only once it
+is over. Notion gets one file per page. KakaoTalk only when the owner asks for it (AGENTS.md). The sources hold
+plaintext like the index, so the project stays
+under `<DATA_PARENT>`. Ingest sends the sources' text to the LLM configured in the app: with a cloud provider,
+private messages leave the machine. That choice is the owner's. The tool prints counts only; run it only when the
+owner asks.
+
+**13.1 Install (owner).** From the release page, download `LLM.Wiki_<version>_x64_en-US.msi` into a new, empty
+folder under `$env:TEMP`. Compare its `Get-FileHash` with the SHA-256 digest the release page lists for that asset;
+stop if they differ. Then install it. Gate: the app starts.
+
+**13.2 Project (owner).** In the app, Create project at `<DATA_PARENT>\wiki`. Edit its `purpose.md` (what the wiki
+is for, the output language, how people are to be named) and `schema.md` (page types; every page cites its
+`sources`; no long quotes). Gate: `Test-Path '<DATA_PARENT>\wiki\schema.md'` and `Test-Path '<DATA_PARENT>\wiki\wiki'`
+are both `True`.
+
+**13.3 Settings (owner, in the app).**
+- LLM: the provider and model for ingest and for chat. The owner types the API key into the app's settings
+  themselves, never into chat or a file of this repository. The app keeps it in its own store under
+  `%APPDATA%\com.llmwiki.app`.
+- API + MCP: localhost only, with no token-less access and no LAN access.
+- Source Watch: auto-ingest on, with concurrency 1 (the defaults).
+- Optional: semantic search through the OpenAI-compatible endpoint `http://127.0.0.1:11434/v1` with `bge-m3` (12.1).
+
+**13.4 Config.** Set `python -s -B tools/bootstrap.py config set <app> <p>_wiki_project '<DATA_PARENT>\wiki'`, where
+`<p>` is `dc`, `gm`, `mm` or `nt`. claudecode has no Wiki export support and is excluded from section 13.
+Two optional keys narrow what is written:
+- `<p>_wiki_include`: substrings of the channel label (`team › channel`), page breadcrumb or mail
+  `subject / sender`, casefolded, as a JSON list on stdin. An empty list keeps everything.
+- `<p>_wiki_exclude`: substrings to leave out, in the same form; an exclude wins over an include.
+- `<p>_wiki_since`: a first month, `YYYY-MM`. A chat or mail file is kept when its newest month is not before it, so
+  moving it adds or drops whole files and never re-packs the files it keeps.
+
+kakaotalk's folder declares no wiki keys. Give its settings on the command line instead, with `--project`,
+`--include` and `--exclude` (repeat each for each substring) and `--since`; these flags also override any app's keys.
+
+Gate: exit 0.
+
+**13.5 Count.** Run `python -s -B tools/wikiexport.py <app> --dry-run`. Gate: exit 0 and a line
+`wikiexport: <app> dry-run files=N written=N unchanged=N held=N filtered=N orphans=N`. `files` is the number of
+ingests, `held` the records of open months and `filtered` those that include/since left out. Show the owner the
+counts before the first run: with a cloud LLM, every file costs tokens.
+
+**13.6 Export.** Run `python -s -B tools/wikiexport.py <app>`.
+
+Gate:
+- The command exits 0, and running it again prints `written=0`.
+- In the app, the ingest queue drains.
+- A page under `wiki\sources\` names `<app>/...` in its frontmatter `sources`.
+
+For a first ingest with a cloud model, go app by app. Start with the app whose dry run (13.5) shows the fewest
+files: it measures the cost of one file. Narrow the large apps with `<p>_wiki_include` and `<p>_wiki_since`.
+
+**13.7 Local model.** After the first ingest, the app's ingest can move to its `ollama-local` preset.
+1. Run `ollama pull <model>` for a chat model that fits the GPU.
+2. Set the user environment variable `OLLAMA_CONTEXT_LENGTH` (for example 32768) and the app's context size to the
+   same value. `OLLAMA_HOST` stays unset (the 12.1 gate).
+
+Gate: one source is ingested again by the local model, for example after a Notion edit is collected and exported.
+
+**13.8 Daily export.** This is a task under the owner's account, with no elevation. Its actions run one after
+another. List only the apps whose `<p>_wiki_project` is set: the others exit 2. kakaotalk's action carries its
+flags in `-Argument` (13.4).
+```powershell
+$acts = 'discord','gmail','mattermost','notion' | ForEach-Object {
+  New-ScheduledTaskAction -Execute '<PY>' -Argument "-s -B tools\wikiexport.py $_" -WorkingDirectory '<PROJECT>' }
+Register-ScheduledTask -TaskName 'llm-wiki-wiki-export' -Action $acts -Trigger (New-ScheduledTaskTrigger -Daily -At 04:30) `
+  -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1))
+```
+Gate: `Start-ScheduledTask llm-wiki-wiki-export`, then `(Get-ScheduledTaskInfo llm-wiki-wiki-export).LastTaskResult`
+is 0. The task does not belong to `schedule`: `schedule status` does not report it, and `Unregister-ScheduledTask
+llm-wiki-wiki-export` removes it.
+
+**13.9 Orphans.** `orphans=N` counts the files under `raw\sources\<app>\` that a run no longer produces. A renamed
+channel, a narrower include or a purge leaves them. They are kept, because LLM Wiki deletes a removed source's
+pages. `--prune` deletes them, and with them their wiki pages: run it only on the owner's explicit yes, after a
+`--prune --dry-run` that shows the count.

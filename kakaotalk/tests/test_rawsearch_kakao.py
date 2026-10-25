@@ -231,7 +231,11 @@ class TestSearch(Scenario):
         env = search(self.cfg, "삭제될", "--include-deleted")
         self.assertEqual(([r["key"] for r in env["rows"]], env["rows"][0]["deleted"]), ([k(301, 6)], True))
         self.assertEqual(search(self.cfg, "QUJDREVGR0g", "--include-deleted")["total"], 0)
-        self.assertEqual(search(self.cfg, "수정 전", "--include-deleted")["total"], 0)
+        # the edited-away text is still findable by neither form; the weak one-syllable term 전 now drops out
+        # of the OR retry instead of cancelling it, so the plain search relaxes to 수정 and finds the new text
+        self.assertEqual(search(self.cfg, "수정 전", "--include-deleted", "--literal")["total"], 0)
+        env = search(self.cfg, "수정 전", "--include-deleted")
+        self.assertEqual((env["total"], env["relaxed"], keys(env)), (1, True, [k(301, 5)]))
         gone = search(self.cfg, "사라질")["rows"][0]
         self.assertEqual((gone["gone"], gone["origins"]), (True, []))
         local = search(self.cfg, "지운", "--include-deleted")["rows"][0]

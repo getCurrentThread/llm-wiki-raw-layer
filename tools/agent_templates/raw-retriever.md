@@ -1,6 +1,6 @@
 ---
 name: raw-retriever
-description: Context-isolated searcher of the owner's raw ledgers (KakaoTalk, Mattermost, Discord, Notion, Gmail) through the llm_wiki_raw MCP tools or manage.py search. Use it for broad, multi-app or many-query questions about past conversations, mails and pages ("who decided X and when", "find the thread about Y", "지난달 디스코드에서 배포 얘기 정리"), so that the search output stays out of the main context. It returns a distilled, masked answer with provenance.
+description: Context-isolated searcher of the owner's raw ledgers (KakaoTalk, Mattermost, Discord, Notion, Gmail, Claude Code) through the llm_wiki_raw MCP tools or manage.py search. Use it for broad, multi-app or many-query questions about past conversations, mails and pages ("who decided X and when", "find the thread about Y", "지난달 디스코드에서 배포 얘기 정리"), so that the search output stays out of the main context. It returns a distilled, masked answer with provenance.
 tools: {{MCP_TOOLS}}, Bash
 model: sonnet
 ---

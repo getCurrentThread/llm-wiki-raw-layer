@@ -1,8 +1,8 @@
 # AGENTS.md — llm-wiki-raw-layer
 
 The raw layer of an LLM wiki built from private conversations and documents (`kakaotalk`, `mattermost`,
-`discord`, `notion`, `gmail`). Each app reads its sources read-only into its own crash-safe, append-only ledger
-chained by SHA-256 hashes, and an SQLite FTS5 index per app makes the committed ledger searchable: that search is
+`discord`, `notion`, `gmail`, `claudecode`). Each app reads its sources read-only into its own crash-safe,
+append-only ledger chained by SHA-256 hashes, and an SQLite FTS5 index per app makes the committed ledger searchable: that search is
 the wiki's retrieval side. Message data, indexes, configs and tokens live outside this repository, under
 `<HOME>\llm-wiki-data` (`DATA_PARENT`), one data root per app.
 
@@ -12,11 +12,14 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
   site-packages, `-B`: no bytecode files).
 - `check` validates settings, the app contracts, cross-app collisions and the core checksums. `check <app>` also
   verifies that app's ledger.
-- Tests an agent may run: `python -s -B manage.py test core discord gmail mattermost notion`. A bare `test`
+- Tests an agent may run: `python -s -B manage.py test core claudecode discord gmail mattermost notion`. A bare `test`
   also runs kakaotalk's suite; run that only when the owner names kakaotalk.
 - Search: `python -s -B manage.py search <app> [QUERY] --json [options]`. `search <app> --help` documents the
   modes, filters and query language; trust it over memory.
-- Do not run `collect` or rebuild an index unless the owner asks.
+- Do not run `collect` or rebuild an index unless the owner asks. The same holds for `embed` (llm.md 12), which
+  builds the optional dense sidecar that `search --hybrid` reads.
+- `tools/wikiexport.py <app>` (llm.md 13) writes the LLM Wiki project's sources: run it only when the owner asks,
+  and `--prune`, which makes LLM Wiki delete wiki pages, only on their explicit yes.
 
 ## Setting up, operating and recovering
 
@@ -31,10 +34,16 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
 
 - Pick the app from the request: 카톡/카카오톡 → kakaotalk (rooms); mattermost/마터모스트 → mattermost
   (channels, teams, threads); 디스코드 → discord (servers, channels); 노션 → notion (pages); Gmail/지메일/메일 →
-  gmail (labels, threads). If the request names no app and the context does not settle it, ask. For several apps,
+  gmail (labels, threads); 클로드코드/클로드 코드/Claude Code → claudecode (sessions, projects). If the request names
+  no app and the context does not settle it, ask. For several apps,
   search each one and label every citation with its app; kakaotalk only when the request is about KakaoTalk.
-- Korean queries use bare stems without particles or endings (`송금을` → `송금`, `회의에서` → `회의`); for a verb
-  whose stem changes when conjugated, search both forms (`보내 OR 보냈`).
+- Korean particles and common endings are stripped from query terms automatically (`송금을` → `송금`,
+  `보냈다` → `보냈 OR 보내`), rows with the terms as typed first; the envelope's `normalized_query` shows what ran,
+  and `--literal` (or a quoted term) matches as typed. A hits search with zero matches retries OR-ed (`relaxed`).
+  For a verb whose stem changes in other ways, still search both forms.
+- A question worded unlike the text (a paraphrase, a description) → `--hybrid`, which also ranks by meaning: each
+  hit's `sources` gives its keyword and semantic rank, `context` the window around it; `hybrid.available: false`
+  means keyword hits only.
 - How many / when / who / where → the aggregate modes first (`count`, `timeline`, `senders`, and the app's
   container mode); read hits only when the content matters.
 - Zero hits are not proof of absence: widen the terms and filters first, and report the index's `seq` and
