@@ -25,8 +25,11 @@ machine-specific paths. `<DATA_ROOT>` conventionally means `<DATA_PARENT>/matter
 need an existing `inputs_root`; live input resolution does not require it to exist.
 
 Capture reads the archive directory read-only. Its one origin is `mm_archive`, with record kinds
-`ch`, `post`, `file`, and `user`. The archive contains `manifest.json` channel records, `posts/**.jsonl`
-post records (one file per channel), and `users.json`. It is read in one stable pass between two reads of the
+`ch`, `post`, `file`, `user` and `blob`. The archive contains `manifest.json` channel records, `posts/**.jsonl`
+post records (one file per channel; each post's `metadata.files` become `file` records), `users.json` and, once
+the collector keeps attached files, `files.json`: one `blob` record `mm:blob:<file_id>` per kept file with its
+`post_id`, `sha256`, `size` and `path` (relative to the archive). The kept files themselves stay out of the
+ledger and are never read by capture. It is read in one stable pass between two reads of the
 manifest. A changed manifest retries the pass (at most three times); continued changes make the origin unstable.
 Every version of a key seen in a stable pass is recorded once.
 
@@ -74,6 +77,13 @@ capturing it. Frozen inputs never call the collector.
   cursor, and with `mm_sync` make the origin commit nothing that run.
 - `users.json` maps user ids to `{username, nickname, first_name, last_name}`; each run refreshes this run's
   authors and resolves every author still missing.
+- `mm_files_max_mb` (default 0: off) keeps each attached file of at most that many MB, after the channels and
+  users, newest first, in the run's remaining time: `files/<id[:2]>/<id>` in the archive, without an extension
+  (a kept `.exe` never runs on a click; the name is in the post). A file is written atomically before
+  `files.json` records it, and `files.json` never shrinks. A kept file missing from disk is fetched again.
+  Deleted files, files over the cap and the files of excluded or unavailable channels are not fetched, and
+  downloads stop while the disk would fall below the capture floor plus 1 GiB. A failed or short download
+  counts in `files_failed`, not `errors`, so it never holds back the capture of posts; a 401 still stops the run.
 - The archive is bound to the account and server that first synced into it (`account_changed` otherwise).
   `--max-items N` bounds channels; a run also stops after 40 minutes with `"limited": true`. Edits and deletions
   of posts already archived are not fetched again, as in mattertok.
@@ -86,10 +96,11 @@ python -s -B manage.py collect mattermost
 ```
 
 The collector prints one JSON line of counts and categories only (`channels`, `posts_written`,
-`files_written`, `excluded`, `unavailable`, `errors`, `limited`, `users`, `requests`); `posts_written` counts posts
-new to the archive or changed, `files_written` the channel files that changed. Not ported: mattertok's
-interactive commands (read, search, send, watch), its WebSocket live mode (the scheduled task's cursor sync
-replaces it), attachment downloads and Markdown rendering; capture reads none of them.
+`files_written`, `excluded`, `unavailable`, `errors`, `limited`, `users`, `files_stored`, `files_failed`,
+`requests`); `posts_written` counts posts new to the archive or changed, `files_written` the channel files that
+changed, `files_stored` the attached files kept this run. Not ported: mattertok's interactive commands (read,
+search, send, watch), its WebSocket live mode (the scheduled task's cursor sync replaces it), its attachment
+layout and Markdown rendering; capture reads none of them.
 
 The record format, canonical hashes and commit protocol follow `SPEC.md` and `SPEC-CLARIFICATIONS.md` of the
 `llm-wiki` checkout. Committed records are kept in `<DATA_ROOT>/raw/ledger/<origin>/<YYYY>/` as gzipped JSONL
@@ -150,8 +161,11 @@ python -s -B manage.py search mattermost --thread <post_id>
 - **One row per post key.** Each key `mm:post:<id>` has one row, and its latest version wins (an edit, a new
   reply count, a move to another channel file).
 - **Text.** It follows the knowledge-base corpus rule: the message; else the attachment pretext, title, text,
-  fallback and fields; else the file names. `body_from` says which, and file names are searchable. A deleted
-  post whose message the server emptied keeps its last captured text.
+  fallback and fields; else the file names. `body_from` says which. File names are searchable on every post
+  (a post with text has them in its search shadow, not in its text). A deleted post whose message the server
+  emptied keeps its last captured text.
+- **Kept files.** Each hit's `stored` maps the file ids of its kept files to their paths relative to the
+  archive (`sources.mm_archive`), from the `blob` records; `{}` when none is kept.
 - **Flags.** `edited` means `edit_at > 0` or the text changed (a new version with the same text is not an
   edit). Deleted posts (`delete_at > 0`) and system posts (`system_*`) are hidden unless
   `--include-deleted` / `--include-system`.

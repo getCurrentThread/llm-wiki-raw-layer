@@ -17,13 +17,19 @@ deleted for good empties its pages: a backfill then pages back again from the ne
 the channel's last_post_at moved on) pages back to the known posts. Fetched posts are merged into the channel file
 by post id, ordered by create_at, and the file is replaced atomically before the manifest records the cursors that
 cover them (every FLUSH_POSTS posts and at the end of each channel), so an interrupted run fetches again at most
-what it had not published. Known posts and users are never removed."""
+what it had not published. Known posts and users are never removed.
+
+With a file cap, the attached files of at most that many bytes are kept too, as files/<id[:2]>/<id> (no extension,
+so a kept .exe never runs on a click), each written before files.json records its post id, sha256, size and path;
+mm_archive turns files.json into the ledger's pointers. files.json never shrinks."""
 import getpass
+import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import time
 from urllib import error, parse, request
@@ -32,6 +38,7 @@ import uuid
 from tools.archiveio import CollectorError, atomic, bind, inside, load, locked
 
 PER_PAGE = 200
+FILE_FLUSH = 100            # files.json is rewritten every 100 kept files, so an interrupted run loses little
 FLUSH_POSTS = 5000          # publish a long backfill in parts, so memory and lost work stay bounded
 RATE = 4.0                  # requests per second; Mattermost rate-limits each user
 TIME_BUDGET = 2400          # seconds of collection inside the one-hour task, leaving capture and index the rest
@@ -114,12 +121,13 @@ class MattermostClient:
             self.sleep(wait)
         self.next_at = time.monotonic() + self.interval
 
-    def request(self, method, path, query=None, body=None):
-        """429 honours Retry-After and 5xx / transport failures back off exponentially (four attempts)."""
+    def request(self, method, path, query=None, body=None, binary=False):
+        """429 honours Retry-After and 5xx / transport failures back off exponentially (four attempts). `binary`
+        returns the reply's bytes instead of its JSON."""
         if not re.fullmatch(r"/[A-Za-z0-9_/-]+", path):
             raise CollectorError("bad_endpoint")
         url = self.api + path + ("?" + parse.urlencode(query) if query else "")
-        headers = {"Authorization": "Bearer " + self.credential, "Accept": "application/json"}
+        headers = {"Authorization": "Bearer " + self.credential, "Accept": "*/*" if binary else "application/json"}
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -154,6 +162,8 @@ class MattermostClient:
                     raise CollectorError("transport_error") from None
                 self.sleep(delay)
                 delay *= 2
+        if binary:
+            return raw
         try:
             return json.loads(raw) if raw else None
         except ValueError:
@@ -197,6 +207,10 @@ class MattermostClient:
                 if isinstance(user, dict) and isinstance(user.get("id"), str) and _ID.fullmatch(user["id"]):
                     self.users[user["id"]] = user
         return self.users
+
+    def file(self, file_id):
+        """An attached file's bytes."""
+        return self.request("GET", f"/files/{_id(file_id)}", binary=True)
 
     def user(self, user_id):
         if user_id not in self.users:
@@ -525,9 +539,8 @@ def publish(root, rel, posts):
     return len(ordered), changed
 
 
-def _authors(root, man):
-    """Every post author in the archive's channel files."""
-    ids = set()
+def _archived(root, man):
+    """(channel state, post) of every post in the archive's channel files; unreadable files and lines are skipped."""
     for st in man["channels"].values():
         if not isinstance(st, dict) or not _safe_rel(st.get("path")):
             continue
@@ -537,12 +550,65 @@ def _authors(root, man):
             continue
         for line in data.split(b"\n"):
             try:
-                uid = json.loads(line).get("user_id")
-            except (ValueError, AttributeError):
+                post = json.loads(line)
+            except ValueError:
                 continue
-            if isinstance(uid, str) and _ID.fullmatch(uid):
-                ids.add(uid)
-    return ids
+            if isinstance(post, dict):
+                yield st, post
+
+
+def _authors(root, man):
+    """Every post author in the archive's channel files."""
+    return {uid for _st, p in _archived(root, man)
+            if isinstance(uid := p.get("user_id"), str) and _ID.fullmatch(uid)}
+
+
+def store_files(root, client, man, patterns, cap, deadline, stats):
+    """Keep every archived file of at most `cap` bytes not kept yet (or gone from disk), newest first, until the
+    deadline or the disk floor. A failed or short download counts in files_failed, not errors: a file must not
+    hold back the capture of posts."""
+    from rawlayer.capture.run import HARD_FLOOR
+    stored = load(root / "files.json", {})
+    if not isinstance(stored, dict):
+        raise CollectorError("bad_archive")
+    todo = {}
+    for st, post in _archived(root, man):
+        if st.get("error") == "unavailable" or excluded(patterns, st.get("display"), st.get("channel_name")):
+            continue
+        md = post.get("metadata")
+        for f in (md.get("files") if isinstance(md, dict) else None) or ():
+            fid = f.get("id") if isinstance(f, dict) else None
+            if not isinstance(fid, str) or not _ID.fullmatch(fid) or _int(f.get("delete_at")) \
+                    or not 0 < _int(f.get("size")) <= cap or not isinstance(post.get("id"), str):
+                continue
+            old = stored.get(fid)
+            if isinstance(old, dict) and root.joinpath(*str(old.get("path", "")).split("/")).is_file():
+                continue
+            todo[fid] = (_int(f.get("create_at")), fid, post["id"], f["size"])
+    kept = 0
+    for _ts, fid, pid, size in sorted(todo.values(), reverse=True):
+        if time.monotonic() > deadline or shutil.disk_usage(root).free - size < HARD_FLOOR + 1024 ** 3:
+            stats["limited"] = True
+            break
+        try:
+            data = client.file(fid)
+        except CollectorError as e:
+            if e.category == "auth_required":
+                raise
+            stats["files_failed"] += 1
+            continue
+        if len(data) != size:
+            stats["files_failed"] += 1
+            continue
+        rel = f"files/{fid[:2]}/{fid}"
+        _replace(root, root.joinpath(*rel.split("/")), data)
+        stored[fid] = {"post_id": pid, "sha256": hashlib.sha256(data).hexdigest(), "size": size, "path": rel}
+        kept += 1
+        if kept % FILE_FLUSH == 0:
+            atomic(root, root / "files.json", stored)
+    if kept:
+        atomic(root, root / "files.json", stored)
+    stats["files_stored"] += kept
 
 
 def _manifest(root):
@@ -565,11 +631,11 @@ def _known(man):
     return out
 
 
-def sync(root, client, patterns=(), max_items=0, time_budget=TIME_BUDGET):
+def sync(root, client, patterns=(), max_items=0, time_budget=TIME_BUDGET, files_cap=0):
     root = Path(root)
     deadline = time.monotonic() + time_budget
     stats = {"status": "ok", "channels": 0, "posts_written": 0, "files_written": 0, "excluded": 0,
-             "unavailable": 0, "errors": 0, "limited": False, "users": 0}
+             "unavailable": 0, "errors": 0, "limited": False, "users": 0, "files_stored": 0, "files_failed": 0}
     with locked(root):
         me = client.authenticate()
         man = _manifest(root)
@@ -646,6 +712,8 @@ def sync(root, client, patterns=(), max_items=0, time_budget=TIME_BUDGET):
         stats["users"] = len(users)
         atomic(root, root / "users.json", users)
         save()
+        if files_cap:
+            store_files(root, client, man, patterns, files_cap, deadline, stats)
     stats["requests"] = client.requests
     return stats
 
@@ -655,7 +723,8 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
     if auth_only:
         client.authenticate()
         return {"status": "authenticated"}
-    return sync(cfg.sources["mm_archive"], client, cfg.mm_exclude, max_items)
+    return sync(cfg.sources["mm_archive"], client, cfg.mm_exclude, max_items,
+                files_cap=cfg.mm_files_max_mb * 1024 ** 2)
 
 
 def main(argv=None):

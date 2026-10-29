@@ -35,13 +35,13 @@ def kst_ms(y, mo, d, h=12, mi=0):
 
 class MatterSources:
     """Writes the mm_archive input of a Fixture as mattertok lays it out: manifest.json (channels with a path),
-    posts/<path> (CRLF JSON lines, ensure_ascii=False) and users.json. Each call replaces the archive; post
-    files no longer referenced are removed (a channel file that moved)."""
+    posts/<path> (CRLF JSON lines, ensure_ascii=False), users.json and, when `stored` is given, files.json. Each
+    call replaces the archive; post files no longer referenced are removed (a channel file that moved)."""
 
     def __init__(self, fx):
         self.fx = fx
 
-    def write(self, channels, users):
+    def write(self, channels, users, stored=None):
         root = Path(self.fx.mm)
         man = {"version": 1, "channels": {}}
         keep = set()
@@ -65,6 +65,14 @@ class MatterSources:
             json.dump(man, fh, ensure_ascii=False)
         with (root / "users.json").open("w", encoding="utf-8") as fh:
             json.dump(users, fh, ensure_ascii=False)
+        if stored is not None:
+            with (root / "files.json").open("w", encoding="utf-8") as fh:
+                json.dump(stored, fh)
+
+
+def stored_entry(fid, pid, size=3):
+    """A files.json entry as the collector writes it (the file itself is never read by capture or the index)."""
+    return {"post_id": pid, "sha256": "0" * 64, "size": size, "path": f"files/{fid[:2]}/{fid}"}
 
 
 U_ALPHA, U_BRAVO, U_CHARLIE, U_NOBODY = "ua", "ub", "uc", "u9"      # u9 has no users.json entry
@@ -85,7 +93,8 @@ class MatterScenario:
       cd "잡담방"         team-a, private; renamed "webXdev 잡담" in round 2 (a label an unescaped LIKE '_' matches)
     Round 2: the archive holds pa12's old line and its edited line (edit_at > 0); the root pa05 gets a new version
       (reply_count 3, same text); a late reply pa13; an attachment-only post pa14; a two-file post pa15; a system
-      post pa16; pa17 appears twice in the same run (a draft line, then its edited line); cd renamed.
+      post pa16; pa17 appears twice in the same run (a draft line, then its edited line); cd renamed; files.json
+      keeps fa11 (a post of round 1) and fa15 (pa15's first file), so pa11 and pa15 have stored files.
     Round 3: a version of reply pa07 with delete_at > 0 and an emptied message; user uc renamed; cb's file moves
       to a new path (the same posts in a new container)."""
 
@@ -180,5 +189,6 @@ class MatterScenario:
     def next_round(self):
         """Write the next round's archive and capture mm_archive. Returns capture's exit code."""
         self.rounds += 1
-        self.src.write(self.channels(self.rounds), self.users(self.rounds))
+        stored = {f: stored_entry(f, p) for f, p in (("fa11", "pa11"), ("fa15", "pa15"))} if self.rounds >= 2 else None
+        self.src.write(self.channels(self.rounds), self.users(self.rounds), stored)
         return capture(self.fx, ["mm_archive"])

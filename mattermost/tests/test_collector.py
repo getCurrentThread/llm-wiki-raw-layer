@@ -2,13 +2,15 @@
 """The app's Mattermost collector (mattertok's archiver, ported) against an in-process fake server: backfill and
 forward cursors, timestamp ties at page edges, retention, purged cursors, archived channels, resuming a mattertok
 archive, exclusion, unavailable channels, partial progress and interruption, torn files, users, account binding,
-bounds, the HTTP client (retries, redirects), sign-in, the command line, options and the origin hook."""
+bounds, kept files, the HTTP client (retries, redirects), sign-in, the command line, options and the origin hook."""
 import contextlib
+import hashlib
 import http.client
 import io
 import json
 import os
 import shutil
+import types
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -37,13 +39,14 @@ ME, OTHER, TEAM, TEAM2 = ident("u", 0), ident("u", 1), ident("t", 1), ident("t",
 class Server:
     """Just enough of Mattermost's API v4: teams, channels (archived ones on request), cursor paging of posts as
     the server does it -- `before`/`after` compare the cursor post's create_at strictly, a cursor post that no
-    longer exists matches nothing, posts older than the retention cut are not served -- and users."""
+    longer exists matches nothing, posts older than the retention cut are not served -- users and files."""
 
     def __init__(self):
         self.users = {ME: {"id": ME, "username": "me", "nickname": "", "first_name": "", "last_name": ""},
                       OTHER: {"id": OTHER, "username": "other", "nickname": "", "first_name": "", "last_name": ""}}
         self.teams = [{"id": TEAM, "name": "team", "display_name": "Team"}]
         self.channels, self.posts, self.fail, self.calls = {}, {}, {}, []
+        self.files, self.file_fail = {}, {}
         self.clock, self.seq, self.cut = 1_700_000_000_000, 0, 0
 
     def channel(self, n, name="general", ctype="O", display=None, posts=0, author=ME, same=1):
@@ -68,7 +71,17 @@ class Server:
                                     "message": "synthetic " + pid[-4:], "type": "", "props": {}, "metadata": {}})
             self.channels[cid]["last_post_at"] = self.clock
 
-    def request(self, method, path, query=None, body=None):
+    def upload(self, cid, size, delete_at=0):
+        """A post carrying one file of `size` synthetic bytes; returns the file id."""
+        self.add(cid, 1)
+        post, fid = self.posts[cid][-1], ident("f", self.seq)
+        self.files[fid] = bytes((i + self.seq) % 251 for i in range(size))
+        post["file_ids"] = [fid]
+        post["metadata"] = {"files": [{"id": fid, "post_id": post["id"], "channel_id": cid, "name": f"f{self.seq}.exe",
+                                       "size": size, "create_at": post["create_at"], "delete_at": delete_at}]}
+        return fid
+
+    def request(self, method, path, query=None, body=None, binary=False):
         self.calls.append((path, dict(query or {})))
         parts = path.strip("/").split("/")
         if path == "/users/me":
@@ -87,6 +100,11 @@ class Server:
             return self.users[parts[1]]
         if parts[0] == "channels" and parts[2] == "posts":
             return self.page(parts[1], query)
+        if parts[0] == "files" and binary:
+            status = self.file_fail.get(parts[1])
+            if status is not None:
+                raise CollectorError("auth_required" if status == 401 else "api_error", status)
+            return self.files[parts[1]]
         raise AssertionError("unexpected endpoint")
 
     def page(self, cid, query):
@@ -461,6 +479,73 @@ class TestSync(Base):
         self.assertEqual(self.srv.post_calls(a) + self.srv.post_calls(b), [])
 
 
+class TestFiles(Base):
+    def file_calls(self):
+        return [p.rsplit("/", 1)[1] for p, _q in self.srv.calls if p.startswith("/files/")]
+
+    def kept(self, fid):
+        return self.fx.mm.joinpath("files", fid[:2], fid)
+
+    def test_keeps_files_under_the_cap_and_captures_their_pointers(self):
+        cid = self.srv.channel(1, posts=1)
+        small, big, _gone = self.srv.upload(cid, 10), self.srv.upload(cid, 101), self.srv.upload(cid, 5, delete_at=1)
+        stats = self.sync(files_cap=100)
+        self.assertEqual((stats["files_stored"], stats["files_failed"], stats["errors"]), (1, 0, 0))
+        self.assertEqual(self.file_calls(), [small])            # over the cap or deleted: never requested
+        data = self.srv.files[small]
+        self.assertEqual(self.kept(small).read_bytes(), data)  # no extension: the name stays in the post
+        entry = {"post_id": self.srv.posts[cid][-3]["id"], "sha256": hashlib.sha256(data).hexdigest(), "size": 10,
+                 "path": f"files/{small[:2]}/{small}"}
+        self.assertEqual(load(self.fx.mm / "files.json"), {small: entry})
+        self.assertEqual(capture(self.fx), 0)
+        recs = by_key(records(self.fx))
+        self.assertEqual([(r["kind"], r["native"]) for r in recs[f"mm:blob:{small}"]], [("blob", entry)])
+        self.assertNotIn(f"mm:blob:{big}", recs)
+
+        # a second run fetches nothing; a kept file gone from disk is fetched again under the same pointer
+        self.srv.calls.clear()
+        self.assertEqual(self.sync(files_cap=100)["files_stored"], 0)
+        self.assertEqual(self.file_calls(), [])
+        self.kept(small).unlink()
+        self.assertEqual(self.sync(files_cap=100)["files_stored"], 1)
+        self.assertEqual(self.kept(small).read_bytes(), data)
+        self.assertEqual(capture(self.fx), 0)
+        self.assertEqual(len(by_key(records(self.fx))[f"mm:blob:{small}"]), 1)
+        self.assertFalse(invariants(self.fx)[0])
+        self.assertEqual(replay_diff(self.fx), 0)
+
+    def test_failed_downloads_do_not_hold_back_posts(self):
+        cid = self.srv.channel(1, posts=1)
+        missing, short, ok = self.srv.upload(cid, 4), self.srv.upload(cid, 4), self.srv.upload(cid, 4)
+        self.srv.file_fail[missing] = 404
+        self.srv.files[short] = b"abc"                          # fewer bytes than its FileInfo says
+        stats = self.sync(files_cap=100)
+        self.assertEqual((stats["files_stored"], stats["files_failed"], stats["errors"]), (1, 2, 0))
+        self.assertEqual(list(load(self.fx.mm / "files.json")), [ok])
+        self.assertFalse(self.kept(short).exists())
+        self.assertEqual(len(self.lines(cid)), 4)
+        self.srv.file_fail[missing] = 401
+        with self.assertRaisesRegex(CollectorError, "auth_required"):
+            self.sync(files_cap=100)
+
+    def test_off_switch_skipped_channels_deadline_and_disk_floor(self):
+        a, b = self.srv.channel(1), self.srv.channel(2, name="second")
+        fa, _fb = self.srv.upload(a, 4), self.srv.upload(b, 4)
+        self.assertEqual(self.sync()["files_stored"], 0)        # no cap: nothing is kept
+        self.assertFalse((self.fx.mm / "files.json").exists())
+        self.assertEqual(self.file_calls(), [])
+        with patch.object(collector.shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)):
+            self.assertTrue(self.sync(files_cap=100)["limited"])
+        self.assertTrue(self.sync(files_cap=100, time_budget=-1)["limited"])
+        self.assertEqual(self.file_calls(), [])
+        self.assertEqual(self.sync(files_cap=100, patterns=["second"])["files_stored"], 1)   # excluded channel
+        self.assertEqual(self.file_calls(), [fa])
+        self.srv.fail[b] = (403, 0)
+        stats = self.sync(files_cap=100)
+        self.assertEqual((stats["unavailable"], stats["files_stored"]), (1, 0))      # unavailable channel
+        self.assertEqual(self.file_calls(), [fa])
+
+
 class Response:
     def __init__(self, value, headers=None):
         self.data, self.headers = json.dumps(value).encode(), headers or {}
@@ -582,7 +667,7 @@ class TestApp(Base):
 
     def test_options_and_task_checks(self):
         app, cfg = MatterConfig("mattermost"), self.config()
-        self.assertEqual((cfg.mm_sync, cfg.mm_url, cfg.mm_token_file), (False, "", ""))
+        self.assertEqual((cfg.mm_sync, cfg.mm_url, cfg.mm_token_file, cfg.mm_files_max_mb), (False, "", "", 0))
         self.assertEqual(app.task_checks(cfg), [])
         cfg = self.config(mm_sync=True)
         self.assertEqual(app.task_checks(cfg), ["mm_sync requires mm_url"])
@@ -596,6 +681,9 @@ class TestApp(Base):
                          ["mm_sync requires a protected token path"])
         with self.assertRaises(ValueError):
             _url("http://mm.example")
+        with patch.dict(os.environ, {"MM_TOKEN": "t"}), patch.object(collector, "sync", return_value={}) as run:
+            collector.sync_config(self.config(mm_url=URL, mm_files_max_mb=25))
+        self.assertEqual(run.call_args.kwargs["files_cap"], 25 * 1024 ** 2)
 
     def test_origin_collects_first_only_with_mm_sync(self):
         self.srv.channel(1, posts=2)

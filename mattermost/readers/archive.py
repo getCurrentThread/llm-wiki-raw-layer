@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """mm_archive (SPEC 7.4, 10.2): mattertok's archive directory -- manifest.json (channels), posts/**.jsonl (one
-file per channel) and users.json.
+file per channel), users.json and, once the collector keeps attached files, files.json (their pointers: blob
+records; the files themselves are never read here).
 
 The whole origin is read in one pass between two reads of manifest.json; if the manifest changed under us the
 pass is repeated (origins.MultiVersionMixin, max 3) and otherwise the origin is `unstable`. The pass is diffed as
@@ -9,6 +10,7 @@ posts) and its versions are judged together (Q3)."""
 import json
 import os
 from pathlib import Path
+import re
 
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Obs
@@ -18,6 +20,8 @@ from rawlayer.capture.origins import Unstable
 from ..keys import mm_ts_ms
 
 CH_WHITELIST = ("channel_id", "type", "team_name", "channel_name", "display", "inaccessible_before")
+BLOB_FIELDS = ("post_id", "sha256", "size", "path")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _mm_id(v):
@@ -167,6 +171,30 @@ def read_once(root, patterns, denylist, origin):
         rd.containers[users_sid] = {"status": "missing"}
     except (OSError, ValueError):
         rd.containers[users_sid] = {"status": "error"}
+        rd.notes["read_error"] += 1
+    # files.json container, only once the collector wrote one: a config that keeps no files sees no change
+    files_sid = canon.source_id("files.json")
+    fp = root / "files.json"
+    try:
+        stored = json.loads(fsio.read_shared(fp))
+        if not isinstance(stored, dict):
+            raise ValueError("files")
+        rd.srcmap[files_sid] = "files.json"
+        rd.containers[files_sid] = {"status": "ok"}
+        asof = rd.asof[files_sid] = fsio.mtime_s(fp)
+        for fid in sorted(stored):
+            k, v = _mm_id(fid), stored[fid]
+            if k is None or not isinstance(v, dict) or v.get("path") != f"files/{fid[:2]}/{fid}" \
+                    or not isinstance(v.get("sha256"), str) or not _SHA256.fullmatch(v["sha256"]) \
+                    or type(v.get("size")) is not int or not isinstance(v.get("post_id"), str):
+                rd.notes["bad_line"] += 1
+                continue
+            obs(Obs("blob", f"mm:blob:{k}", {f: v[f] for f in BLOB_FIELDS}, {}, None, asof), files_sid)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        rd.srcmap[files_sid] = "files.json"
+        rd.containers[files_sid] = {"status": "error"}
         rd.notes["read_error"] += 1
     if fsio.read_shared(manifest) != man_bytes:
         raise Unstable()

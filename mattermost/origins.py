@@ -10,7 +10,7 @@ from .readers import archive
 
 class MmArchive(MultiVersionMixin, Origin):
     name = "mm_archive"
-    kinds = frozenset({"ch", "post", "file", "user"})
+    kinds = frozenset({"ch", "post", "file", "user", "blob"})
     day_kinds = frozenset({"post"})
 
     def read_once(self, ctx):

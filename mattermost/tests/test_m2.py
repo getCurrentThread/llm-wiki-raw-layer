@@ -128,6 +128,26 @@ class TestMM(Base):
         self.assertEqual(m["origins"]["mm_archive"]["notes"]["vanished"], 1)
         self.assertEqual(m["segments"], [])
 
+    def test_files_json_pointers(self):
+        sha = "ab" * 32
+        good = {"post_id": "p1", "sha256": sha, "size": 3, "path": "files/f1/f1"}
+        stored = {"f1": dict(good, extra="dropped"), "f2": dict(good, path="files/../f2"),
+                  "f3": dict(good, path="files/f3/f3", sha256="x"), "f4": dict(good, path="files/f4/f4", size="3")}
+        self.fx.mm_write(std_channels())
+        self.fx.mm.joinpath("files.json").write_text(json.dumps(stored), encoding="utf-8")
+        self.assertEqual(capture(self.fx, MM), 0)
+        recs = by_key(records(self.fx))
+        self.assertEqual([(r["kind"], r["native"]) for r in recs["mm:blob:f1"]], [("blob", good)])
+        self.assertFalse({"mm:blob:f2", "mm:blob:f3", "mm:blob:f4"} & set(recs))
+        m = manifests(self.fx)[0]["origins"]["mm_archive"]
+        self.assertEqual(m["notes"]["bad_line"], 3)
+        self.assertEqual(m["containers"][canon.source_id("files.json")]["kinds"]["blob"]["n"], 1)
+        self.assertEqual(invariants(self.fx)[1]["containers_checked"], 6)
+        # files.json never shrinks: a pointer that vanishes makes the origin suspect
+        self.fx.mm.joinpath("files.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(capture(self.fx, MM), 3)
+        self.assertEqual(replay_diff(self.fx), 0)
+
     def test_missing_file_is_not_vanished(self):
         ch = std_channels()
         self.fx.mm_write(ch)

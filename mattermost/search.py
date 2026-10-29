@@ -8,7 +8,7 @@
   python -s -B manage.py search mattermost --config CFG --channel 개발 --since 2024-10-03 --until 2024-10-03   (browse)
   python -s -B manage.py search mattermost --config CFG --list-channels
 
-WHAT IS INDEXED (extractor "matter-1")
+WHAT IS INDEXED (extractor "matter-2")
 --------------------------------------
 Ledger records of origin mm_archive (SPEC 4, 7.4). One row per post KEY mm:post:<id>, folded in ledger order;
 a post can have several versions (SPEC 8.2 / Q3: an edit, a new reply_count, a move to another channel file),
@@ -17,7 +17,8 @@ and the latest put (highest rev) is the post as it stands:
 * Text (kb build_corpus post_text rule): `message` stripped; else the props.attachments texts (pretext, title,
   text, fallback -- each once -- then every field as "title value"), joined by newlines; else the file names of
   metadata.files (mattertok's slim `_files` too), joined by spaces. body_from says which: message / attachment
-  / files ('' when the post has no text). File names are indexed like any text. When the latest version has
+  / files ('' when the post has no text). File names are searchable on every post: a post with text also has
+  them in its n-gram shadow (not in its message). When the latest version has
   no text (a deleted post whose message the server emptied), the last text any version had is kept, so a
   deleted post still shows what was captured before -- with --include-deleted.
 * edited: some version has edit_at > 0, or a version's text differed from the text before it. A new version
@@ -34,6 +35,8 @@ and the latest put (highest rev) is the post as it stands:
   its team_name. Renames relabel rows already indexed.
 * Facets: channels(channel_id, label, name, team, ch_type, n, senders, first_ts, last_ts, n_deleted, n_system,
   n_gone), n = rows that are neither deleted nor system posts.
+* stored: the post's kept files, {file_id: path relative to the archive}, from the blob records mm:blob:<file_id>
+  (the collector's files.json: post_id, sha256, size, path) whose post_id is the post.
 * Not indexed, only counted (counts table): file records (the post carries the same metadata), bad keys, odd
   values.
 
@@ -56,7 +59,7 @@ HELP = "search Mattermost posts (index: <data_root>/index/mattermost.sqlite)"
 ORIGIN = "mm_archive"
 OPS = ("put", "absent", "purged")
 _I64 = 2 ** 63
-_KEY = re.compile(r"^mm:(post|file|ch|user):(.+)$", re.S)
+_KEY = re.compile(r"^mm:(post|file|ch|user|blob):(.+)$", re.S)
 _CURSOR = re.compile(r"^([0-9]{1,15})\.(\S{1,128})$")
 
 SCHEMA = """
@@ -79,6 +82,7 @@ CREATE TABLE matter(
   reply_count INTEGER NOT NULL DEFAULT 0,
   file_ids    TEXT NOT NULL DEFAULT '',    -- JSON array; '' when none
   files       TEXT NOT NULL DEFAULT '',    -- JSON array of file names; '' when none
+  stored      TEXT NOT NULL DEFAULT '',    -- JSON object {file_id: archive-relative path} of kept files; '' none
   edited      INTEGER NOT NULL DEFAULT 0,
   deleted     INTEGER NOT NULL DEFAULT 0,
   system      INTEGER NOT NULL DEFAULT 0,
@@ -96,6 +100,10 @@ CREATE TABLE ch_src(
 CREATE TABLE users(
   user_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, seq INTEGER NOT NULL, held INTEGER NOT NULL,
   username TEXT NOT NULL, name TEXT NOT NULL, nickname TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE blobs(
+  file_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, seq INTEGER NOT NULL, held INTEGER NOT NULL,
+  post_id TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL, path TEXT NOT NULL) WITHOUT ROWID;
+CREATE INDEX blobs_post ON blobs(post_id);
 CREATE TABLE channels(
   channel_id TEXT PRIMARY KEY, label TEXT NOT NULL, name TEXT NOT NULL, team TEXT NOT NULL, ch_type TEXT NOT NULL,
   n INTEGER NOT NULL, senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,
@@ -107,7 +115,9 @@ TRIGGERS = common.fts_triggers("matter", "matter_fts")
 # labels of a row from the user / channel records as they are now (both build modes use exactly this)
 _LABELS = ("sender = coalesce((SELECT u.username FROM users u WHERE u.user_id = matter.user_id), ''), "
            "channel = coalesce((SELECT c.label FROM ch_src c WHERE c.channel_id = matter.channel_id), ''), "
-           "team = coalesce((SELECT c.team FROM ch_src c WHERE c.channel_id = matter.channel_id), '')")
+           "team = coalesce((SELECT c.team FROM ch_src c WHERE c.channel_id = matter.channel_id), ''), "
+           "stored = coalesce((SELECT json_group_object(b.file_id, b.path) FROM blobs b "
+           "WHERE b.post_id = matter.post_id AND b.held = 1 HAVING count(*) > 0), '')")
 _POST_COLS = ("rev", "seq", "held", "channel_id", "ts", "ts_ms", "user_id", "type", "body_from", "root_id",
               "reply_count", "file_ids", "files", "edited", "deleted", "system", "gone")
 
@@ -181,6 +191,12 @@ def _jlist(items):
     return json.dumps(items, ensure_ascii=False) if items else ""
 
 
+def _ng(msg, body_from, names):
+    """The n-gram shadow: the text, plus the file names (a JSON list) when the text is not made of them."""
+    extra = " ".join(json.loads(names)) if names and body_from != "files" else ""
+    return ti.ng_text(msg + "\n" + extra if extra else msg)
+
+
 class MatterApplier:
     def __init__(self, con, full):
         self.con, self.full = con, full
@@ -189,6 +205,7 @@ class MatterApplier:
         self.channels = set()           # channel ids whose facet may have changed
         self.relabel_users = set()
         self.relabel_channels = set()
+        self.blob_posts = set()         # post ids a blob record named (their stored column may have changed)
 
     # ---- fold
     def record(self, rec, seq):
@@ -210,6 +227,8 @@ class MatterApplier:
             self._ch(rec, seq, op, rev, ident)
         elif kind == "user":
             self._user(rec, seq, op, rev, ident)
+        elif kind == "blob":
+            self._blob(rec, seq, op, rev, ident)
         else:
             self.counts["skipped_file"] += 1
 
@@ -272,8 +291,9 @@ class MatterApplier:
             vals = (rev, seq, 0, channel_id, ts_ms // 1000, ts_ms, user_id, typ, body_from, root_id, rc, fids, names,
                     edited, deleted, system, 1)
         sets = ", ".join(c + "=?" for c in _POST_COLS)
-        if msg != old_msg:
-            con.execute(f"UPDATE matter SET {sets}, message=?, ng=? WHERE id=?", vals + (msg, ti.ng_text(msg), mid))
+        if msg != old_msg or vals[12] != keep[7] or vals[8] != keep[3]:
+            con.execute(f"UPDATE matter SET {sets}, message=?, ng=? WHERE id=?",
+                        vals + (msg, _ng(msg, vals[8], vals[12]), mid))
         else:
             con.execute(f"UPDATE matter SET {sets} WHERE id=?", vals + (mid,))
         if not self.full:
@@ -318,6 +338,25 @@ class MatterApplier:
         if not self.full and (cur is None or cur[1] != username):
             self.relabel_users.add(uid)
 
+    def _blob(self, rec, seq, op, rev, fid):
+        con = self.con
+        cur = con.execute("SELECT rev, post_id, sha256, size, path FROM blobs WHERE file_id=?", (fid,)).fetchone()
+        if cur is not None and rev <= cur[0]:
+            self.counts["stale_rev"] += 1
+            return
+        post_id, sha256, size, path = cur[1:] if cur else ("", "", 0, "")
+        if op == "put":
+            native = self._native(rec, self.counts)
+            post_id, sha256, path = _ident(native.get("post_id")), _s(native.get("sha256")), _s(native.get("path"))
+            size = as_int(native.get("size"))
+            size = size if size is not None and 0 <= size < _I64 else 0
+        elif op == "purged":
+            sha256, size, path = "", 0, ""
+        con.execute("INSERT OR REPLACE INTO blobs(file_id, rev, seq, held, post_id, sha256, size, path) "
+                    "VALUES(?,?,?,?,?,?,?,?)", (fid, rev, seq, 1 if op == "put" else 0, post_id, sha256, size, path))
+        if not self.full:
+            self.blob_posts.update(p for p in (cur[1] if cur else "", post_id) if p)
+
     # ---- derive
     def end_manifest(self, seq):
         common.bump_counts(self.con, self.counts)
@@ -327,6 +366,8 @@ class MatterApplier:
         con = self.con
         for mid in sorted(self.touched):
             con.execute(f"UPDATE matter SET {_LABELS} WHERE id=?", (mid,))
+        for pid in sorted(self.blob_posts):
+            con.execute(f"UPDATE matter SET {_LABELS} WHERE post_id=?", (pid,))
         for uid in sorted(self.relabel_users):
             r = con.execute("SELECT username FROM users WHERE user_id=?", (uid,)).fetchone()
             name = r[0] if r else ""
@@ -342,6 +383,7 @@ class MatterApplier:
         self.channels.clear()
         self.relabel_users.clear()
         self.relabel_channels.clear()
+        self.blob_posts.clear()
 
     def finish(self):
         con = self.con
@@ -373,8 +415,8 @@ class MatterApplier:
 class MatterIndex(common.SourceIndex):
     name = NAME
     origins = frozenset((ORIGIN,))
-    schema_version = "matter-1"
-    extractor_version = "matter-1"
+    schema_version = "matter-2"
+    extractor_version = "matter-2"
     fts_tables = ("matter_fts",)
 
     def create_tables(self, con):
@@ -393,7 +435,8 @@ class MatterIndex(common.SourceIndex):
             "FROM matter").fetchone()
         out = {"rows": rows, "deleted": deleted, "system": system, "gone": gone,
                "channels": con.execute("SELECT count(*) FROM channels").fetchone()[0],
-               "users": con.execute("SELECT count(*) FROM users").fetchone()[0]}
+               "users": con.execute("SELECT count(*) FROM users").fetchone()[0],
+               "stored_files": con.execute("SELECT count(*) FROM blobs WHERE held = 1").fetchone()[0]}
         out.update(common.read_counts(con))
         return out
 
@@ -409,6 +452,14 @@ def _jl(s):
     except ValueError:
         return []
     return v if isinstance(v, list) else []
+
+
+def _jd(s):
+    try:
+        v = json.loads(s) if s else {}
+    except ValueError:
+        return {}
+    return v if isinstance(v, dict) else {}
 
 
 def _hide_sql(a):
@@ -521,7 +572,8 @@ class MatterSearch(drv.SearchDriver):
                 "date": common.fmt_ts(r["ts"], tz), "sender": r["sender"], "user_id": r["user_id"],
                 "type": r["type"],
                 "body_from": r["body_from"], "root_id": r["root_id"], "reply_count": r["reply_count"],
-                "files": _jl(r["files"]), "file_ids": _jl(r["file_ids"]), "edited": bool(r["edited"]),
+                "files": _jl(r["files"]), "file_ids": _jl(r["file_ids"]), "stored": _jd(r["stored"]),
+                "edited": bool(r["edited"]),
                 "deleted": bool(r["deleted"]), "system": bool(r["system"]), "gone": bool(r["gone"]),
                 "cursor": self.cursor(r), "snippet": ti.highlight(msg, marks, width) if msg else self.placeholder(r),
                 "text": msg}

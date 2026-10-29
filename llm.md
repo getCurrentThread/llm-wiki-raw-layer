@@ -809,6 +809,9 @@ Values (5.1 fills the archive and the token file):
   continues a mattertok archive. Each pattern is a plain text fragment, not a glob or regex: a channel is skipped
   when its display name or name contains it, ignoring case, and it is never fetched. Never report the patterns.
   Pass a list as one argument, e.g. `'["one", "two"]'`.
+- `mm_files_max_mb` = `0` (no attached files kept) unless the owner wants them kept: then the size cap in MB
+  they give. Kept files go to `<DATA_ROOT>\archive\files\` outside the ledger, and the first runs after turning
+  it on may end with `"limited": true` until every file is kept.
 
 **Sign-in [human].** The owner runs, in their own terminal from `<PROJECT>`:
 `python -s -B -m mattermost.collector --login --config <CFG>`

@@ -26,7 +26,7 @@ REPO = conf.PROJECT_DIR
 QUERIES = ["10월", "가나다", "api", "메시지", "답글", "수정", "보고서", "\"100%\"", "배포 OR 잡담", "메시지 -잡담", "3시",
            "SQL문", "빌드", "문장", "joined"]
 ROWS_COLS = ("post_id, rev, seq, held, channel_id, channel, team, ts, ts_ms, sender, user_id, type, body_from, root_id, "
-             "reply_count, file_ids, files, edited, deleted, system, gone, message, ng")
+             "reply_count, file_ids, files, stored, edited, deleted, system, gone, message, ng")
 
 
 def rs(*argv):
@@ -53,7 +53,7 @@ def dump(data_root):
     con = ro(data_root)
     try:
         out = {"matter": sorted(tuple(r) for r in con.execute(f"SELECT {ROWS_COLS} FROM matter"))}
-        for t in ("ch_src", "users", "channels", "counts"):
+        for t in ("ch_src", "users", "blobs", "channels", "counts"):
             out[t] = sorted(tuple(r) for r in con.execute(f"SELECT * FROM {t}"))
         meta = dict(con.execute("SELECT k, v FROM meta").fetchall())
         out["head"] = (meta["head_seq"], meta["head_sha256"], meta["head_run"])
@@ -157,10 +157,10 @@ class TestBuild(Scenario):
         r1, r2, r3 = self.reports
         self.assertEqual((r1["action"], r1["reason"], r1["seq"], r1["ledger_seq"], r1["records"]),
                          ("rebuilt", "missing", 1, 1, 27))
-        self.assertEqual((r2["action"], r2["seq"], r2["manifests"], r2["records"]), ("updated", 2, 1, 11))
+        self.assertEqual((r2["action"], r2["seq"], r2["manifests"], r2["records"]), ("updated", 2, 1, 13))
         self.assertEqual((r3["action"], r3["seq"], r3["records"], r3["behind"]), ("updated", 3, 6, False))
         self.assertEqual((r3["rows"], r3["deleted"], r3["system"], r3["gone"]), (24, 2, 2, 0))
-        self.assertEqual((r3["channels"], r3["users"], r3["skipped_file"]), (4, 3, 3))
+        self.assertEqual((r3["channels"], r3["users"], r3["skipped_file"], r3["stored_files"]), (4, 3, 3, 2))
         rc, rep, _ = self.index(self.cfg)
         self.assertEqual((rc, rep["action"], rep["manifests"]), (0, "current", 0))
         rc, out, _ = rs("index", "--config", self.cfg, "--source", "mattermost")
@@ -226,7 +226,7 @@ class TestBuild(Scenario):
         cfg, dr = self.clone()
         rc, rep, _ = self.index(cfg, "--rebuild")
         self.assertEqual((rc, rep["action"], rep["reason"], rep["seq"], rep["manifests"], rep["records"]),
-                         (0, "rebuilt", "requested", 3, 3, 44))
+                         (0, "rebuilt", "requested", 3, 3, 46))
         self.assertEqual(dump(dr), self.dumps[3])
         self.assertTrue(fts_ok(dr))
         self.assertEqual(answers(cfg), expect)
@@ -298,10 +298,12 @@ class TestSearch(Scenario):
 
     def test_attachments_and_file_names(self):
         h = search(self.cfg, "보고서")["rows"][0]
-        self.assertEqual((h["post_id"], h["body_from"], h["files"], h["file_ids"]),
-                         ("pa11", "files", ["보고서_최종.pdf"], ["fa11"]))
+        self.assertEqual((h["post_id"], h["body_from"], h["files"], h["file_ids"], h["stored"]),
+                         ("pa11", "files", ["보고서_최종.pdf"], ["fa11"], {"fa11": "files/fa/fa11"}))
         h = search(self.cfg, "diagram")["rows"][0]
-        self.assertEqual((h["post_id"], h["files"]), ("pa15", ["회의록.hwp", "diagram.png"]))
+        self.assertEqual((h["post_id"], h["files"], h["stored"]),
+                         ("pa15", ["회의록.hwp", "diagram.png"], {"fa15": "files/fa/fa15"}))   # fb15 not kept
+        self.assertEqual(search(self.cfg, "가나다")["rows"][0]["stored"], {})
         self.assertEqual(keys(search(self.cfg, "빌드 결과")), [k("pa10")])
         self.assertEqual(keys(search(self.cfg, "브랜치 main")), [k("pa10")])
         self.assertEqual(keys(search(self.cfg, "배포 완료")), [k("pa14")])
@@ -521,6 +523,29 @@ class TestEdges(unittest.TestCase):
             self.assertEqual(rs("index", "--config", cfg, "--source", "mattermost")[0], 0)
         finally:
             L.force_rmtree(base)
+
+    def test_file_names_of_posts_with_text_and_late_pointers(self):
+        fx = Fixture()
+        try:
+            posts = [L.mm_post("pf1", "cx", "uz", "자료 공유합니다", 1_700_000_000_000,
+                               files=[mm_file("ff1", "pf1", "cx", name="설계서_v2.pptx")])]
+            src = L.MatterSources(fx)
+            ch = {"cx": {"display": "자료실", "name": "docs", "path": "o/t/docs__cx.jsonl", "posts": posts}}
+            src.write(ch, {})
+            self.assertEqual(L.capture(fx, ["mm_archive"]), 0)
+            self.assertEqual(rs("index", "--config", fx.config_path, "--source", "mattermost")[0], 0)
+            h = search(fx.config_path, "설계서")["rows"][0]           # the name matches; the text stays the message
+            self.assertEqual((h["post_id"], h["body_from"], h["text"], h["stored"]),
+                             ("pf1", "message", "자료 공유합니다", {}))
+            src.write(ch, {}, {"ff1": L.stored_entry("ff1", "pf1")})  # the pointer arrives in a later run
+            self.assertEqual(L.capture(fx, ["mm_archive"]), 0)
+            self.assertEqual(rs("index", "--config", fx.config_path, "--source", "mattermost")[0], 0)
+            self.assertEqual(search(fx.config_path, "공유")["rows"][0]["stored"], {"ff1": "files/ff/ff1"})
+            before = dump(fx.data_root)
+            self.assertEqual(rs("index", "--config", fx.config_path, "--source", "mattermost", "--rebuild")[0], 0)
+            self.assertEqual(dump(fx.data_root)["matter"], before["matter"])
+        finally:
+            L.force_rmtree(fx.base)
 
     def test_odd_values_are_counted_not_raised(self):
         fx = Fixture()

@@ -10,6 +10,7 @@
   "mm_sync": false,
   "mm_url": "https://<mattermost host>",
   "mm_token_file": "<DATA_PARENT>\\mattermost\\token.txt",
+  "mm_files_max_mb": 0,
   "mm_wiki_project": "",
   "mm_wiki_include": [],
   "mm_wiki_exclude": [],
