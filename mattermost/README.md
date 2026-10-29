@@ -10,7 +10,8 @@ The implementation uses the Python standard library.
 
 Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
 This app's folder contains `apps.py` (source keys, options and schedule), `origins.py`, `inputs.py`, `readers/`,
-`collector.py`, `keys.py`, `vocab.py`, `search.py`, `tests/`, and `config.example.json`.
+`collector.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/`, `config.example.json`, and `contrib/`
+(archived reference code, not part of the app).
 Core tests are at `<PROJECT>/tests/core/`;
 app tests are at `<PROJECT>/mattermost/tests/`. The `/raw-search` skill is
 `<PROJECT>/.claude/skills/raw-search/SKILL.md` (shared by every app).
@@ -98,9 +99,49 @@ python -s -B manage.py collect mattermost
 The collector prints one JSON line of counts and categories only (`channels`, `posts_written`,
 `files_written`, `excluded`, `unavailable`, `errors`, `limited`, `users`, `files_stored`, `files_failed`,
 `requests`); `posts_written` counts posts new to the archive or changed, `files_written` the channel files that
-changed, `files_stored` the attached files kept this run. Not ported: mattertok's interactive commands (read,
-search, send, watch), its WebSocket live mode (the scheduled task's cursor sync replaces it), its attachment
-layout and Markdown rendering; capture reads none of them.
+changed, `files_stored` the attached files kept this run. mattertok's `send` is `admin.py post` (below). Not
+ported: its other interactive commands (read, search, watch, whoami, doctor), its WebSocket live mode (the scheduled
+task's cursor sync replaces it), reconcile, its attachment layout and Markdown rendering; capture reads none of
+them. They are kept, scrubbed of organisation values, in `contrib/mattertok/` with a feature map in
+`contrib/README.md`: archived reference code that the app never imports (it needs `httpx` and `websockets`).
+
+## Administration (admin.py)
+
+`admin.py` is the write side: it creates and checks channels, their members and incoming webhooks, and sends
+messages, with the collector's client, config and token (`mm_url`, `mm_token_file` or `MM_TOKEN`). Capture never
+calls it.
+
+```
+python -s -B -m mattermost.admin plan   --spec <spec.json>
+python -s -B -m mattermost.admin apply  --spec <spec.json> --out <DATA_PARENT>\...\result.json
+python -s -B -m mattermost.admin verify --spec <spec.json> --out <DATA_PARENT>\...\result.json
+python -s -B -m mattermost.admin post   (--spec <spec.json> --key <key> | --channel-id <id>) --message-file <file>
+                                        [--out <result.json> --via-webhook] [--root-id <id>] [--pin] [--dry-run]
+```
+
+- The spec names one team and its channels by key: `{"team": "<team name>", "channels": {"<key>": {"name": "<url
+  name>", "display_name": "...", "type": "P", "purpose": "...", "header": "...", "members": ["<username>"],
+  "webhook": {"display_name": "...", "description": "..."}}}}` (`type` defaults to `P`; `purpose`, `header` and
+  `webhook` are optional). It names people: keep it under `<DATA_PARENT>`, never in the repository.
+- `plan` only reads: per key `new`, `exists` or `conflict` (a channel of that name with another type or display
+  name), and how many members the server does not know or are not active members of the team.
+- `apply` refuses before any write when a member is unknown or not in the team, when `--out` is not inside
+  `DATA_PARENT` or belongs to another team. Then per key it creates the channel or adopts the one whose type and
+  display name match (a conflict is never adopted), sets `header`/`purpose` when they differ, adds missing members
+  and, when `webhook` is given, creates one incoming webhook with `channel_locked` (an unlocked one could post into
+  any channel the token's user belongs to; an existing unlocked hook or several hooks fail the item). `--out`
+  records each key's channel id, hook id and webhook URL; it holds secrets.
+- `verify` re-reads everything: channel type, team, display name, header and purpose, members exactly the token's
+  user plus the spec's members, exactly one locked webhook matching `--out`.
+- `post` sends the message file (trailing whitespace dropped) as the token's user, or with `--via-webhook` through
+  the key's webhook URL from `--out` (no Authorization header; the URL must be on `mm_url`). It is at most once: an
+  identical message among the channel's newest 60 posts is not sent again. `--pin` pins it.
+- Writes are never retried (a timeout could otherwise create a channel, hook or post twice); every create is
+  preceded by a lookup, so rerunning after a failure adopts what the server made. Reruns change nothing when
+  nothing differs.
+- It prints one JSON line of statuses and counts per spec key, never a token, webhook URL, display name or
+  username. Exit codes: 0 ok, 1 some keys failed or an error came after a write (rerun to continue), 2 refused
+  before any write.
 
 The record format, canonical hashes and commit protocol follow `SPEC.md` and `SPEC-CLARIFICATIONS.md` of the
 `llm-wiki` checkout. Committed records are kept in `<DATA_ROOT>/raw/ledger/<origin>/<YYYY>/` as gzipped JSONL
