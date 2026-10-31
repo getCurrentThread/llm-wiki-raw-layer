@@ -206,6 +206,7 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
 - The template (captured client bytes identifying the account) and its `state.json` live under the data
   parent, like the token files; `--template` must be an absolute path there. `calibrate` writes both, seeding
   the message-id counter `0x200` past the captured id (an offset the server accepts; `check` shows headroom).
+  It waits up to three minutes for the calibration send.
 - `send` needs no message of yours: a minimal clone of the calibrated send whose every pointer the builder
   could dereference is replaced (supplement sentinel, no-extra `+0x180 = 10` path, its own text block).
   At most once: the counter is persisted before the client is called. Text comes from a file, at most
@@ -214,8 +215,12 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   "server unstable" dialog right after a send is a stale long-lived session, not a crash: restart and retry.
 - `send` and `listen` cover the rooms whose own messages carry no `extra` field (the self-chat room and the
   plain rooms); rooms that need `extra` are not covered yet.
+- `rooms` and `send` answer `no_room` when the running client holds no TalkChatRoom for the id — opening the
+  chat materialises it. A send whose WRITE response never arrives still reports `sent` with `err_code` null;
+  judge those by the room.
 - `listen` reacts only to the owner's own sends starting with the prefix (the calibrated sender id), echoes
   them prefix-stripped 0.3s later into the same room, and tears down cleanly on Ctrl+C or `--lifetime`.
+  While resident it prints one JSON line per event (`event`), command text included.
 - Addresses are locked to client 26.9.1.5339: a version or builder-prologue mismatch refuses before anything
   is touched. Exit codes: 0 ok, 1 a write happened but was rejected or failed after it, 2 refused before any
   write. Requires the `frida` Python package (imported lazily; the collector never needs it).

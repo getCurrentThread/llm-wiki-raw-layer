@@ -67,7 +67,7 @@ def _powershell(command):
     try:
         return subprocess.check_output(["powershell", "-NoProfile", "-Command", command], timeout=30).strip()
     except Exception:
-        bad("client_not_running" if "Get-Process" in command else "version_unreadable")
+        bad("client_not_running" if "ErrorAction Stop" in command else "version_unreadable")
 
 
 def client_pid():
@@ -611,10 +611,10 @@ def main(argv=None):
     s.add_argument("--prefix", default="!!", help="command prefix the listener reacts to")
     s.add_argument("--lifetime", type=int, default=0, help="seconds to stay resident (0: until Ctrl+C)")
     a = p.parse_args(sys.argv[1:] if argv is None else argv)
-    a.template = data_path(a.template)
-    if a.state:
-        a.state = data_path(a.state)
     try:
+        a.template = data_path(a.template)   # inside the try: an unsafe path is JSON + exit 2, never a traceback
+        if a.state:
+            a.state = data_path(a.state)
         body, code = COMMANDS[a.command](a)
     except CollectorError as e:
         body, code = {"status": e.category}, 2
