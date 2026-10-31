@@ -87,7 +87,12 @@ class UsageError(Exception):
 
 
 class Busy(Exception):
-    """Another process holds the index writer lock -> exit 75."""
+    """Another process holds the index writer lock, or a write transaction outlasted open_ro's wait -> exit 75."""
+
+
+def is_locked(e):
+    """A read that waited out open_ro's timeout behind an index write: busy, not damaged."""
+    return isinstance(e, sqlite3.OperationalError) and ("locked" in str(e) or "busy" in str(e))
 
 
 class LedgerDefect(Exception):
@@ -140,25 +145,6 @@ def _plus(path, tail):
 
 # ------------------------------------------------------------------------------------------------ lock
 
-def _lock(fd):
-    if os.name == "nt":
-        import msvcrt  # noqa: PLC0415
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl  # noqa: PLC0415
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock(fd):
-    if os.name == "nt":
-        import msvcrt  # noqa: PLC0415
-        os.lseek(fd, 0, 0)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl  # noqa: PLC0415
-        fcntl.flock(fd, fcntl.LOCK_UN)
-
-
 class IndexLock:
     """Writer lock <data_root>/index/<name>.lock (non-blocking: msvcrt on Windows, flock elsewhere -- both per
     open file, so a second IndexLock in the same process is Busy too; released by the OS if we die)."""
@@ -168,7 +154,7 @@ class IndexLock:
         idir.mkdir(parents=True, exist_ok=True)
         self.fd = os.open(idir / (name + ".lock"), os.O_RDWR | os.O_CREAT)
         try:
-            _lock(self.fd)
+            fsio.lock_fd(self.fd)
         except OSError:
             os.close(self.fd)
             raise Busy() from None
@@ -177,7 +163,7 @@ class IndexLock:
         if self.fd is None:
             return
         try:
-            _unlock(self.fd)
+            fsio.unlock_fd(self.fd)
         except OSError:
             pass
         os.close(self.fd)
@@ -596,10 +582,12 @@ def open_search(data_root, spec):
     con = open_ro(path)
     try:
         meta = dict(con.execute("SELECT k, v FROM meta").fetchall())
-    except sqlite3.DatabaseError:
+    except sqlite3.DatabaseError as e:
         # also what a read-only connection says about a hot journal (an index run that died mid-update):
         # the next index step opens it read-write, which rolls the journal back
         con.close()
+        if is_locked(e):
+            raise Busy() from None
         raise UsageError(f"the {spec.name} index cannot be read (damaged, or left mid-update by an index run "
                          f"that died) -- {hint} --rebuild-index if that does not help") from None
     if any(meta.get(k) != v for k, v in spec.stamp().items()):
@@ -636,8 +624,8 @@ def status(data_root, spec):
         return rep
     try:
         con = open_ro(path)
-    except sqlite3.DatabaseError:
-        rep.update(state="unreadable", stale=True)
+    except sqlite3.DatabaseError as e:
+        rep.update(state="busy" if is_locked(e) else "unreadable", stale=True)
         return rep
     try:
         meta = dict(con.execute("SELECT k, v FROM meta").fetchall())
@@ -648,8 +636,8 @@ def status(data_root, spec):
             rep[k] = meta.get(k)
         if rep["state"] == "ok":
             rep.update(spec.stats(con))
-    except sqlite3.DatabaseError:
-        rep.update(state="unreadable", stale=True)
+    except sqlite3.DatabaseError as e:
+        rep.update(state="busy" if is_locked(e) else "unreadable", stale=True)
     finally:
         con.close()
     return rep
@@ -820,14 +808,14 @@ def like(col, value):
 
 # ------------------------------------------------------------------------------------------------ arguments
 
-def add_search_arguments(p, modes):
-    """Arguments every source's search subcommand shares."""
+def add_search_arguments(p, modes, sender_help="substring of the sender name (or an exact user id)"):
+    """Arguments every source's search subcommand shares (sender_help: what --sender matches in this source)."""
     p.add_argument("--config", required=True, help="capture config file (only data_root is read)")
     p.add_argument("query", nargs="?", default=None, metavar="QUERY",
                    help="search terms: words AND-ed, \"exact phrase\", a OR b, -exclude, prefix*")
     p.add_argument("-q", "--query", dest="query_opt", default=None, metavar="QUERY",
                    help="the query as an option (use this when it starts with '-')")
-    p.add_argument("--sender", help="substring of the sender name (or an exact user id)")
+    p.add_argument("--sender", help=sender_help)
     p.add_argument("--since", metavar="DATE", help="YYYY-MM-DD, YYYY-MM, YYYY, 'YYYY-MM-DD HH:MM' or 3d/12h")
     p.add_argument("--until", metavar="DATE", help="inclusive: 2024-10 ends with the last second of October")
     p.add_argument("--tz", default=DEFAULT_TZ, help="fixed UTC offset for dates, months and display "

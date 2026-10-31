@@ -226,6 +226,11 @@ class KbBehaviour(unittest.TestCase):
                          {"see https://example.com/a now"})
         self.assertTrue(q.fts)
 
+    def test_word_ending_in_a_colon_is_not_a_column_filter(self):
+        """Mail subjects and notes: "Re: 견적", "TODO: 배포" are text; only word:value reads as a column filter."""
+        self.assertEqual(hits(["Re: 견적 요청", "견적 없음"], "Re: 견적"), {"Re: 견적 요청"})
+        self.assertTrue(build_fts_query("TODO: 배포").fts)
+
     def test_refused_forms(self):
         for bad in ["", "   ", "room:스터디", "sender:x", "-취소 회의", "C++ OR 회의",
                     "회의 OR -취소", "회의 -취소 OR 미팅", '"unbalanced', "!!!", "회의 OR 돈",

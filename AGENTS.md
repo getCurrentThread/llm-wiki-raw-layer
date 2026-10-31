@@ -11,7 +11,7 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
 - Run from the repository root, always as `python -s -B manage.py <command> [<app>] ...` (`-s`: no user
   site-packages, `-B`: no bytecode files).
 - `check` validates settings, the app contracts and cross-app collisions. `check <app>` also verifies that app's
-  ledger.
+  ledger: its hash chain and segments, and the folded state.
 - Tests an agent may run: `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion`
   (a bare `test` runs the same suites). Every suite builds synthetic data in temporary directories.
 - Search: `python -s -B manage.py search <app> [QUERY] --json [options]`. `search <app> --help` documents the

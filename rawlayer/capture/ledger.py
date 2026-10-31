@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Append-only ledger files: segments, manifests, inflight bookkeeping (SPEC 3, 9)."""
 import gzip
+import hashlib
 import heapq
 import json
 import os
@@ -65,6 +66,25 @@ class Ledger:
     def iter_records(self, manifest):
         for seg in manifest.get("segments", []):
             yield from self.iter_segment(self.raw.joinpath(*seg["path"].split("/")))
+
+    def seal(self):
+        """{defect: count} of the hash chain, from the files alone: each manifest's prev_sha256 is the sha256 of the
+        bytes of the one before, and each segment has its manifest's size and sha256. Empty when sound."""
+        bad = {}
+        prev = None
+        for _seq, _run, path in self.manifests():
+            data = Path(path).read_bytes()
+            m = json.loads(data)
+            if m.get("prev_sha256") != (hashlib.sha256(prev).hexdigest() if prev is not None else None):
+                bad["prev_chain"] = bad.get("prev_chain", 0) + 1
+            for s in m.get("segments", []):
+                p = self.raw.joinpath(*s["path"].split("/"))
+                if not p.is_file():
+                    bad["segment_missing"] = bad.get("segment_missing", 0) + 1
+                elif p.stat().st_size != s.get("bytes") or fsio.sha256_file(p) != s.get("sha256"):
+                    bad["segment_mismatch"] = bad.get("segment_mismatch", 0) + 1
+            prev = data
+        return bad
 
     @staticmethod
     def iter_segment(path):

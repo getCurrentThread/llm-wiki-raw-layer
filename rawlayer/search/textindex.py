@@ -119,7 +119,7 @@ _N_CLASS = "".join(f"\\u{lo:04x}-\\u{hi:04x}" for lo, hi in _NGRAM_RANGES)
 _RUN_RE = re.compile(f"([{_N_CLASS}]+)|([0-9a-z]+)")
 _N_CHAR = re.compile(f"[{_N_CLASS}]")
 _LATIN = frozenset("0123456789abcdefghijklmnopqrstuvwxyz")
-_COLUMN_FILTER = re.compile(r"^[A-Za-z_]+:")
+_COLUMN_FILTER = re.compile(r"^[A-Za-z_]+:.")     # word:value; a word ending in ':' ("Re:", "TODO:") is text
 # Longest Latin/digit run a non-literal term may carry: below FTS5's 32768-byte token cut (see the docstring).
 MAX_TERM_RUN = 32000
 
@@ -131,10 +131,6 @@ def norm(text: str) -> str:
     if text.isascii():
         return text.lower()
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
-
-
-def _is_ngram_char(ch: str) -> bool:
-    return _N_CHAR.match(ch) is not None
 
 
 def _kind(ch: str):

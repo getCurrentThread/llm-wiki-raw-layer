@@ -1,5 +1,4 @@
 """Block-level Notion search. Derived labels/order/deletion use one SQL expression in both build modes."""
-import json
 import re
 from collections import Counter
 from rawlayer.search import common, search as drv, textindex as ti
@@ -402,10 +401,6 @@ class NotionSearch(drv.SearchDriver):
         return {"mode": "page-text", "page_id": pid, "breadcrumb": self.breadcrumb(con, pid),
                 "total": len(rows), "rows": [self.hit(r, tz, [], a.width) for r in rows]}
 
-    def render_rest(self, res, a, tz):
-        print(f"{NAME}: {res['total']} {res['mode']} result(s)")
-        for row in res["rows"]:
-            print(json.dumps(row, ensure_ascii=False))
 
 
 DRIVER = NotionSearch(SPEC)

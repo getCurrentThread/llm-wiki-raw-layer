@@ -322,10 +322,6 @@ class DiscordSearch(drv.SearchDriver):
             common.note("query and selection filters are not applied to --thread")
         return {"mode": "thread", "root_id": root, "total": len(rows), "rows": [self.hit(r, tz, [], a.width) for r in rows]}
 
-    def render_rest(self, res, a, tz):
-        print(f"{NAME}: {res['total']} {res['mode']} result(s)")
-        for row in res["rows"]:
-            print(json.dumps(row, ensure_ascii=False))
 
 
 DRIVER = DiscordSearch(SPEC)

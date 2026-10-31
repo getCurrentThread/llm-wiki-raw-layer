@@ -275,6 +275,30 @@ class TestLedgerDefects(T.ToyCase):
             with self.subTest(command=argv[0]):
                 self.assertEqual(cli_main(self.fx, *argv), 1)
 
+    def test_seal_catches_what_still_folds(self):
+        """A segment recompressed (valid gzip, the same records) or an earlier manifest rewritten (the same JSON, other
+        bytes) folds as before: only its sha256 / the prev_sha256 chain shows it, and replay --check exits 1."""
+        def rewrite(path, data):
+            path.chmod(0o600)
+            path.write_bytes(data)
+            path.chmod(0o400)
+
+        for case in ("segment", "manifest"):
+            with self.subTest(case=case):
+                self.fx = T.ToyFixture().standard()
+                self.addCleanup(T.force_rmtree, self.fx.base)
+                for _ in range(2):
+                    self.assertEqual(capture(self.fx), 0)
+                lg = ledger(self.fx)
+                self.assertEqual(cli_main(self.fx, "replay", "--check"), 0)
+                if case == "segment":
+                    seg = sorted(lg.ledger_dir.glob("*/*/*.jsonl.gz"), key=str)[0]
+                    rewrite(seg, gzip.compress(gzip.decompress(seg.read_bytes()), compresslevel=1, mtime=0))
+                else:
+                    first = lg.manifests()[0][2]
+                    rewrite(first, json.dumps(json.loads(first.read_bytes()), indent=4).encode("ascii"))
+                self.assertEqual(cli_main(self.fx, "replay", "--check"), 1)
+
     def test_manifest_that_parses_but_lost_a_field(self):
         """Valid JSON with a renamed key, a wrong type or a status outside the vocabulary is an unreadable manifest:
         replay and export-state stop with exit 1 and change nothing."""

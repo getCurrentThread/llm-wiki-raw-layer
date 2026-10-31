@@ -31,6 +31,7 @@ class OriginRun:
         self.vanished = 0
         self.guard_prev = 0
         self.guard_obs = 0
+        self.recorded = set()       # keys a settled container of this run recorded: one record per key per run
         # At genesis no key can sit under another container, so skip the per-key fallback lookup.
         self.origin_has_heads = ctx.state.execute(
             "SELECT 1 FROM heads WHERE origin=? LIMIT 1", (origin,)).fetchone() is not None
@@ -71,6 +72,7 @@ def process_container(orun: OriginRun, c):
     drops = []                  # pending keys seen again; kept only if the room read clean (Q10)
     kinds = defaultdict(list)
     days = Counter()
+    recorded = []
     try:
         for ob in c.iter_obs():
             if ob.key in seen:
@@ -93,7 +95,10 @@ def process_container(orun: OriginRun, c):
             if hd is None and orun.origin_has_heads:
                 hd = state.head(ctx.state, origin, ob.key)   # key seen before under another container
             if hd is None or hd.op != "put" or hd.h != h:
+                if ob.key in orun.recorded:     # an earlier container recorded it at the same rev this run
+                    raise ContainerError("error", "dup_key")
                 orun.record(ob, (hd.rev if hd else 0) + 1, h, c.sid)
+                recorded.append(ob.key)
             if hd is not None and hd.pending:
                 drops.append(ob.key)
     except ContainerError as e:
@@ -119,6 +124,7 @@ def process_container(orun: OriginRun, c):
             except Exception:  # noqa: BLE001
                 pass
     orun.spill.settle()
+    orun.recorded.update(recorded)
     # keys that were there before and are not now
     # Q10: every kind (room, schema, rows) is a key of the room; denylisted keys are outside 8.3; "observed"
     # = counted keys (kinds); a non-clean room (partial included) leaves its pending set untouched.

@@ -37,25 +37,6 @@ def iso(ts=None):
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _lock(fd):
-    if os.name == "nt":
-        import msvcrt  # noqa: PLC0415
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl  # noqa: PLC0415
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock(fd):
-    if os.name == "nt":
-        import msvcrt  # noqa: PLC0415
-        os.lseek(fd, 0, 0)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl  # noqa: PLC0415
-        fcntl.flock(fd, fcntl.LOCK_UN)
-
-
 class RunLock:
     """<raw>/.state/run.lock, locked without blocking (msvcrt on Windows, flock elsewhere -- both per open file, so a
     second RunLock in the same process is Busy too)."""
@@ -65,14 +46,14 @@ class RunLock:
         state_dir.mkdir(parents=True, exist_ok=True)
         self.fd = os.open(state_dir / "run.lock", os.O_RDWR | os.O_CREAT)
         try:
-            _lock(self.fd)
+            fsio.lock_fd(self.fd)
         except OSError:
             os.close(self.fd)
             raise Busy()
 
     def release(self):
         try:
-            _unlock(self.fd)
+            fsio.unlock_fd(self.fd)
         except OSError:
             pass
         os.close(self.fd)

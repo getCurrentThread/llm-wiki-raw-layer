@@ -68,6 +68,11 @@ def main(argv=None):
 def replay(cfg, check_only):
     ledger, lock, con = run.open_session(cfg)
     try:
+        seal = ledger.seal()            # first: a missing segment would stop the fold below
+        publicout.say(lit("seal"), prev_chain=seal.get("prev_chain", 0),
+                      segment_missing=seal.get("segment_missing", 0), segment_mismatch=seal.get("segment_mismatch", 0))
+        if seal:
+            return 1
         tmp = Path(ledger.work_root, "replay-state.sqlite")
         Path(ledger.work_root).mkdir(parents=True, exist_ok=True)
         rebuilt = state.rebuild(ledger, tmp)

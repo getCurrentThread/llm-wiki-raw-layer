@@ -1,5 +1,4 @@
 """Ledger-only Claude Code FTS5 index and session search."""
-import json
 from collections import Counter
 from rawlayer.search import common, search as drv, textindex as ti
 from .keys import cc_id, iso_ms
@@ -130,7 +129,8 @@ SPEC = ClaudeCodeIndex()
 
 
 def add_arguments(p):
-    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "sessions", "projects"])
+    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "sessions", "projects"],
+                                sender_help="substring of the role: user, assistant or prompt")
     p.add_argument("--project", action="append", default=[], help="substring of the working folder")
     p.add_argument("--role", choices=("user", "assistant", "prompt"))
     p.add_argument("--session", metavar="ID", help="show the whole session, including subagents, in order")
@@ -141,10 +141,10 @@ def add_arguments(p):
 
 class Filters(drv.Filters):
     range_col, range_scale, until_pad = "ts_ms", 1000, 999
+    deleted_sql = "t.held = 1"
 
     def __init__(self, a, tz):
         super().__init__(a, tz)
-        self.where = ["t.held = 1" if w == "t.deleted = 0" else w for w in self.where]
         self.selector |= bool(a.project or a.role)
         if a.project:
             clauses = [common.like("t.project", value) for value in a.project]
@@ -265,10 +265,6 @@ class ClaudeCodeSearch(drv.SearchDriver):
         return {"mode": "session", "session_id": a.session, "total": len(rows),
                 "rows": [self.hit(r, tz, [], a.width) for r in rows]}
 
-    def render_rest(self, res, a, tz):
-        print(f"{NAME}: {res['total']} {res['mode']} result(s)")
-        for row in res["rows"]:
-            print(json.dumps(row, ensure_ascii=False))
 
 
 DRIVER = ClaudeCodeSearch(SPEC)

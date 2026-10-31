@@ -419,6 +419,27 @@ class TestLocks(Scenario):
             release()
         self.assertEqual(self.index(cfg)[0], 0)
 
+    def test_index_write_transaction_is_busy_not_damaged(self):
+        """A read that waits out an index write transaction exits 75 (busy), not 2 ("damaged ... --rebuild-index")."""
+        from rawlayer.search import common
+        cfg, dr = self.clone()
+        writer = sqlite3.connect(ipath(dr), isolation_level=None)
+        writer.execute("BEGIN EXCLUSIVE")
+
+        def quick(path):                    # open_ro without its 15 s wait
+            return sqlite3.connect(fsio.ro_uri(path, immutable=False), uri=True, timeout=0.05)
+        try:
+            with mock.patch.object(common, "open_ro", quick):
+                rc, _, err = run_search("search", "toy", "--config", cfg, "--json", "배포")
+                self.assertEqual(rc, 75, err)
+                self.assertNotIn("damaged", err)
+                rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--status", "--json")
+                self.assertEqual(json.loads(out)["toy"]["state"], "busy")
+        finally:
+            writer.rollback()
+            writer.close()
+        self.assertEqual(search(cfg, "배포")["total"], 1)
+
     def test_index_all_sources(self):
         cfg, _dr = self.clone()
         rc, reps, err = self.index(cfg, source="all")

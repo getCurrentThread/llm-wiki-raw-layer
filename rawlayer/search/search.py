@@ -12,6 +12,7 @@ What the base owns is what the apps had as copies: the run() skeleton (argument 
 cursor, dispatch, the JSON envelope), the hits/browse/aggregate queries, the time-window and --include-deleted
 filters, and the count/timeline/senders text output. An app overrides the hooks its row model needs and adds
 its own dispatch (mattermost's --thread) through check_args/extra_result."""
+import json
 import sys
 
 from . import common
@@ -27,6 +28,7 @@ class Filters:
     range_col = "ts"                 # t.<col> the time window filters (ts / ts_ms)
     range_scale = 1                  # what a parsed --since/--until (seconds) multiplies by (ms columns: 1000)
     until_pad = 0                    # an inclusive --until: 999 with a ms column
+    deleted_sql = "t.deleted = 0"    # what hides deleted rows unless --include-deleted
 
     def __init__(self, a, tz):
         self.where, self.params = [], []
@@ -42,7 +44,7 @@ class Filters:
             self.where.append(f"{col} <= ?")
             self.params.append(self.until * self.range_scale + self.until_pad)
         if not a.include_deleted:
-            self.where.append("t.deleted = 0")
+            self.where.append(self.deleted_sql)
         self.selector = bool(a.sender or self.since is not None or self.until is not None)
 
     def summary(self, a):
@@ -408,5 +410,7 @@ class SearchDriver:
         self.render_rest(res, a, tz)
 
     def render_rest(self, res, a, tz):
-        """The source's own modes (list, thread, browse, hits)."""
-        raise NotImplementedError
+        """The source's own modes (list, thread, browse, hits); by default a header and one JSON line per row."""
+        print(f"{self.name}: {res['total']} {res['mode']} result(s)")
+        for row in res["rows"]:
+            print(json.dumps(row, ensure_ascii=False))

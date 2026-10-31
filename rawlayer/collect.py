@@ -108,7 +108,10 @@ def main(argv=None):
     index_args = ["--config", a.config] + (["--rebuild"] if a.rebuild_index else [])
     path = Path(log_path(a.config))
     if path.exists() and path.stat().st_size > LOG_MAX:
-        path.replace(path.with_name(path.name + ".1"))
+        try:
+            path.replace(path.with_name(path.name + ".1"))
+        except OSError:                 # another collect has it open (Windows): that run's successor rolls it
+            pass
     with path.open("a", encoding="utf-8", newline="\n") as log:
         log.write("run\n")
         log.flush()                     # on disk before capture starts: `schedule status` sees a run in progress

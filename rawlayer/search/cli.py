@@ -123,5 +123,8 @@ def main(argv=None):
     except KeyboardInterrupt:
         return 130
     except Exception as e:  # noqa: BLE001
+        if common.is_locked(e):         # a query statement waited out an index write
+            print("search: the index is being updated by another process (lock busy)", file=sys.stderr)
+            return common.EXIT_BUSY
         print(f"search: error {type(e).__name__}: {e}", file=sys.stderr)
         return common.EXIT_ERR

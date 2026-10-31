@@ -118,6 +118,20 @@ class TestPlainOrigin(Case):
         self.assertEqual(a["containers"][sid("a/c2.jsonl")], {"status": "error"})
         self.assertEqual(sorted(by_key(records(self.fx))), [key("toy_a", 2)])
 
+    def test_dup_key_across_containers_of_one_run(self):
+        """A key that two containers would record in one run is recorded once: the later container fails dup_key,
+        and the ledger stays replayable (two records at one rev would wedge every later run)."""
+        self.fx.a_put("c1", [item(1, "x"), item(2, "ok")])
+        self.fx.a_put("c2", [item(1, "y")])
+        self.assertEqual(capture(self.fx, ["toy_a"]), 75)
+        a = self.origin_doc("toy_a")
+        self.assertEqual((a["notes"], a["containers"][sid("a/c2.jsonl")]), ({"dup_key": 1}, {"status": "error"}))
+        self.assertEqual([r["rev"] for r in by_key(records(self.fx))[key("toy_a", 1)]], [1])
+        self.sound()
+        self.assertEqual(capture(self.fx, ["toy_a"]), 0)           # the next run goes on: c1 is unchanged
+        self.assertEqual([r["rev"] for r in by_key(records(self.fx))[key("toy_a", 1)]], [1, 2])
+        self.assertEqual(replay_diff(self.fx), 0)
+
     def test_denylist(self):
         lg = T.ledger(self.fx)
         lg.ensure_dirs()

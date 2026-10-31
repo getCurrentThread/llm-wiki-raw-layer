@@ -144,6 +144,26 @@ def replace_retry(src, dst, attempts=10):
             time.sleep(0.2 * (i + 1))
 
 
+def lock_fd(fd):
+    """Lock byte 0 of an open file without blocking (OSError when held): per open file, released by the OS on exit."""
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl  # noqa: PLC0415
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def unlock_fd(fd):
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
+        os.lseek(fd, 0, 0)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl  # noqa: PLC0415
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 def make_readonly(path):
     Path(path).chmod(stat.S_IREAD)
 

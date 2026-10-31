@@ -126,6 +126,8 @@ repeating them.
 
 - **`check <app>` lines:**
   - `config: ok`
+  - `seal prev_chain=0 segment_missing=0 segment_mismatch=0` (any other count: the ledger's hash chain or a segment
+    is broken; exit 1, stop and report)
   - `replay check=yes differing_rows=N head_seq=N`
   - `check: ok errors=0 refused=0`
 

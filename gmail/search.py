@@ -243,10 +243,6 @@ class GmailSearch(drv.SearchDriver):
     def group_label(self, r, mode):
         return r["label"], "id=" + r["id"]
 
-    def render_rest(self, res, a, tz):
-        print(f"gmail: {res['total']} {res['mode']} result(s)")
-        for row in res["rows"]:
-            print(json.dumps(row, ensure_ascii=False))
 
 
 DRIVER = GmailSearch(SPEC)
