@@ -10,8 +10,7 @@ The implementation uses the Python standard library.
 
 Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
 This app's folder contains `apps.py` (source keys, options and schedule), `origins.py`, `inputs.py`, `readers/`,
-`collector.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/`, `config.example.json`, and `contrib/`
-(archived reference code, not part of the app).
+`collector.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/` and `config.example.json`.
 Core tests are at `<PROJECT>/tests/core/`;
 app tests are at `<PROJECT>/mattermost/tests/`. The `/raw-search` skill is
 `<PROJECT>/.claude/skills/raw-search/SKILL.md` (shared by every app).
@@ -102,8 +101,8 @@ The collector prints one JSON line of counts and categories only (`channels`, `p
 changed, `files_stored` the attached files kept this run. mattertok's `send` is `admin.py post` (below). Not
 ported: its other interactive commands (read, search, watch, whoami, doctor), its WebSocket live mode (the scheduled
 task's cursor sync replaces it), reconcile, its attachment layout and Markdown rendering; capture reads none of
-them. They are kept, scrubbed of organisation values, in `contrib/mattertok/` with a feature map in
-`contrib/README.md`: archived reference code that the app never imports (it needs `httpx` and `websockets`).
+them. mattertok 0.1.0 itself (scrubbed of organisation values, with a feature map in `contrib/README.md`) is kept
+in git history only, as archived reference code: `git checkout bee1809 -- mattermost/contrib`.
 
 ## Administration (admin.py)
 
