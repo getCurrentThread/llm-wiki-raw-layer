@@ -12,7 +12,8 @@ Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings
 This app's folder contains `apps.py` (source keys, options, schedule and the setup hooks), `origins.py`,
 `inputs.py`, `readers/`, `keys.py` (value rules), `vocab.py`, `search.py`, `provision.py` (setup's defaults and
 the provisioning of the root key, keystore, backup and macOS database), `backup.py` (the EvaSQLite backup
-decryption), `tests/`, and `config.example.json`. `state.py` declares the `schema_base` and `edb_salt` state
+decryption), `admin.py` (the write side — scriptable sending), `tests/`, and `config.example.json`. `state.py`
+declares the `schema_base` and `edb_salt` state
 tables.
 `katok_decrypt.py`, `keystore_v2.py` and `keychain.py` are the in-repo key derivation and decryption toolkit
 ported from kakatok, and `kakaocli.py` is the macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the
@@ -186,6 +187,38 @@ disk floor or skipped, 2 refused, and 1 error. A suspect origin commits nothing;
 `setup --provision` reruns the provisioning above against the config.json that is already there. `check`
 verifies the folded state against the ledger, and its `--export-state` / `--rebuild-state` dump or rebuild that
 state (the old export-state and replay). The root README's command table describes the whole shared surface.
+
+## Administration (admin.py)
+
+`admin.py` is the write side: scriptable message sending through the running Windows client's own Loco WRITE
+path, driven with frida (the client keeps its session, TLS and sync; no credential is read — the app's key
+material is never touched). It ports the kakaosend research, reverse-engineered against client
+26.9.1.5339; the working notes live outside the repository.
+
+```
+python -s -B -m kakaotalk.admin check     --template <DATA_PARENT>\kakaotalk\admin\template.json
+python -s -B -m kakaotalk.admin calibrate --template <...>                       # send ONE message in any plain-text room
+python -s -B -m kakaotalk.admin rooms     --template <...> --chat-id 0x...
+python -s -B -m kakaotalk.admin send      --template <...> --chat-id 0x... --message-file <file> [--dry-run]
+python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--lifetime 900]
+```
+
+- The template (captured client bytes identifying the account) and its `state.json` live under the data
+  parent, like the token files; `--template` must be an absolute path there. `calibrate` writes both, seeding
+  the message-id counter `0x200` past the captured id (an offset the server accepts; `check` shows headroom).
+- `send` needs no message of yours: a minimal clone of the calibrated send whose every pointer the builder
+  could dereference is replaced (supplement sentinel, no-extra `+0x180 = 10` path, its own text block).
+  At most once: the counter is persisted before the client is called. Text comes from a file, at most
+  200 UTF-8 bytes, and is never printed. Delivery is judged by the client's WRITE response handler
+  (`err_code 0`) and ultimately the room — the client renders received messages up to a minute late; a
+  "server unstable" dialog right after a send is a stale long-lived session, not a crash: restart and retry.
+- `send` and `listen` cover the rooms whose own messages carry no `extra` field (the self-chat room and the
+  plain rooms); rooms that need `extra` are not covered yet.
+- `listen` reacts only to the owner's own sends starting with the prefix (the calibrated sender id), echoes
+  them prefix-stripped 0.3s later into the same room, and tears down cleanly on Ctrl+C or `--lifetime`.
+- Addresses are locked to client 26.9.1.5339: a version or builder-prologue mismatch refuses before anything
+  is touched. Exit codes: 0 ok, 1 a write happened but was rejected or failed after it, 2 refused before any
+  write. Requires the `frida` Python package (imported lazily; the collector never needs it).
 
 ## Search
 
