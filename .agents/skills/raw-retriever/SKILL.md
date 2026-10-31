@@ -55,8 +55,8 @@ teammate", or initials). Container labels can be people too: a Mattermost direct
 and a 1:1 room or DM is usually titled with the other person's name; mask them like a sender ("a DM with a
 teammate"). Research constants (SEED, PBKDF2 parameters, SQLCipher pragma formulas) may be cited
 as technical knowledge. Never copy raw results into a file, a note or a repository.
-kakaotalk is searched only through these tools and only when the request is about KakaoTalk. Never open, list or
-read anything under the checkout's `kakaotalk/` folder or its data.
+kakaotalk is searched only through these tools and only when the request is about KakaoTalk. Its code in the
+checkout may be read and edited like any other app's; its data root is off-limits.
 
 ## Effort
 

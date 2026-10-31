@@ -68,10 +68,12 @@ repeating them.
 ## 2. Ground rules
 
 1. Always invoke Python as `python -s -B` (or `& '<PY>' -s -B`).
-2. **kakaotalk is off-limits.** Never open, list, grep or read anything under `kakaotalk/` or its data root. Run
-   kakaotalk commands only when the owner explicitly asks, and read only their pass/fail summary lines.
+2. **kakaotalk is owner-gated, not off-limits.** Its code is a local-archive connector for the owner's own,
+   signed-in KakaoTalk client on this machine (own data, local-only; see `kakaotalk/README.md`): read and edit
+   it like any other app's code. Its data stays gated: never touch its data root, run kakaotalk commands only
+   when the owner explicitly asks, and read only their pass/fail summary lines.
    Framework-wide `manage.py check`, with no app named, is allowed: it validates every app's contract and prints
-   summary lines only. A bare `manage.py test` also runs kakaotalk's suite (0.4).
+   summary lines only.
 3. **Report aggregates only.** Never write any of these into a message, a report (section 10) or a file in
    `<PROJECT>`, and never show them in quoted command output. Configs, credentials and archives under
    `<DATA_PARENT>`, the browser download that 6.1.3 step 7 moves, and the temporary files that 7.2 and 7.3 delete
@@ -214,7 +216,7 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 | 0.1 | Prerequisites. This checkout sits under the owner's profile (`<HOME>\...`): outside a profile the owner's commands still work, but every SYSTEM run fails at start (`1 (capture error)`, no task.log block), so never move the checkout yourself. Git for Windows is installed machine-wide on PATH: the SYSTEM task's precheck runs `git` and refuses the data root when it cannot. PowerShell 7.3 or newer. `gh` (GitHub CLI) only for the site in 6.1.4; its block checks for it. The four apps use the standard library only; no pip installs. If `pwsh` or `git` is missing: **[human]** the owner installs it (the Microsoft Store package of PowerShell needs no UAC prompt; an MSI or a machine-wide Git install shows one), then restart the agent session in pwsh. | `git --version` succeeds; `([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';').Where({ $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }).Count` is 1 or more (the SYSTEM task sees only the machine PATH); `$PSVersionTable.PSVersion` is 7.3 or newer; `$PSNativeCommandArgumentPassing` is not `Legacy` |
 | 0.2 | Choose `<PY>`. In a shell opened after any Python install: `python -s -B -c "import sys; print(sys.executable)"` (if `python` is missing or opens the Store, use `py -c ...`). `(Get-Command python).Source` is not the test: the python.org install manager's `python` is a `WindowsApps` alias that starts a real interpreter. If nothing qualifies: **[human]** install Python 3.12+ from python.org: the Python install manager needs no UAC prompt; the classic installer shows one unless **Use admin privileges when installing py.exe** is unticked. Then open a new shell and repeat. Wherever bare `python` does not start `<PY>`, run `& '<PY>' -s -B` in place of `python -s -B`. | `<PY>` is not under `\WindowsApps\`; `& '<PY>' -s -B --version` is 3.12 or newer |
 | 0.3 | `python -s -B manage.py check`, then `python -s -B -c "from pathlib import Path; from rawlayer import conf; print(Path(conf.PROJECT_DIR).is_relative_to(Path.home().resolve()))"` | exit 0 with `apps: 5 apps, no collision`, `core: ok files=74`, `check: ok errors=0 refused=0`; the second command prints `True` |
-| 0.4 | Optional: `python -s -B manage.py test core claudecode discord gmail mattermost notion`. This is the full suite an agent may run. A request for "all tests" does not name kakaotalk: run this and say that kakaotalk was skipped. Run `manage.py test kakaotalk` only when the owner names kakaotalk, and read only its final `test:` line. | exit 0 and the last line `test: core ok; claudecode ok; discord ok; gmail ok; mattermost ok; notion ok` |
+| 0.4 | Optional: `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion`. This is the full suite an agent may run; every app's tests build synthetic data in temporary directories, kakaotalk's included. | exit 0 and the last line `test: core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok` |
 | 0.5 | **[human]**, deferred to 5.1. If `<DATA_PARENT>` does not exist yet, skip this row in Phase 0: 5.1 creates it and sends you back here. Windows Search must not index `<DATA_PARENT>`; on a new profile it usually does. The owner excludes it: Indexing Options → Modify → untick the folder. This covers every app. | if `<DATA_PARENT>` exists, the 5.1 probe prints `search: ok`; otherwise the row is deferred to 5.1 |
 | 0.6 | Confirm the owner is available for [human] and UAC steps in this session. | the owner confirms, or names a time; until then run no [human] or [elevated] step |
 

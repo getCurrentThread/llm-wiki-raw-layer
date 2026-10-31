@@ -28,13 +28,14 @@ Checkout: `{{PROJECT}}`. Append-only raw ledgers with FTS5 search over the owner
 - Raw data, configs and tokens stay under the data parent: never copy them into a repository, a note or a chat,
   and never commit or sync them.
 - kakaotalk is searched only through the tools above, and only for requests about KakaoTalk (the MCP tools' app
-  `all` leaves it out). Never open, list or read anything under `{{PROJECT}}\kakaotalk\` or its data.
+  `all` leaves it out). Its code in the checkout may be read and edited like any other app's; its data root is
+  off-limits.
 
 ## Setup and operations
 
 - The `llm-wiki-setup` skill installs apps, turns on scheduled collection, checks health and recovers, by the
   checkout's `llm.md` and its doctor: `{{BOOT}} doctor`
-- Agent tests: `{{RUN}} test core claudecode discord gmail mattermost notion`; kakaotalk only when named.
+- Agent tests: `{{RUN}} test core claudecode discord gmail kakaotalk mattermost notion`.
 - Always run Python as `python -s -B`. Never run `collect`, `schedule` or a collector unless the owner asks.
 - This block, the skills, the subagent and the MCP server are managed by the checkout's agent integration
   (`{{BOOT}} agents status`, `install`, `uninstall`). Change the templates in the checkout

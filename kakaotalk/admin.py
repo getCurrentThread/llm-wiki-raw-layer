@@ -4,6 +4,9 @@ path — the write-side counterpart of the read-only collector, mattermost admin
 client is driven with frida, so session, TLS and sync handling stay entirely the client's own; no credential
 is read, stored or printed (the app's key material is never touched).
 
+Scope: every command posts only as the owner's own, signed-in account on this machine — owner-invoked, one
+message at a time, never bulk or third-party sending.
+
 A calibration template (JSON: captured client bytes that identify the owner's account, so it lives under the
 data parent like a token file) is produced once by `calibrate` from ONE real send, in any plain-text room:
 

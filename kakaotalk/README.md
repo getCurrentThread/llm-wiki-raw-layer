@@ -6,6 +6,18 @@ framework (see `../README.md` and `../CORE.md`). Its app label and package are i
 Message data and machine config remain outside the repository.
 The implementation uses the standard library plus pycryptodome for `.edb` decryption.
 
+## Scope and authorization
+
+This app runs on the owner's own machine and opens only the owner's own, signed-in KakaoTalk account: the
+client's local databases and keystore, and the owner's device backups — a personal archival and search tool for
+one's own history, not a collection tool for anyone else's data. Everything stays local: sources are read in
+place, plaintext exists only under `<DATA_ROOT>` (outside this repository, excluded from Windows Search),
+nothing is sent anywhere, and keys are credentials that never leave the data root and are never printed. The
+Windows key hierarchy and the memory fallback are the owner's kakatok research (its notes live outside this
+repository); the macOS side ports the MIT-licensed kakaocli derivation (below). `admin.py` posts only as the
+owner's own signed-in account, one message at a time, owner-invoked — the write-side counterpart of mattermost
+admin.py's webhook post.
+
 ## Layout
 
 Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
@@ -16,7 +28,8 @@ decryption), `admin.py` (the write side — scriptable sending), `tests/`, and `
 declares the `schema_base` and `edb_salt` state
 tables.
 `katok_decrypt.py`, `keystore_v2.py` and `keychain.py` are the in-repo key derivation and decryption toolkit
-ported from kakatok, and `kakaocli.py` is the macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the
+ported from kakatok (the owner's prior research project; its notes live outside this repository), and
+`kakaocli.py` is the macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the
 macOS section below). Core tests are at `<PROJECT>/tests/core/`;
 app tests are at `<PROJECT>/kakaotalk/tests/`. The slash command is
 `<PROJECT>/.claude/commands/raw-search.md` (shared with mattermost).
@@ -79,6 +92,9 @@ package:
 | `kakaotalk/keystore_v2.py` | parses the client's CBOR keystore `appstate.dat` / `keystore.bin` (`info_prefix`, `salt`, `wrapped_dek_map`); the authoritative room inventory |
 | `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek`; the key-source rotation fingerprint |
 | `kakaotalk/katok_decrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
+
+The toolkit is self-contained: the rest of the app — readers, capture, search — reaches it only through the
+entry points above, so work outside these four modules never touches key material.
 
 Setup turns that into capture inputs (see "First-run setup" below); after it, `collect` reads the `.edb` rooms
 and the decrypted backups exactly as before — the ledger contract is unchanged; only the producers of the
@@ -150,7 +166,7 @@ Two pieces put a Mac into the ledger:
   `setup kakaotalk` (or `setup kakaotalk --provision` to rerun it) discovers the database (the derived name
   first, then any 78-hex file in the container), reads it with its WAL in one consistent snapshot, decrypts it
   and writes the plaintext to the configured `mac_db` path. It runs whenever the config sets `mac_db`; the
-  lookups can be bypassed by passing `uuid`/`user_id`/`db`/`home` to `run_macdb` directly (a copied database,
+  lookups can be skipped by passing `uuid`/`user_id`/`db`/`home` to `run_macdb` directly (a copied database,
   or another home), so a copied database also decrypts off macOS. The key is a credential: output is the
   derived filename and counts only. Attention is reported when the derived key opens no page (wrong
   uuid/userId) or the database holds no `NTChatMessage` rows.
@@ -192,7 +208,7 @@ state (the old export-state and replay). The root README's command table describ
 
 `admin.py` is the write side: scriptable message sending through the running Windows client's own Loco WRITE
 path, driven with frida (the client keeps its session, TLS and sync; no credential is read — the app's key
-material is never touched). It ports the kakaosend research, reverse-engineered against client
+material is never touched). It ports the kakaosend It ports the owner's kakaosend research, reverse-engineered against client
 26.9.1.5339; the working notes live outside the repository.
 
 ```

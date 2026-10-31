@@ -174,7 +174,7 @@ attention.
 ```
 python -s -B manage.py test
 python -s -B manage.py test core
-python -s -B manage.py test core claudecode discord gmail mattermost notion
+python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion
 python -s -B manage.py check
 ```
 
@@ -182,7 +182,7 @@ python -s -B manage.py check
 selects that app and builds synthetic source data and ledgers in temporary directories; no binary fixtures or
 real conversation data are committed. The default test command runs every suite and ends with
 `core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok`
-when all suites pass. Agents run the named form above, which leaves kakaotalk out (AGENTS.md).
+when all suites pass. Agents run the named form above (AGENTS.md).
 
 Discord, Notion, Gmail, Mattermost and Claude Code include app-owned collectors; enable `dc_sync` / `nt_sync` /
 `gm_sync` / `mm_sync` / `cc_sync` to fetch before live capture. Claude Code reads local conversation files from

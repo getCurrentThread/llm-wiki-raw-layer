@@ -42,6 +42,8 @@ fingerprint() → diff_fingerprint() 로 이전 상태와 비교해 어떤 파�
 의존성: 표준 라이브러리 + pycryptodome(AES). keystore_v2(CBOR 파서) 재사용.
 프라이버시: DEK·루트는 키 자격증명 — 로그에는 절대 찍지 않고(개수/해시카운트만),
 보호된 data root 안에서만 다룬다.
+Scope: the owner's own, signed-in account's keystore on this machine (offline personal archival); keys never
+leave the data root and are never printed.
 """
 from __future__ import annotations
 

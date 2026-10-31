@@ -9,5 +9,5 @@
 - These files are generated from `tools/agent_templates/`: edit the templates, then run
   `python -s -B tools/bootstrap.py agents sync-repo` (a test fails while they differ). The global install for use
   from any folder is llm.md section 11.
-- Before committing, run `python -s -B manage.py test core discord gmail mattermost notion` and
+- Before committing, run `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion` and
   `python -s -B manage.py check`, and grep the diff for organisation identifiers, profile paths and secrets.

@@ -6,6 +6,8 @@ kakatok(sample/kakatok/katok_decrypt.py)에서 kakaotalk app으로 옮겼다(독
 CLI(info/userid/backup/live)는 setup 프로비저닝(`manage.py setup kakaotalk --provision`, kakaotalk/backup.py)이 대신한다.
 
 대상: 본인 계정·본인 기기의 카카오톡 데이터를 오프라인에서 복호화/분석 (연구용).
+Scope: the owner's own, signed-in account on this machine only — offline personal archival and research.
+Nothing is sent anywhere; recovered keys stay local and are never printed.
 
 두 스킴을 모두 다룬다.
   (1) 구버전/백업(≈25.7.2 미만, EvaSQLite)  : 레지스트리 pragma + userId 로 정적 복호화

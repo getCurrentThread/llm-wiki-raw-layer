@@ -12,8 +12,8 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
   site-packages, `-B`: no bytecode files).
 - `check` validates settings, the app contracts, cross-app collisions and the core checksums. `check <app>` also
   verifies that app's ledger.
-- Tests an agent may run: `python -s -B manage.py test core claudecode discord gmail mattermost notion`. A bare `test`
-  also runs kakaotalk's suite; run that only when the owner names kakaotalk.
+- Tests an agent may run: `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion`
+  (a bare `test` runs the same suites). Every suite builds synthetic data in temporary directories.
 - Search: `python -s -B manage.py search <app> [QUERY] --json [options]`. `search <app> --help` documents the
   modes, filters and query language; trust it over memory.
 - Do not run `collect` or rebuild an index unless the owner asks. The same holds for `embed` (llm.md 12), which
@@ -53,9 +53,11 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
 
 ## Rules
 
-- **kakaotalk:** never open, list, grep or read anything under `kakaotalk/` or its data root. Search it only
-  through `manage.py search kakaotalk` (or the raw-search tools) and only when the owner's request is about
-  KakaoTalk; run other kakaotalk commands only when the owner asks.
+- **kakaotalk:** a local-archive connector for the owner's own, signed-in KakaoTalk client on this machine —
+  own data, local-only, nothing sent anywhere; keys stay in the data root (see `kakaotalk/README.md`, "Scope
+  and authorization"). Read and edit its code like any other app's. Its data root is off-limits; search the
+  ledger only through `manage.py search kakaotalk` (or the raw-search tools) and only when the owner's request
+  is about KakaoTalk; run its other commands only when the owner asks.
 - **Privacy:** no raw message bodies, real names of people, phone numbers, email addresses or credentials in
   answers unless the owner explicitly asks. Summarize, aggregate or mask. Research constants (SEED, PBKDF2
   parameters, SQLCipher pragma formulas) may be cited as technical knowledge.

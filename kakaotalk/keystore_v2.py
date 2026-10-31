@@ -17,6 +17,8 @@ kakatok(sample/kakatok/keystore_v2.py)에서 kakaotalk app으로 옮겼다(독�
 프라이버시: wrapped_dek 는 래핑된 키다. 해시/요약만 로그로 남기고, 원문은 로컬 파일에만.
 KEK 가 없으면 wrapped_dek 로는 방을 못 연다(오프라인 언랩 불가 — Themida VM 차단). 인벤토리는
 "어떤 방이 존재하고, 어떤 방을 아직 못 땄는지"를 아는 용도다.
+Scope: the owner's own keystore on this machine (offline personal archival); wrapped keys are logged as
+hashes only.
 """
 from __future__ import annotations
 

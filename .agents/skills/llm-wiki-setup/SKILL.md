@@ -11,8 +11,8 @@ The tool the runbook uses, run from the repository root (the folder holding mana
 `python -s -B tools/bootstrap.py`
 
 1. Read llm.md whole before running any step (its section 1). Its ground rules (section 2) bind every step:
-   kakaotalk is off-limits, no code changes while operating, no commits or pushes, and the owner's explicit
-   approval for anything irreversible or replacing.
+   kakaotalk commands only when the owner names kakaotalk, no code changes while operating, no commits or
+   pushes, and the owner's explicit approval for anything irreversible or replacing.
 2. Run `BOOT doctor`. Its `machine` block answers Phase 0. Each app's `next` is the llm.md step to resume at; `8`
    means live. Use `--json` when you need the fields, and `--app <app>` for one app.
 3. For each app the owner named, follow its card in section 6 from the step `next` names, after reading the steps
