@@ -124,8 +124,8 @@ thread channel and reference replies. Query/selection filters do not cut a threa
 previous text when their content is empty. Search JSON contains freshness and watermark information.
 Labels and text are private plaintext; follow the session's privacy rules when reporting search results.
 
-Frozen input sets read `<inputs_root>/<set>/dc/archive`. Scheduled capture is SYSTEM at local 00:14 every
-3 hours, with a 1-hour limit. Run genesis manually (or plan a 2-hour task limit) for a large archive.
+Frozen input sets read `<inputs_root>/<set>/dc/archive`. Scheduled capture runs as SYSTEM (times and limit:
+[../README.md](../README.md#scheduled-tasks)). Run genesis manually (or plan a 2-hour task limit) for a large archive.
 With `dc_sync` disabled, an external collector must finish before capture starts. With it enabled, collection
 runs inside the app's live read hook. Task registration is a separate operation.
 To preview the task definition, supply a configured external config:

@@ -77,7 +77,8 @@ _FILTERS = {"type": "object",
 _COMMON = {
     "query": {"type": "string", "description": "search terms: words AND-ed, \"exact phrase\", a OR b, -exclude, "
                                                "prefix* (raw_help has the app's full syntax)"},
-    "sender": {"type": "string", "description": "substring of the sender name (or an exact user id)"},
+    "sender": {"type": "string", "description": "substring of the sender name (or an exact user id); in "
+                                                "claudecode the role: user, assistant or prompt"},
     "since": {"type": "string", "description": "YYYY-MM-DD, YYYY-MM, YYYY, 'YYYY-MM-DD HH:MM' or 3d/12h/30m/2w"},
     "until": {"type": "string", "description": "inclusive end, same forms as since"},
     "tz": {"type": "string", "description": "fixed UTC offset for dates and display (default +09:00)"},

@@ -152,8 +152,8 @@ Label aggregation counts each membership once; a message can belong to multiple 
 shared JSON envelope/watermark and Korean n-gram tokenizer. Search results are private plaintext.
 One derivation handles state before/after content identically during incremental updates and rebuilds.
 
-Frozen sources use `<inputs_root>/<set>/gm/archive`. The SYSTEM task `\llm-wiki\gmail-capture` starts at local
-00:44 every three hours with a one-hour limit. When gm_sync is true, registration refuses missing or unsafe
+Frozen sources use `<inputs_root>/<set>/gm/archive`. The SYSTEM task `\llm-wiki\gmail-capture` runs on the
+schedule in [../README.md](../README.md#scheduled-tasks). When gm_sync is true, registration refuses missing or unsafe
 client/token files. The owner must ensure SYSTEM can read those files through the protected inherited ACL.
 Scheduled API sync should begin only after manual genesis and authentication checks succeed.
 

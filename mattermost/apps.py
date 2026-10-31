@@ -29,8 +29,7 @@ class MatterConfig(AppConfig):
                Option("mm_token_file", "", text), Option("mm_files_max_mb", 0, nonnegative)) + wiki_options("mm")
     # The scheduled task `manage.py schedule install mattermost` registers: `manage.py collect mattermost --config
     # <CFG>` as SYSTEM, daily from `start` (local time) and every `every_hours` hours after it, at most `limit_hours`
-    # hours per run. 02:14, 05:14, ... stay clear of kb-corpus-refresh (:44), kb-curate (05:40, 17:40), kb-brief
-    # (06:00) and kakaotalk-capture (:14 of the other hours).
+    # hours per run. Start minutes are staggered across the apps: README.md, "Scheduled tasks".
     schedule = {
         "task": r"\llm-wiki\mattermost-capture",
         "start": "02:14",

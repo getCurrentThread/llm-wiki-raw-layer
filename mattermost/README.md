@@ -271,8 +271,8 @@ the same case folding the search uses, so `straße` marks `STRASSE`.
 
 ## Scheduled task
 
-`AppConfig.schedule` in `mattermost/apps.py` defines `\llm-wiki\mattermost-capture`: every three hours from 02:14
-(local time), at most 1 hours per run, as SYSTEM. The generated Arguments are
+`AppConfig.schedule` in `mattermost/apps.py` defines `\llm-wiki\mattermost-capture`, run as SYSTEM
+(times and limit: [../README.md](../README.md#scheduled-tasks)). The generated Arguments are
 `-s -B <PROJECT>\manage.py collect mattermost --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
 
 ```

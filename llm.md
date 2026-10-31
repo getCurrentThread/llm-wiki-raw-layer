@@ -72,6 +72,8 @@ repeating them.
    signed-in KakaoTalk client on this machine (own data, local-only; see `kakaotalk/README.md`): read and edit
    it like any other app's code. Its data stays gated: never touch its data root, run kakaotalk commands only
    when the owner explicitly asks, and read only their pass/fail summary lines.
+   `mattermost/admin.py` and `kakaotalk/admin.py` write outward (Mattermost channels, webhooks and posts; messages
+   through the owner's client): no step of this runbook runs them; run one only when the owner asks for that write.
    Framework-wide `manage.py check`, with no app named, is allowed: it validates every app's contract and prints
    summary lines only.
 3. **Report aggregates only.** Never write any of these into a message, a report (section 10) or a file in
@@ -1197,6 +1199,10 @@ came out different (a Gmail run that changed only labels sets it too; the embed 
 model or the dims, run `embed <app> --model <model> --rebuild`. A sidecar that
 another sqlite-vec version made is refused at search time with that reason. A batch the server fails is retried
 twice (after 2 and 10 seconds) before the run exits 75.
+
+**12.7 Measuring.** `tools/search_eval.py` (its docstring is the manual) scores search on the app's own ledger:
+Hit@k, Recall@k and MRR by mode (`default`, `literal`, `hybrid`), printing aggregates only. Run it before and after
+a change to query normalization, ranking or the embedder, only when the owner asks; it writes under `<DATA_ROOT>\eval`.
 
 ## 13. LLM Wiki (nashsu/llm_wiki)
 

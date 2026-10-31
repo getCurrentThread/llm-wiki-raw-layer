@@ -109,8 +109,8 @@ trashed/gone, or it is missing from current page order; missing pages leave orde
 before their page still fold deterministically. Breadcrumbs query parent links recursively, with cycle guards.
 Search JSON includes watermark/freshness. Search results are private plaintext.
 
-Frozen inputs read `<inputs_root>/<set>/nt/archive`. SYSTEM capture starts local 03:29 every 6 hours, with a
-1-hour limit. Desktop mode can use this task. API sync with `ntn` must run as the owning user because its
+Frozen inputs read `<inputs_root>/<set>/nt/archive`. SYSTEM capture runs on the schedule in
+[../README.md](../README.md#scheduled-tasks). Desktop mode can use this task. API sync with `ntn` must run as the owning user because its
 keychain is per-user; the existing SYSTEM task installer refuses `nt_sync` with `nt_source: "api"`.
 Archive-only SYSTEM capture can still consume an archive completed by a user-account API collector.
 Preview with `python -s -B manage.py schedule install notion --config <CFG> --dry-run` after preparing the

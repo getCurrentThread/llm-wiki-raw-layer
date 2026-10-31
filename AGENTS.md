@@ -20,6 +20,9 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
   builds the optional dense sidecar that `search --hybrid` reads.
 - `tools/wikiexport.py <app>` (llm.md 13) writes the LLM Wiki project's sources: run it only when the owner asks,
   and `--prune`, which makes LLM Wiki delete wiki pages, only on their explicit yes.
+- `mattermost/admin.py` and `kakaotalk/admin.py` are the only tools that write outward: Mattermost channels,
+  members, webhooks and posts, and messages sent through the owner's KakaoTalk client. Run one only when the
+  owner asks for that write, after its read-only step (`plan`, `check`) or `--dry-run`.
 
 ## Setting up, operating and recovering
 
@@ -54,8 +57,9 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
 ## Rules
 
 - **kakaotalk:** a local-archive connector for the owner's own, signed-in KakaoTalk client on this machine —
-  own data, local-only, nothing sent anywhere; keys stay in the data root (see `kakaotalk/README.md`, "Scope
-  and authorization"). Read and edit its code like any other app's. Its data root is off-limits; search the
+  own data, local-only: nothing captured leaves the machine, and `admin.py` sends only as the owner, when asked;
+  keys stay in the data root (see `kakaotalk/README.md`, "Scope and authorization"). Read and edit its code like any other
+  app's. Its data root is off-limits; search the
   ledger only through `manage.py search kakaotalk` (or the raw-search tools) and only when the owner's request
   is about KakaoTalk; run its other commands only when the owner asks.
 - **Privacy:** no raw message bodies, real names of people, phone numbers, email addresses or credentials in

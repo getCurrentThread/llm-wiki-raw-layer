@@ -22,8 +22,7 @@ class KakaoConfig(AppConfig):
     options = (Option("mac_db", None, _mac_db),)
     # The scheduled task `manage.py schedule install kakaotalk` registers: `manage.py collect kakaotalk --config
     # <CFG>` as SYSTEM, daily from `start` (local time) and every `every_hours` hours after it, at most `limit_hours`
-    # hours per run. 01:14, 04:14, ... stay clear of kb-corpus-refresh (:44), kb-curate (05:40, 17:40), kb-brief
-    # (06:00) and mattermost-capture (:14 of the other hours).
+    # hours per run. Start minutes are staggered across the apps: README.md, "Scheduled tasks".
     schedule = {
         "task": r"\llm-wiki\kakaotalk-capture",
         "start": "01:14",

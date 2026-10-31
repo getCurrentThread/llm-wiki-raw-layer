@@ -12,7 +12,7 @@ This app runs on the owner's own machine and opens only the owner's own, signed-
 client's local databases and keystore, and the owner's device backups — a personal archival and search tool for
 one's own history, not a collection tool for anyone else's data. Everything stays local: sources are read in
 place, plaintext exists only under `<DATA_ROOT>` (outside this repository, excluded from Windows Search),
-nothing is sent anywhere, and keys are credentials that never leave the data root and are never printed. The
+nothing captured is sent anywhere, and keys are credentials that never leave the data root and are never printed. The
 Windows key hierarchy and the memory fallback are the owner's kakatok research (its notes live outside this
 repository); the macOS side ports the MIT-licensed kakaocli derivation (below). `admin.py` posts only as the
 owner's own signed-in account, one message at a time, owner-invoked — the write-side counterpart of mattermost
@@ -343,8 +343,8 @@ the same case folding the search uses, so `straße` marks `STRASSE`.
 
 ## Scheduled task
 
-`AppConfig.schedule` in `kakaotalk/apps.py` defines `\llm-wiki\kakaotalk-capture`: every three hours from 01:14
-(local time), at most 2 hours per run, as SYSTEM. The generated Arguments are
+`AppConfig.schedule` in `kakaotalk/apps.py` defines `\llm-wiki\kakaotalk-capture`, run as SYSTEM
+(times and limit: [../README.md](../README.md#scheduled-tasks)). The generated Arguments are
 `-s -B <PROJECT>\manage.py collect kakaotalk --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
 
 ```

@@ -80,7 +80,7 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
   CORE.md, CORE_SHA256SUMS     core contract and checksums
 ```
 
-The app modules shown above also apply to `kakaotalk/`, `mattermost/`, `discord/`, `notion/` and `claudecode/`.
+Every app folder holds the modules shown under `claudecode/` above (CORE.md, "The app contract").
 The core consists of `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`, as defined by `rawlayer/coreset.py`.
 `CORE_SHA256SUMS` pins those files; line endings do not affect the checksums.
 
