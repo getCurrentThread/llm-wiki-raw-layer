@@ -8,7 +8,7 @@ import re
 import time
 from urllib import error, parse, request
 import uuid
-from tools.archiveio import CollectorError, atomic, bind, inside, load, locked, now
+from tools.archiveio import CollectorError, atomic, bind, credential_path, inside, load, locked, now
 from .keys import snowflake_ms
 from .readers.archive import _safe_rel, msg_native
 
@@ -26,18 +26,6 @@ def _id(value):
 
 
 TOKEN_VARS = ("DISCORD_BOT_TOKEN", "DISCORD_TOKEN")
-
-
-def token_path(configured):
-    """The token file as a Path: absolute, under the data parent, in a folder that passes capture's precheck.
-    Raises CollectorError("unsafe_token_path") or precheck's ConfigError."""
-    from rawlayer.capture import paths, precheck
-    path = Path(configured)
-    if not configured or not path.is_absolute() or \
-            not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
-        raise CollectorError("unsafe_token_path")
-    precheck.check(path.parent)
-    return path
 
 
 def machine_token_vars():
@@ -63,7 +51,7 @@ def machine_token_vars():
 def token(configured=""):
     value = os.environ.get("DISCORD_BOT_TOKEN") or os.environ.get("DISCORD_TOKEN")
     if not value and configured:
-        path = token_path(configured)
+        path = credential_path(configured)
         try:
             value = path.read_text(encoding="utf-8").strip()
         except OSError:

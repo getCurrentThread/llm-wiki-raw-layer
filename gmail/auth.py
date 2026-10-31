@@ -3,24 +3,14 @@ import base64
 import hashlib
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 import secrets
 import sys
 import time
 from urllib import error, parse, request
-from tools.archiveio import CollectorError, atomic, load
+from tools.archiveio import CollectorError, atomic, credential_path, load
 
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
-
-
-def credential_path(value):
-    from rawlayer.capture import paths, precheck
-    path = Path(value)
-    if not path.is_absolute() or not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
-        raise CollectorError("unsafe_token_path")
-    precheck.check(path.parent)
-    return path
 
 
 def client_config(path):

@@ -62,10 +62,10 @@ class DiscordConfig(AppConfig):
                         "%APPDATA%)"]
             return []
         from rawlayer.capture.config import ConfigError
-        from tools.archiveio import CollectorError
-        from .collector import machine_token_vars, token_path
+        from tools.archiveio import CollectorError, credential_path
+        from .collector import machine_token_vars
         try:
-            p = token_path(cfg.dc_token_file)
+            p = credential_path(cfg.dc_token_file)
         except (CollectorError, ConfigError):
             return ["dc_sync requires a protected token path (dc_token_file under the data parent)"]
         problems = [] if p.is_file() else ["dc_sync requires a token file"]

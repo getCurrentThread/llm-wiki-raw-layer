@@ -33,9 +33,8 @@ import shutil
 import sys
 import time
 from urllib import error, parse, request
-import uuid
 
-from tools.archiveio import CollectorError, atomic, bind, inside, load, locked
+from tools.archiveio import CollectorError, atomic, bind, credential_path, inside, load, locked
 
 PER_PAGE = 200
 FILE_FLUSH = 100            # files.json is rewritten every 100 kept files, so an interrupted run loses little
@@ -76,15 +75,6 @@ def _id(value):
 
 def _int(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
-
-
-def credential_path(value):
-    from rawlayer.capture import paths, precheck
-    path = Path(value)
-    if not value or not path.is_absolute() or not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
-        raise CollectorError("unsafe_token_path")
-    precheck.check(path.parent)
-    return path
 
 
 def token(configured=""):
@@ -259,7 +249,7 @@ def login(url, token_file, opener=_OPEN, ask=input, secret=getpass.getpass):
     if not isinstance(value, str) or not value or any(c.isspace() for c in value) \
             or not isinstance(me, dict) or not _ID.fullmatch(str(me.get("id", ""))):
         raise CollectorError("auth_failed")
-    _replace(path.parent, path, value.encode("ascii") + b"\n")
+    atomic(path.parent, path, value.encode("ascii") + b"\n")
     return {"status": "auth_ready"}
 
 
@@ -481,28 +471,6 @@ def fetch(client, st, got, deadline, flush, last_post_at=0):
             flush()
 
 
-def _replace(root, path, data):
-    """archiveio.atomic for bytes: a private temporary file, fsync, then replace (retried for shared readers)."""
-    path = inside(root, path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        with tmp.open("xb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        for attempt in range(10):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 9:
-                    raise CollectorError("archive_busy") from None
-                time.sleep(0.2)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
 def _rows(data):
     """{post id: (create_at, line bytes)} of a channel file's bytes; a torn or unreadable line is dropped."""
     rows = {}
@@ -535,7 +503,7 @@ def publish(root, rel, posts):
     ordered = sorted(rows.items(), key=lambda kv: (kv[1][0], kv[0]))
     data = b"".join(line + b"\n" for _pid, (_ts, line) in ordered)
     if data != old:
-        _replace(root, target, data)
+        atomic(root, target, data)
     return len(ordered), changed
 
 
@@ -601,7 +569,7 @@ def store_files(root, client, man, patterns, cap, deadline, stats):
             stats["files_failed"] += 1
             continue
         rel = f"files/{fid[:2]}/{fid}"
-        _replace(root, root.joinpath(*rel.split("/")), data)
+        atomic(root, root.joinpath(*rel.split("/")), data)
         stored[fid] = {"post_id": pid, "sha256": hashlib.sha256(data).hexdigest(), "size": size, "path": rel}
         kept += 1
         if kept % FILE_FLUSH == 0:

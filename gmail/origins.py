@@ -1,4 +1,4 @@
-import os
+from tools.archiveio import sync_first
 from rawlayer.capture.origins import Origin
 from .readers import archive
 
@@ -9,13 +9,7 @@ class GmArchive(Origin):
     day_kinds = frozenset({"msg"})
 
     def read(self, ctx):
-        if ctx.cfg.gm_sync and ctx.inputs.name == "live" and os.environ.get("RAWLAYER_ARCHIVE_READY") != "1":
-            from .collector import sync_config
-            from tools.archiveio import CollectorError
-            from rawlayer.capture.precheck import check
-            check(ctx.inputs.gm_archive)
-            if sync_config(ctx.cfg).get("errors"):
-                raise CollectorError("collection_failed")
+        sync_first(ctx, ctx.cfg.gm_sync, ctx.inputs.gm_archive, "gmail")
         return archive.containers(ctx.inputs.gm_archive, self.name)
 
     def estimate_peak(self, inputs):

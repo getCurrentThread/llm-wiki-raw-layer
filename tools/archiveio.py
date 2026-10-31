@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 import uuid
 
 
@@ -37,27 +36,50 @@ def inside(root, path):
 
 
 def atomic(root, path, value, immutable=False):
+    """Write value (JSON, sorted and ASCII; or bytes as they are) to a private temporary file, fsync, then replace,
+    retried as capture retries its own replaces (a reader or a scanner may hold the old file)."""
+    from rawlayer.capture.fsio import replace_retry
     path = inside(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if immutable and path.exists():
         raise CollectorError("partition_exists")
+    if not isinstance(value, bytes):
+        value = (json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True) + "\n").encode("ascii")
     tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
-        with tmp.open("x", encoding="utf-8", newline="\n") as fh:
-            json.dump(value, fh, ensure_ascii=True, allow_nan=False, sort_keys=True)
-            fh.write("\n")
+        with tmp.open("xb") as fh:
+            fh.write(value)
             fh.flush()
             os.fsync(fh.fileno())
-        for attempt in range(10):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 9:
-                    raise CollectorError("archive_busy") from None
-                time.sleep(0.2)
+        try:
+            replace_retry(tmp, path)
+        except PermissionError:
+            raise CollectorError("archive_busy") from None
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def credential_path(value):
+    """A token or credential file as a Path: absolute, under the data parent, in a folder that passes capture's
+    precheck. Raises CollectorError("unsafe_token_path") or precheck's ConfigError."""
+    from rawlayer.capture import paths, precheck
+    path = Path(value)
+    if not value or not path.is_absolute() or not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
+        raise CollectorError("unsafe_token_path")
+    precheck.check(path.parent)
+    return path
+
+
+def sync_first(ctx, enabled, archive, app):
+    """An origin's read on live capture with the app's *_sync on: run the app's collector into its archive first
+    (unless the collector itself started this capture: RAWLAYER_ARCHIVE_READY). Any collector error stops the
+    origin's read, so nothing half-fetched is diffed."""
+    if enabled and ctx.inputs.name == "live" and os.environ.get("RAWLAYER_ARCHIVE_READY") != "1":
+        import importlib
+        from rawlayer.capture.precheck import check
+        check(archive)
+        if importlib.import_module(app + ".collector").sync_config(ctx.cfg).get("errors"):
+            raise CollectorError("collection_incomplete")
 
 
 @contextlib.contextmanager

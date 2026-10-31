@@ -1,5 +1,5 @@
+from tools.archiveio import sync_first
 from rawlayer.capture.origins import Origin
-import os
 from .readers import archive
 
 
@@ -9,13 +9,7 @@ class NtArchive(Origin):
     day_kinds = frozenset({"block"})
 
     def read(self, ctx):
-        if ctx.cfg.nt_sync and ctx.inputs.name == "live" and os.environ.get("RAWLAYER_ARCHIVE_READY") != "1":
-            from .collector import sync_config
-            from tools.archiveio import CollectorError
-            from rawlayer.capture.precheck import check
-            check(ctx.inputs.nt_archive)
-            if sync_config(ctx.cfg).get("errors"):
-                raise CollectorError("collection_incomplete")
+        sync_first(ctx, ctx.cfg.nt_sync, ctx.inputs.nt_archive, "notion")
         return archive.containers(ctx.inputs.nt_archive, self.name)
 
     def estimate_peak(self, inputs):
