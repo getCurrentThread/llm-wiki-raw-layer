@@ -256,7 +256,7 @@ def _version(text):
 
 def machine():
     """The machine facts llm.md Phase 0 gates on, and the problems among them: [(step, text)]."""
-    from rawlayer import conf, coreset, schedule  # noqa: PLC0415
+    from rawlayer import conf, schedule  # noqa: PLC0415
     from rawlayer.capture import paths, precheck  # noqa: PLC0415
     problems = []
     m = {}
@@ -301,18 +301,13 @@ def machine():
         rc, out, _ = _run([git, "--no-optional-locks", "-C", str(PROJECT), "status", "--porcelain", "--", ".",
                            ":(exclude)kakaotalk"], timeout=60)
         co["changed_files"] = len([ln for ln in out.splitlines() if ln.strip()]) if rc == 0 else None
-    bad = coreset.check(PROJECT)
-    co["core"] = "ok" if not bad else {k: sum(1 for kind, _r in bad if kind == k) for k in ("missing", "extra",
-                                                                                         "changed")}
     if not co["under_profile"]:
         problems.append(("0.1", "the checkout is not under the owner's profile: every SYSTEM run would fail"))
     if not co["work_tree"]:
         problems.append(("4", "the checkout is not a git work tree (getting the code: clone it with git)"))
-    if bad:
-        problems.append(("2", "core files differ from CORE_SHA256SUMS (rule 7: report it)"))
     m["checkout"] = co
     rc, out, err = _run(_manage("check"), timeout=300)
-    lines = [ln for ln in (out + err).splitlines() if ln.startswith(("apps:", "core:", "check:"))]
+    lines = [ln for ln in (out + err).splitlines() if ln.startswith(("apps:", "check:"))]
     m["check"] = {"rc": rc, "lines": lines}
     if rc != 0:
         problems.append(("0.3", "manage.py check did not pass"))
@@ -663,11 +658,9 @@ def _print_doctor(r):
     _out(f"  git: {'ok ' + (git['version'] or '') if git['found'] else 'NOT FOUND'}; machine PATH: "
          f"{ {True: 'yes', False: 'NO', None: 'unknown'}[git['machine_path']] }")
     _out(f"  pwsh: {pw['version'] or 'NOT FOUND'}{'' if pw['ok'] else ' (7.3 or newer needed)'}")
-    core = co["core"] if co["core"] == "ok" else "DIFFERS " + json.dumps(co["core"])
     _out(f"  checkout: {'under the profile' if co['under_profile'] else 'NOT under the profile'}, "
          f"{'git work tree' if co['work_tree'] else 'NOT a git work tree'}"
-         f"{'' if co.get('changed_files') is None else ', ' + str(co['changed_files']) + ' changed file(s)'}"
-         f", core {core}")
+         f"{'' if co.get('changed_files') is None else ', ' + str(co['changed_files']) + ' changed file(s)'}")
     _out(f"  manage.py check: rc={m['check']['rc']}  " + " | ".join(m["check"]["lines"]))
     if dp["exists"]:
         _out(f"  data parent: there; ACL {dp['acl']}; Windows Search {dp['search']}"

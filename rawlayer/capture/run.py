@@ -92,14 +92,14 @@ def work_tree(project):
 
 
 def code_paths():
-    """The project paths (git pathspecs) whose changes make the running code dirty: the core, CORE_SHA256SUMS,
-    config/ (the settings) and the selected app's folder (another app's change is not this ledger's code). With no app
-    selected (the core tests' toy apps), the whole project directory."""
-    from .. import coreset, registry  # noqa: PLC0415
+    """The project paths (git pathspecs) whose changes make the running code dirty: the framework, config/ (the
+    settings) and the selected app's folder (another app's change is not this ledger's code). With no app selected
+    (the core tests' toy apps), the whole project directory."""
+    from .. import registry  # noqa: PLC0415
     app = registry.selected()
     if app is None:
         return ["."]
-    return [*coreset.CORE, coreset.SUMS, "config", app]
+    return ["manage.py", "CORE.md", "rawlayer", "tests/__init__.py", "tests/core", "config", app]
 
 
 def repo_info():

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The framework (rawlayer/) stays source-agnostic: no origin, source or app name in its code (names and string
-literals; docstrings and comments may cite history), the project's apps keep the app contract, and the core files
-are the ones CORE_SHA256SUMS lists (the same core in every project, CORE.md)."""
+literals; docstrings and comments may cite history), the project's apps keep the app contract."""
 import ast
 import re
 import subprocess
@@ -105,37 +104,6 @@ class TestProjectApps(unittest.TestCase):
                 self.assertTrue(app.origins)
                 self.assertTrue(callable(app.inputs.resolve) and callable(app.inputs.static_roots))
                 self.assertTrue((REPO / name / "tests" / "__init__.py").is_file())
-
-
-class TestCoreSums(unittest.TestCase):
-    def test_core_files_are_the_listed_ones(self):
-        """A core file changed in one project only would make the projects drift apart: change the core in one
-        project, then copy it to the others and rewrite the sums (CORE.md)."""
-        from rawlayer import coreset  # noqa: PLC0415
-        self.assertTrue(coreset.read_sums(REPO))
-        self.assertEqual(coreset.check(REPO), [])
-
-    def test_the_check_sees_every_kind_of_drift(self):
-        import tempfile  # noqa: PLC0415
-
-        from rawlayer import coreset  # noqa: PLC0415
-        with tempfile.TemporaryDirectory(prefix="llmw-core-") as tmp:
-            d = Path(tmp)
-            (d / "rawlayer" / "__pycache__").mkdir(parents=True)
-            (d / "tests" / "core").mkdir(parents=True)
-            for rel, data in (("manage.py", b"a\r\n"), ("rawlayer/x.py", b"x\n"), ("rawlayer/__pycache__/x.pyc", b"\0"),
-                              ("tests/core/t.py", b"t\n"), ("other.py", b"o\n")):
-                d.joinpath(*rel.split("/")).write_bytes(data)
-            self.assertEqual(coreset.files(d), ["manage.py", "rawlayer/x.py", "tests/core/t.py"])
-            (d / coreset.SUMS).write_text(coreset.sums_text(d), encoding="ascii", newline="\n")
-            self.assertEqual(coreset.check(d), [])
-            (d / "manage.py").write_bytes(b"a\n")                  # line endings do not count
-            self.assertEqual(coreset.check(d), [])
-            (d / "rawlayer" / "x.py").write_bytes(b"y\n")
-            (d / "tests" / "core" / "t.py").unlink()
-            (d / "rawlayer" / "new.py").write_bytes(b"n\n")
-            self.assertEqual(sorted(coreset.check(d)), [("changed", "rawlayer/x.py"), ("extra", "rawlayer/new.py"),
-                                                       ("missing", "tests/core/t.py")])
 
 
 if __name__ == "__main__":

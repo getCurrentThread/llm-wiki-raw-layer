@@ -335,7 +335,7 @@ class TestGitUnderSystem(unittest.TestCase):
             put("two/x.py")
             put("notes.md")
             self.assertEqual(run.repo_info(), (head, False))
-            for rel in ("one/y.py", "config/settings.py", "rawlayer/z.py", "manage.py", "CORE_SHA256SUMS"):
+            for rel in ("one/y.py", "config/settings.py", "rawlayer/z.py", "manage.py"):
                 with self.subTest(changed=rel):
                     p = put(rel)
                     self.assertEqual(run.repo_info(), (head, True))

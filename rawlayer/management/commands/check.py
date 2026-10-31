@@ -5,7 +5,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from ... import conf, coreset, registry, schedule
+from ... import conf, registry, schedule
 from ..base import BaseCommand, default_config
 
 
@@ -111,15 +111,6 @@ class Check:
             if name not in here and (Path(conf.PROJECT_DIR) / str(name) / "apps.py").is_file():
                 print(f"settings: {name} excluded")
 
-    def core(self):
-        bad = coreset.check(conf.PROJECT_DIR)
-        if bad:
-            kinds = sorted({k for k, _r in bad})
-            self.error(f"core: {len(bad)} files differ from {coreset.SUMS} ({', '.join(kinds)}; "
-                       f"python -s -B tools/coresums.py lists them, --write records a deliberate change)")
-        else:
-            print(f"core: ok files={len(coreset.files(conf.PROJECT_DIR))}")
-
     def config(self, app, path, given, ledger=True):
         """The app's config: it loads, its data root's ledger is the app's, the folded state matches that ledger
         (replay --check), and whether the scheduled task would take it (a note only: a development config need
@@ -178,7 +169,7 @@ class Check:
 
 class Command(BaseCommand):
     help = ("the apps keep the app contract and keep clear of each other (origins, source keys, options, state "
-            "tables, task names), and the core matches CORE_SHA256SUMS; with <app>: that app, its "
+            "tables, task names); with <app>: that app, its "
             "config, and the ledger against the folded state")
     args = "[<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]"
 
@@ -223,7 +214,6 @@ class Command(BaseCommand):
                 c.together(apps)
             else:
                 print("apps: not checked together while one does not load")
-        c.core()
         rc = c.rc()
         print(f"check: {'ok' if rc == 0 else 'problems'} errors={c.errors} refused={c.refused}")
         return rc

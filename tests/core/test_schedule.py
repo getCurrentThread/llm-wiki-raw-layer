@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
 
-from rawlayer import coreset, management, registry, schedule
+from rawlayer import management, registry, schedule
 from rawlayer.capture import precheck
 from rawlayer.capture.config import ConfigError
 from tests.core import toyfix as T
@@ -355,7 +355,6 @@ class Case(T.ToyCase):
                                        "elevated": lambda: self.elevated, "schtasks": self.tasks}),
                            (registry, {"discover": lambda: ["toy"], "select": lambda app: registry.get(),
                                        "app_registry": lambda app: registry.Registry([TOYS[app]])}),
-                           (coreset, {"check": lambda project: []}),
                            (precheck, {"check": lambda data_root: None})):
             for name, value in kw.items():
                 p = mock.patch.object(target, name, value)
@@ -721,12 +720,6 @@ class TestManage(Case):
                 rc, out, err = self.check()
             self.assertEqual((rc, err), (0, ""))
             self.assertIn("note: schedule: toy and toy2 start at the same minute (04:14, 10:14, 16:14, 22:14)", out)
-
-    def test_check_sees_a_core_that_drifted(self):
-        with mock.patch.object(coreset, "check", lambda project: [("changed", "rawlayer/x.py")]):
-            rc, _out, err = self.check()
-        self.assertEqual(rc, 1)
-        self.assertIn("core: 1 files differ from CORE_SHA256SUMS (changed;", err)
 
     def test_the_registry_wants_task_checks_to_take_the_config(self):
         from rawlayer import registry

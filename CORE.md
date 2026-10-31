@@ -7,8 +7,7 @@ project reads is its **app**: a folder next to `manage.py` that holds `__init__.
 
 ## The core files
 
-These files are identical in every project and listed with their sha256 in `CORE_SHA256SUMS`
-(`rawlayer/coreset.py` says which; line endings do not count):
+The framework is these files:
 
 ```
 manage.py           the single entry point: setup | collect | search | embed | check | test | schedule
@@ -19,16 +18,8 @@ tests/__init__.py
 tests/core/         the framework's tests, on a toy app (tests/core/toyapp, toyapp2); they import no real app
 ```
 
-`tests/core/test_core_contract.py` fails when a core file differs from `CORE_SHA256SUMS`. Never change the core in
-one project only:
-
-1. change it in one project and run that project's tests;
-2. copy it to the others and rewrite every `CORE_SHA256SUMS`:
-   `python -s -B tools/coresums.py --write`, then `--check`;
-3. run every project's tests (`python -s -B manage.py test` in each project folder).
-
-A project split out into its own repository keeps the same rule against the core it was split from: bring core
-changes in as a whole (every core file, then the sums), never file by file.
+`tests/core/test_core_contract.py` keeps the framework source-agnostic (no app or source name in `rawlayer/`) and
+every app on the contract below. After changing a core file, run every suite: `python -s -B manage.py test`.
 
 ## What the core guarantees
 
@@ -94,4 +85,4 @@ from a project whose ledger already holds its origins: every manifest naming the
 
 A source that fits the same ledger rules becomes a new app (a folder next to `manage.py` with the modules above,
 and an empty ledger: one ledger holds one app's origins). A source that needs a rule no mixin expresses needs a
-new core mixin: that is a core change (above), made once and carried to every project.
+new core mixin: that is a core change (above).

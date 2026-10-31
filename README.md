@@ -64,7 +64,6 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
     search.py                  app index and search interface
     tests/                     app tests with synthetic inputs
     config.example.json        machine config shape
-  tools/coresums.py            developer script: check/rewrite CORE_SHA256SUMS
   tools/archiveio.py           the collectors' shared file, lock and exit-code helpers
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
   tools/appsetup.py            the apps' shared setup defaults (AppConfig.setup_defaults)
@@ -77,12 +76,11 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
                                (`bootstrap.py agents sync-repo`; edit the templates, not these)
   AGENTS.md, CLAUDE.md         rules for coding agents (CLAUDE.md imports AGENTS.md)
   llm.md                       the operations runbook for agents
-  CORE.md, CORE_SHA256SUMS     core contract and checksums
+  CORE.md                      core contract
 ```
 
 Every app folder holds the modules shown under `claudecode/` above (CORE.md, "The app contract").
-The core consists of `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`, as defined by `rawlayer/coreset.py`.
-`CORE_SHA256SUMS` pins those files; line endings do not affect the checksums.
+The core consists of `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`.
 
 ## Discovery, selection and settings
 
@@ -123,7 +121,7 @@ and `setup`, not as commands of their own.
 | `collect <app> [--config CFG] [--input-set live\|T1\|T2] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
 | `search <app> [QUERY] [--config CFG] [options]` | search the app's index; query options are in the app README and `search <app> --help` |
 | `embed <app> [--config CFG] [--model M] [--dims N] [--url U] [--limit N] [--dry-run] [--rebuild]` | build or refresh the optional dense sidecar that `search --hybrid` reads; needs Ollama on a loopback address and sqlite-vec's windows-x86_64 build (llm.md 12) |
-| `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts, collisions and core checksums; with an app, load its config and verify the folded state against the ledger (the old replay --check); `--export-state` also dumps every record's (origin, key, rev, op, h) (the old export-state), `--rebuild-state` rebuilds the state from the ledger (the old replay) |
+| `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts and collisions; with an app, load its config and verify the folded state against the ledger (the old replay --check); `--export-state` also dumps every record's (origin, key, rev, op, h) (the old export-state), `--rebuild-state` rebuilds the state from the ledger (the old replay) |
 | `test [core\|<app> ...] [-k PATTERN] [-v] [-f]` | run core and app suites, each in its own process; defaults to all suites |
 | `schedule install\|status\|run\|remove [<app>] [--config CFG] [--python EXE] [--run-now\|--dry-run]` | register, inspect, start once or unregister the app's Windows task; status compares the registered definition, reports the last result and the task log, and returns 3 when attention is needed |
 
@@ -169,7 +167,7 @@ code (a failed, refused or busy capture included), because only committed manife
 step, marks an incomplete run and returns 3 when the task, definition, last result or logged step needs
 attention.
 
-## Tests and core maintenance
+## Tests
 
 ```
 python -s -B manage.py test
@@ -191,8 +189,7 @@ Discord, Notion, Gmail, Mattermost and Claude Code include app-owned collectors;
 Discord and Notion support token-free desktop-cache sources; their API sources use Discord credentials or the official `ntn` keychain. Desktop caches provide partial coverage and never
 treat eviction as deletion. Gmail reads the Gmail API with a read-only OAuth token, and Mattermost's collector (a
 port of the mattertok archiver, REST API v4 with a session token) writes mattertok's archive format. Their READMEs
-define the options, archive contracts and authentication boundaries. Core files remain unchanged.
+define the options, archive contracts and authentication boundaries.
 
-After changing a core file, run `python -s -B tools/coresums.py --write`, then validate with `tools/coresums.py`,
-`test` and `check`. App and non-core documentation edits do not require rewriting the core checksums. See
-`CORE.md` for ledger guarantees; the layout and command examples above describe the current root project.
+After changing a core file, run every suite (`test`) and `check`. See `CORE.md` for ledger guarantees; the layout
+and command examples above describe the current root project.

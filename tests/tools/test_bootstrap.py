@@ -522,7 +522,7 @@ class DoctorReport(unittest.TestCase):
         m = {"python": {"version": "3.12.1", "executable": "X", "flags_ok": True, "problem": None},
              "git": {"found": True, "version": "2.47.0", "machine_path": None},
              "pwsh": {"found": True, "version": "7.4.0", "ok": True},
-             "checkout": {"under_profile": True, "work_tree": True, "changed_files": 0, "core": "ok"},
+             "checkout": {"under_profile": True, "work_tree": True, "changed_files": 0},
              "check": {"rc": 0, "lines": ["check: ok errors=0 refused=0"]},
              "data_parent": {"exists": True, "acl": "ok", "search": "ok", "in_work_tree": False}, "elevated": False}
         p = probe(files={"gm_client_file": "missing", "gm_token_file": "there"})

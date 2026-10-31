@@ -10,8 +10,8 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
 
 - Run from the repository root, always as `python -s -B manage.py <command> [<app>] ...` (`-s`: no user
   site-packages, `-B`: no bytecode files).
-- `check` validates settings, the app contracts, cross-app collisions and the core checksums. `check <app>` also
-  verifies that app's ledger.
+- `check` validates settings, the app contracts and cross-app collisions. `check <app>` also verifies that app's
+  ledger.
 - Tests an agent may run: `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion`
   (a bare `test` runs the same suites). Every suite builds synthetic data in temporary directories.
 - Search: `python -s -B manage.py search <app> [QUERY] --json [options]`. `search <app> --help` documents the
@@ -71,6 +71,5 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
   files use placeholders and synthetic values.
 - **Secrets:** never ask for a token or password in chat, and never print or read back token files, client
   JSON or `.env` files. Credentials move as files.
-- **Core:** `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/` are pinned by
-  `CORE_SHA256SUMS` and shared with every project built on the framework. Change them only deliberately, then
-  follow [CORE.md](CORE.md).
+- **Core:** `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/` are the framework every
+  app relies on ([CORE.md](CORE.md)): keep it source-agnostic and run every suite after changing it.
