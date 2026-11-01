@@ -2,14 +2,14 @@ import copy
 import json
 import unittest
 from unittest.mock import patch
-from gmail.collector import sync
+from gmail.fetch import sync
 from gmail.api import GmailClient, Bucket, pages
-from tools.archiveio import CollectorError, load, locked
+from tools.archiveio import FetchError, load, locked
 from .fixtures import Fixture, Transport, Response, http_error, raw_message, MID, OTHER
 from . import helpers as h
 
 
-class CollectorTests(unittest.TestCase):
+class FetchTests(unittest.TestCase):
     def setUp(self):
         self.fx, self.http = Fixture(), Transport()
         self.addCleanup(h.force_rmtree, self.fx.base)
@@ -166,7 +166,7 @@ class CollectorTests(unittest.TestCase):
         self.http.profile["emailAddress"] = "OWNER@example.com"
         self.assertEqual(self.sync()["errors"], 0)
         self.http.profile["emailAddress"] = "another@example.org"
-        with self.assertRaisesRegex(CollectorError, "account_changed"):
+        with self.assertRaisesRegex(FetchError, "account_changed"):
             self.sync()
 
     def test_partition_caps_and_noop(self):
@@ -192,7 +192,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_lock_and_invalid_ids(self):
         with locked(self.fx.root):
-            with self.assertRaisesRegex(CollectorError, "collector_busy"):
+            with self.assertRaisesRegex(FetchError, "collector_busy"):
                 self.sync()
         self.http.messages["word"] = raw_message("word")
         self.assertGreater(self.sync()["pk_bad"], 0)
@@ -220,7 +220,7 @@ class CollectorTests(unittest.TestCase):
         def always(req, **kwargs):
             raise http_error(429)
         client = GmailClient("synthetic", opener=always, sleep=lambda n: None)
-        with self.assertRaises(CollectorError):
+        with self.assertRaises(FetchError):
             client.request("/profile")
         self.assertEqual(client.requests, 6)
 
@@ -232,22 +232,22 @@ class CollectorTests(unittest.TestCase):
 
     def test_pagination_cycle_rejected(self):
         client = GmailClient("synthetic", opener=lambda *a, **k: Response({"nextPageToken": "same"}), sleep=lambda n: None)
-        with self.assertRaisesRegex(CollectorError, "bad_response"):
+        with self.assertRaisesRegex(FetchError, "bad_response"):
             list(pages(client, "/messages"))
 
     def test_endpoint_cannot_receive_credentials(self):
         client = self.http.client()
-        with self.assertRaises(CollectorError):
+        with self.assertRaises(FetchError):
             client.request("https://example.com")
         self.assertFalse(self.http.calls)
 
     def test_publication_order_cursor_last(self):
-        from gmail import collector
-        original, writes = collector.atomic, []
+        from gmail import fetch
+        original, writes = fetch.atomic, []
         def atomic(root, path, value, **kwargs):
             writes.append((str(path.relative_to(root)).replace("\\", "/"), copy.deepcopy(value)))
             return original(root, path, value, **kwargs)
-        with patch("gmail.collector.atomic", side_effect=atomic):
+        with patch("gmail.fetch.atomic", side_effect=atomic):
             self.sync()
         kinds = [p.split("/")[0] for p, _ in writes]
         self.assertLess(kinds.index("exports"), kinds.index("state"))
@@ -267,9 +267,9 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(self.manifest()["cursor"], "20")
 
     def test_partition_byte_cap_splits(self):
-        from gmail.collector import Writer
+        from gmail.fetch import Writer
         man, stats = {"files": []}, {"messages_written": 0, "partitions_written": 0}
-        with patch("gmail.collector.PARTITION_BYTES", 300):
+        with patch("gmail.fetch.PARTITION_BYTES", 300):
             writer = Writer(self.fx.root, man, stats, 1000)
             writer.add({"id": MID, "body_text": "a" * 80})
             writer.add({"id": OTHER, "body_text": "b" * 80})
@@ -280,15 +280,15 @@ class CollectorTests(unittest.TestCase):
     def test_publish_failure_keeps_old_cursor(self):
         self.sync()
         self.events(labelsAdded=[{"message": {"id": MID}, "labelIds": ["TRASH"]}])
-        from gmail import collector
-        original, failed = collector.atomic, False
+        from gmail import fetch
+        original, failed = fetch.atomic, False
         def atomic(root, path, value, **kwargs):
             nonlocal failed
             if path.name == "manifest.json" and not failed:
                 failed = True
-                raise CollectorError("archive_busy")
+                raise FetchError("archive_busy")
             return original(root, path, value, **kwargs)
-        with patch("gmail.collector.atomic", side_effect=atomic):
+        with patch("gmail.fetch.atomic", side_effect=atomic):
             self.assertEqual(self.sync()["errors"], 1)
         self.assertEqual(self.manifest()["cursor"], "10")
 

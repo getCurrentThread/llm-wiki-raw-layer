@@ -50,7 +50,7 @@ class DiscordConfig(AppConfig):
 
     def task_checks(self, cfg):
         # the task runs as SYSTEM: its %APPDATA% is the system profile's and it sees no user variables, so the
-        # desktop cache and the token file must be named; the token file is checked as the collector reads it, and a
+        # desktop cache and the token file must be named; the token file is checked as the fetch step reads it, and a
         # machine-wide DISCORD_BOT_TOKEN / DISCORD_TOKEN (which SYSTEM does see) would be used in its place
         if not cfg.dc_sync:
             return []
@@ -62,11 +62,11 @@ class DiscordConfig(AppConfig):
                         "%APPDATA%)"]
             return []
         from rawlayer.capture.config import ConfigError
-        from tools.archiveio import CollectorError, credential_path
-        from .collector import machine_token_vars
+        from tools.archiveio import FetchError, credential_path
+        from .fetch import machine_token_vars
         try:
             p = credential_path(cfg.dc_token_file)
-        except (CollectorError, ConfigError):
+        except (FetchError, ConfigError):
             return ["dc_sync requires a protected token path (dc_token_file under the data parent)"]
         problems = [] if p.is_file() else ["dc_sync requires a token file"]
         found = machine_token_vars()

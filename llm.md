@@ -27,7 +27,7 @@ repeating them.
 - Agent shells usually keep no variables between tool calls. Send every `$name = ...` definition (the 5.3 helper,
   the 7.2 values) in the same command that uses it.
 - Run every command from `<PROJECT>`. Pass `--config <CFG>` to every command that accepts it: `check <app>`,
-  `collect`, `search`, the collectors, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
+  `collect`, `search`, the fetch steps, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
   and `schedule remove` take none; `setup` writes `<CFG>` itself.
 - Placeholders appear bare in some commands and already inside quotes in others (for example 5.3, 6.1.3, 6.1.4,
   6.2, 7.2, 7.3). Substitute every one before running a command:
@@ -58,7 +58,7 @@ repeating them.
 | `<mattertok>` | the mattertok checkout that `<MM_ARCHIVE>` came from, the folder holding its `.env` (6.4) |
 | `<REPO_URL>` | the clone URL of this repository, which the owner gives (section 4) |
 | `<keys>` | the key names a `setup` line lists after `fill in config.json:` (5.1) |
-| `<N>` | a collector bound, given by the app card |
+| `<N>` | a fetch step bound, given by the app card |
 | `<HEAD_SEQ>`, `<TOTAL>` | the `head_seq` that `check <app>` printed and the `total` of the 5.5 timeline command, in the step that records them |
 | `<T0>` | the UTC start time printed in 5.8 step 1 |
 | `<W0>` | the write time printed by the discord token file handshake (6.2) |
@@ -86,7 +86,7 @@ repeating them.
    - account emails, tokens, client JSON or consent URLs;
    - Google Cloud project ids, the owner's Google or GitHub account names, or the Windows user name in paths.
 
-   Credential download file names embed a client id, so only count them. The collectors' JSON lines, capture's
+   Credential download file names embed a client id, so only count them. The fetch steps' JSON lines, capture's
    lines, the index count lines and the `timeline`/`count` search modes are aggregate-only by design; other
    search modes print private plaintext. An index failure line or a traceback in task.log can hold profile paths,
    so read task.log only through the section 3 reader, or the 5.9 poll, which prints step lines only. The 7.2
@@ -115,9 +115,9 @@ repeating them.
 | command | exit codes |
 |---|---|
 | `collect` / capture | 0 ok · 3 suspect (that origin, one `sources` entry such as `gm_archive`, committed nothing) · 75 busy or below the disk floor (nothing committed), or an origin or container skipped (what was read is committed) · 2 refused · 1 error |
-| `-m <app>.collector` | 0 ok · 75 `errors` above 0, busy, a network or API failure, or another non-auth category · 2 `auth_required`, `auth_failed`, `account_changed` (the last only from a sync run, never from `--auth-check`) · 1 config or unexpected error · with `--capture`, a non-zero code of its `collect` step (the row above) is returned as is |
-| `-m gmail.collector --auth` | 0 `auth_ready` · 2 every failure; `status` names the cause (7.3) |
-| `-m mattermost.collector --login` | 0 `auth_ready` · 2 every failure; `status` names the cause (6.4) |
+| `-m <app>.fetch` | 0 ok · 75 `errors` above 0, busy, a network or API failure, or another non-auth category · 2 `auth_required`, `auth_failed`, `account_changed` (the last only from a sync run, never from `--auth-check`) · 1 config or unexpected error · with `--capture`, a non-zero code of its `collect` step (the row above) is returned as is |
+| `-m gmail.fetch --auth` | 0 `auth_ready` · 2 every failure; `status` names the cause (7.3) |
+| `-m mattermost.fetch --login` | 0 `auth_ready` · 2 every failure; `status` names the cause (6.4) |
 | `search` | 0 (also for zero hits) · 2 usage, query or missing/outdated index · 75 retry later · 1 |
 | `embed` (section 12) | 0 ok, also with chunks left by `--limit` · 2 usage, no or another sqlite-vec, another model or dims without `--rebuild` · 75 another embed holds the lock, or the embedding server failed (what was embedded is kept) · 1 error |
 | `check` | 0 · 1 errors (including `differing_rows>0`) · 2 config refused. It does not test the ACL or Windows Search. |
@@ -135,11 +135,11 @@ repeating them.
   While a capture runs (often the scheduled task), the seal and replay lines are missing: a `busy` line and
   `note: ledger busy ...; the folded state was not verified` print instead, with exit 0. That is not a pass: check
   again after the run.
-- **Collector output:** one JSON line with sorted keys, e.g.
+- **Fetch output:** one JSON line with sorted keys, e.g.
   `{"app": "gmail", "errors": 0, "limited": false, "messages_written": 200, ...}`. Gates quote its fields in that
   form. A failure line carries the category in `status` (e.g. `"status": "auth_required"`) and has no `errors`.
 - **Scheduled task result:** the task returns collect's code, which is capture's. With a sync option on, the
-  collector runs inside capture: its failures (an expired token included) show as capture 75, and its counts
+  fetch runs inside capture: its failures (an expired token included) show as capture 75, and its counts
   (`errors`, `limited`, `messages_written`) are written nowhere.
 - **`schedule status` output:** `last result:` prints the code, followed by its text when the code is known.
   - Ok: `0 (ok)`, `0x00041301 (running now)`, `0x00041303 (has not run yet)`.
@@ -149,7 +149,7 @@ repeating them.
     `0x80070002 (the interpreter or a file the action names was not found)`.
   - Any other code is printed without a text and is not ok.
 - **task.log:** `<DATA_ROOT>\reports\task.log`.
-  - Every run appends a block: the scheduled task, `collect`, and a collector with `--capture`. A block is a bare
+  - Every run appends a block: the scheduled task, `collect`, and a fetch step with `--capture`. A block is a bare
     line `run`, then `<UTC> step=capture rc=N seconds=N` with capture's indented lines, then
     `<UTC> step=index rc=N seconds=N` with the index's lines.
   - Index runs after every capture rc. A step line is written when its step ends, so while capture works the
@@ -322,16 +322,16 @@ Gate: `config set` exits 0 with `config ok` (with the helper: it exits 0), and
 `python -s -B manage.py check <app> --config <CFG>` exits 0 with `config: ok`. Exit 3 with `fill in:` names the
 keys still to set.
 
-**5.4 Authenticate** (apps with a collector). Do the app card's auth steps, then
-`python -s -B -m <app>.collector --auth-check --config <CFG>`
+**5.4 Authenticate** (apps with a fetch step). Do the app card's auth steps, then
+`python -s -B -m <app>.fetch --auth-check --config <CFG>`
 Gate: exit 0 with `"status": "authenticated"` (gmail, and the `api` source of discord or notion) or
 `"status": "local_ready"` (the `desktop` source or claudecode, which needs no authentication).
 
-**5.5 Bounded first collection.** Always run the collector before the first `collect`: capture of an empty
+**5.5 Bounded first collection.** Always run the fetch step before the first `collect`: capture of an empty
 archive exits 75.
-`python -s -B -m <app>.collector --max-items <N> --capture --config <CFG>`
+`python -s -B -m <app>.fetch --max-items <N> --capture --config <CFG>`
 Gates:
-- The collector exits 0 with `"errors": 0`. `"limited": true` only means work is pending.
+- The fetch step exits 0 with `"errors": 0`. `"limited": true` only means work is pending.
 - `python -s -B manage.py check <app> --config <CFG>` shows `differing_rows=0` and `head_seq` of 1 or more.
 - `python -s -B manage.py search <app> --since 1970-01-01 --mode timeline --limit 0 --json --config <CFG> | ConvertFrom-Json | Select-Object total, @{n='stale'; e={$_.index.stale}}`
   shows `total` above 0 and `stale` False.
@@ -395,7 +395,7 @@ Stop when it prints a `step=index` line. If it has printed nothing after 2 minut
 - Otherwise the run never reached capture: go to 5.10 now. If `<DATA_PARENT>\task-refused.log` was written after
   `<T0>`, the run was refused before its data root was known.
 
-Gate: the new lines read `step=capture rc=0` and `step=index rc=0`. With sync on, the collector runs inside the
+Gate: the new lines read `step=capture rc=0` and `step=index rc=0`. With sync on, the fetch step runs inside the
 capture step; there is no separate line for it.
 
 **5.10 [elevated] Final status.** One 7.2 batch with `status <app> --config <CFG>` only.
@@ -440,7 +440,7 @@ Keep `gm_sync` false until 6.1.8, and keep the default `gm_exclude_labels` ([gma
 
 **6.1.2 Already set up?**
 - If `Test-Path -LiteralPath <DATA_ROOT>\client.json` is True and
-  `python -s -B -m gmail.collector --auth-check --config <CFG>` exits 0: run
+  `python -s -B -m gmail.fetch --auth-check --config <CFG>` exits 0: run
   `python -s -B manage.py check gmail --config <CFG>`, note its `head_seq`, and skip to 6.1.7.
 - If `client.json` exists but the check fails: use 6.1.9 instead.
 - Otherwise `client.json` is missing, which on a new machine happens even when this Google account already has the
@@ -599,18 +599,18 @@ that the app cannot be published. Continue in Testing only if the owner explicit
 
    Wait for the owner's reply that they are at this machine, then run 7.3 at once: the five minutes start when it
    starts.
-2. Run 7.3. It starts `gmail.collector --auth`, which waits at most five minutes on a `127.0.0.1` loopback with
+2. Run 7.3. It starts `gmail.fetch --auth`, which waits at most five minutes on a `127.0.0.1` loopback with
    PKCE, opens the consent URL and removes its temp files afterwards.
 
 Gate: `opened=True auth_exit=0 status=auth_ready`.
 - `opened=True auth_exit=2 status=auth_timeout`: retry once with a fresh run. Never reuse an old URL.
 - `opened=False`, any other status, or a second failure: stop and report.
 
-**6.1.6** Gate: `python -s -B -m gmail.collector --auth-check --config <CFG>` exits 0. This is the real token
+**6.1.6** Gate: `python -s -B -m gmail.fetch --auth-check --config <CFG>` exits 0. This is the real token
 check. `--auth` writes the token file only when it succeeds, so after a failed or timed-out attempt the old,
 possibly revoked, token is still there and its existence proves nothing.
 
-**6.1.7 Bounded genesis.** `python -s -B -m gmail.collector --max-items 200 --capture --config <CFG>`
+**6.1.7 Bounded genesis.** `python -s -B -m gmail.fetch --max-items 200 --capture --config <CFG>`
 Gate: exit 0 and `"errors": 0`, then the 5.5 gates. `"limited": true` means messages remain. On a new archive
 (6.1.3–6.1.6 just ran), `"messages_written"` must be above 0. When 6.1.2 sent you here with a `head_seq` of 1 or
 more, `"messages_written": 0` is fine (no new mail since the last sync).
@@ -631,14 +631,14 @@ password change or a Google account problem, start at step 3 without waiting for
 1. If `last result:` is `the interpreter or a file the action names was not found`, the run never started and
    task.log has no block for it: use that section 9 row. For `stopped (time limit, or by hand)`, use its row.
 2. Read the newest block with the section 3 reader. Under `step=capture`:
-   - `capture busy`: another process held the ledger lock (`collect`, a collector's `--capture` step, or
+   - `capture busy`: another process held the ledger lock (`collect`, a fetch step's `--capture` step, or
      `check`). The lock is released when that process ends; watch the next run. If the next run is busy too,
      report it. Never list process command lines to find the holder: they hold profile paths.
    - `capture skipped disk_floor=yes`: use the section 9 disk row.
    - rc 2 with `refused: precondition or configuration`: use the section 9 capture 2 row.
    - rc 3 with `gm_archive status=suspect`: use the section 9 suspect row; do not continue to step 3.
    - `origin error gm_archive ...` and `gm_archive status=error`: the sync inside capture failed. Go to step 3.
-3. Run `python -s -B -m gmail.collector --auth-check --config <CFG>`.
+3. Run `python -s -B -m gmail.fetch --auth-check --config <CFG>`.
    - **Exit 2 `auth_required`:** the token expired or was revoked (a password change, a revocation at the
      permissions page, an app still in Testing), or `client.json` or `token.json` is missing or unreadable.
      1. Confirm **In production** on the Audience page. Select the project by the name in the bring-up report.
@@ -654,7 +654,7 @@ password change or a Google account problem, start at step 3 without waiting for
    - **Exit 0:** go to step 4.
 4. `--auth-check` proves that the token refreshes, not which account it belongs to. Only a sync compares the
    account with the archive's binding. While no run is in progress (the section 3 reader's newest block has its
-   `step=index` line), run `python -s -B -m gmail.collector --max-items 200 --config <CFG>`. It runs without
+   `step=index` line), run `python -s -B -m gmail.fetch --max-items 200 --config <CFG>`. It runs without
    `--capture`; the next scheduled run captures what it writes.
    - **Exit 0:** after a fix in step 3 (a re-consent, a restored `client.json`), go to step 5. With no fix, the
      cause was probably transient (network, quota, busy). If the two newest scheduled runs have both failed (the
@@ -672,11 +672,11 @@ password change or a Google account problem, start at step 3 without waiting for
    - **Exit 75 with `"errors": 1` and `"limited": false`:** run the same command once more, right away. If that
      second run exits 75 with `"errors": 1`, `"messages_written": 0` and `"limited": false`, a pending plan is
      stalled on a message deleted before genesis fetched it. With the owner's approval (rule 10), run once
-     `python -s -B -m gmail.collector --full --max-items 200 --capture --config <CFG>`, then go to step 5.
+     `python -s -B -m gmail.fetch --full --max-items 200 --capture --config <CFG>`, then go to step 5.
      `--full` forces a fresh listing and never rewrites captured content. Any other result of the second run is
      handled by these bullets, without a third run.
    - **Exit 2 `auth_required`:** the token failed in the meantime. Go back to step 3.
-   - **`collector_busy`:** another collector run, scheduled or manual, holds the lock. Retry after it.
+   - **`collector_busy`:** another fetch run, scheduled or manual, holds the lock. Retry after it.
    - **Anything else** (exit 75 with another `status`, exit 1): stop and report `status`, `http_status`,
      `errors`, `limited` and `messages_written`.
 5. After any fix, prove it under SYSTEM. After a disk-floor skip, check both numbers of the section 9 disk row
@@ -690,11 +690,11 @@ config that `setup` writes from the example sets `desktop`.
   (`<HOME>\AppData\Roaming\discord`). **[human]** The Discord desktop app must be installed and signed in. Cache
   eviction never counts as deletion.
 - **api:** a bot or user token in a file, `dc_token_file` = `<DATA_ROOT>\token.txt`.
-  - The path must be absolute and under `<DATA_PARENT>`; otherwise the collector reports `unsafe_token_path`
+  - The path must be absolute and under `<DATA_PARENT>`; otherwise the fetch step reports `unsafe_token_path`
     (exit 75).
   - The file holds only the token, on one line. Surrounding whitespace and a leading `Bot ` are ignored. A missing
     or empty file gives `auth_required` (exit 2).
-  - Keep `dc_token_type` at `auto`: the collector tries the token as a bot, then as a user token on HTTP 401.
+  - Keep `dc_token_type` at `auto`: the fetch step tries the token as a bot, then as a user token on HTTP 401.
     `--auth-check` reports which one as `token_type`.
   - `DISCORD_BOT_TOKEN` and `DISCORD_TOKEN` take precedence over the file whenever they are set, and SYSTEM does
     not see user variables. So that 5.4 and 5.5 test the file the task will use, start those commands with
@@ -707,7 +707,7 @@ config that `setup` writes from the example sets `desktop`.
 **Bot setup [human]** (api with a bot token), at `https://discord.com/developers/applications`:
 1. **New Application** → name → **Create**.
 2. **Bot** → Privileged Gateway Intents → turn on **Message Content Intent** → **Save Changes**. Without it,
-   server messages that do not mention the bot arrive with empty text. The collector counts one error (`"errors"`
+   server messages that do not mention the bot arrive with empty text. The fetch step counts one error (`"errors"`
    above 0, exit 75) only for a channel in which every message fetched that run is a plain message (type 0) with no
    content, attachments, embeds, stickers or forwards. A channel that also holds replies, pins or other message
    types is archived with empty text and no error, so `"errors": 0` does not prove the intent is on, and
@@ -752,7 +752,7 @@ Steps:
      channels to leave out. Leave them out with `dc_exclude_patterns`, case-insensitive fragments of the server,
      category or channel name, or keep only some with `dc_channel_ids`. Set them with
      `tools/bootstrap.py config set` (5.3), and never echo either in reports.
-   - Rate limits and 5xx responses are already retried inside the collector.
+   - Rate limits and 5xx responses are already retried inside the fetch step.
 3. Run 5.6 with `dc_sync`, then 5.7–5.10.
 
 Recovery:
@@ -776,7 +776,7 @@ Sources:
   `nt_cli` to the absolute path of `ntn.exe` when it is not on PATH.
 
 Only desktop mode can sync inside the SYSTEM task. `task_checks` refuses `nt_sync` together with
-`nt_source: api`. In api mode, run the collector in the owner's session and keep the SYSTEM task archive-only
+`nt_source: api`. In api mode, run the fetch step in the owner's session and keep the SYSTEM task archive-only
 (`nt_sync` false).
 
 Steps:
@@ -802,7 +802,7 @@ Recovery:
 
 ### 6.4 mattermost
 
-The app's collector (`mattermost/collector.py`, a port of the mattertok archiver) reads the server's REST API v4
+The app's fetch step (`mattermost/fetch.py`, a port of the mattertok archiver) reads the server's REST API v4
 with the owner's session token and keeps `<DATA_ROOT>\archive` in mattertok's format
 ([mattermost/README.md](mattermost/README.md)). Each channel is fetched with cursors, so a run fetches only new
 posts; edits and deletions of posts already archived are not fetched again.
@@ -820,7 +820,7 @@ Values (5.1 fills the archive and the token file):
   it on may end with `"limited": true` until every file is kept.
 
 **Sign-in [human].** The owner runs, in their own terminal from `<PROJECT>`:
-`python -s -B -m mattermost.collector --login --config <CFG>`
+`python -s -B -m mattermost.fetch --login --config <CFG>`
 It asks for the login id, the password (not shown) and, when the account uses one, an MFA code. It keeps only the
 session token in `mm_token_file` and prints `"status": "auth_ready"`; the password is never stored. Repeated failed
 sign-ins can lock the account: after one `auth_failed`, stop and ask. A personal access token, where the server
@@ -855,7 +855,7 @@ Recovery:
 - `auth_required` (exit 2; with `mm_sync` on, capture 75 with `mm_archive status=error`): the session expired or
   was revoked. **[human]** sign in again, then rerun `--auth-check`.
 - `auth_failed` from `--login`: wrong id, password or MFA code. Stop and ask.
-- `api_error` with a 3xx `http_status`: the server redirected and the collector never follows a redirect, so
+- `api_error` with a 3xx `http_status`: the server redirected and the fetch step never follows a redirect, so
   `mm_url` is not the server's own address. Ask the owner for it.
 - Exit 75 with `"errors"` above 0: a channel or user lookup failed. With `mm_sync` on, the origin commits nothing
   in such a run; a one-off failure clears on the next run. If it repeats, run `--auth-check`, then report.
@@ -886,7 +886,7 @@ never config values, room names or message text. Stop and report on any refusal.
 
 ### 6.6 claudecode
 
-The collector reads the owner's local Claude Code files read-only. No human step, credential or sign-in is
+The fetch step reads the owner's local Claude Code files read-only. No human step, credential or sign-in is
 needed. It keeps prompts, reply text and one-line tool-call summaries; tool results, thinking and attachments
 are not kept. Secrets typed into prompts or the first 200 characters of Bash commands are kept as typed:
 never echo conversation text or commands. See [claudecode/README.md](claudecode/README.md).
@@ -898,9 +898,9 @@ Steps:
    `cc_claude_dir` with `-PathType Container` is True; print only the boolean, never its contents. A missing
    folder is a stop: report `source_missing`, without creating it. Run 5.4; gate: `"status": "local_ready"` and
    `"authentication_required": false`.
-2. First run `python -s -B -m claudecode.collector --max-items 20 --config <CFG>`; it bounds changed source
+2. First run `python -s -B -m claudecode.fetch --max-items 20 --config <CFG>`; it bounds changed source
    files and prints counts only. Gate: exit 0, `"errors": 0`; `"limited": true` means files remain. Then run
-   `python -s -B -m claudecode.collector --capture --config <CFG>` without a bound. Gate: exit 0,
+   `python -s -B -m claudecode.fetch --capture --config <CFG>` without a bound. Gate: exit 0,
    `"errors": 0`, `"limited": false`, then all 5.5 check and search gates. Record `genesis_complete` as in 5.5.
 3. Run `python -s -B tools/bootstrap.py config set claudecode cc_sync true`, pass 5.6's gates, then run
    5.7–5.10 for the shared dry run, installation and SYSTEM proof.
@@ -992,7 +992,7 @@ the `status`:
 $id = [guid]::NewGuid()
 $err = Join-Path $env:TEMP "llm-wiki-consent-$id.err"; $out = Join-Path $env:TEMP "llm-wiki-consent-$id.out"
 try {
-  $p = Start-Process '<PY>' -ArgumentList '-s', '-B', '-m', 'gmail.collector', '--auth', '--config', '"<CFG>"' `
+  $p = Start-Process '<PY>' -ArgumentList '-s', '-B', '-m', 'gmail.fetch', '--auth', '--config', '"<CFG>"' `
        -WorkingDirectory '<PROJECT>' -RedirectStandardError $err -RedirectStandardOutput $out -NoNewWindow -PassThru
   $null = $p.Handle; $opened = $false
   while (-not $p.HasExited) {
@@ -1016,10 +1016,10 @@ try {
   - `state_mismatch`, `unsafe_token_path`, `transport_error` or `error`.
 
   With `opened=False`, the URL never appeared or failed the shape check: do not retry.
-- The script blocks until the collector exits: up to five minutes for the owner, plus up to one minute for the
+- The script blocks until the fetch step exits: up to five minutes for the owner, plus up to one minute for the
   token exchange. Run it as one command with a timeout of at least 420 s, or in the background and wait for it.
 - If the script is killed anyway, its `finally` does not run. Stop the leftover process with
-  `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'gmail\.collector\s.*--auth(\s|$)' } | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
+  `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'gmail\.fetch\s.*--auth(\s|$)' } | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
   Then delete `$env:TEMP\llm-wiki-consent-*` without reading the files: they hold the consent URL.
 - If your sandbox refuses to open a browser, ask the owner to run this script. Never pass the URL through chat.
 
@@ -1075,7 +1075,7 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | symptom | cause | fix |
 |---|---|---|
 | `setup` exit 2, config already there | existing config | keep it; `--force` only on the owner's request |
-| `setup` line `data parent: not excluded from Windows Search`; `schedule install` (also `--dry-run`) exit 2 `config refused (data root not excluded from Windows Search)`. A collector exit 1 with `"error_type": "ConfigError"` (discord, notion) or `{"app": "gmail", "status": "error"}` (gmail) can mean this or any other config or precheck problem; run 5.7's dry run to see which. A capture refusal names no reason (capture 2 row) | the indexer would index private data | **[human]** 0.5, then the 5.1 probe (not `setup`, which is refused once the config exists) |
+| `setup` line `data parent: not excluded from Windows Search`; `schedule install` (also `--dry-run`) exit 2 `config refused (data root not excluded from Windows Search)`. A fetch step exit 1 with `"error_type": "ConfigError"` (discord, notion) or `{"app": "gmail", "status": "error"}` (gmail) can mean this or any other config or precheck problem; run 5.7's dry run to see which. A capture refusal names no reason (capture 2 row) | the indexer would index private data | **[human]** 0.5, then the 5.1 probe (not `setup`, which is refused once the config exists) |
 | `setup` line `data parent:` about the ACL (`without (OI)(CI)`, `not protected`, `ACL unreadable`); `schedule install` (also `--dry-run`) exit 2 `config refused (data root ACL ...)` | `<DATA_PARENT>` was not created by `setup`, or its ACL was changed | stop and report. Never delete, move, rename or re-create `<DATA_PARENT>`: it holds every app's data, kakaotalk's included. Never hand-edit ACLs. **[human]** the owner decides |
 | `check` exit 2, `config unreadable` | invalid JSON after a text edit (backslashes) | stop and report: neither `tools/bootstrap.py config set` nor the 5.3 `$setKey` helper can read invalid JSON. **[human]** the owner repairs the file, or approves (rule 10) putting back the `config.json.prev` that the last `config set` kept, or `setup --force` |
 | `check` refuses a path | a source folder that is missing or not absolute, or a data root outside `<DATA_PARENT>` | create it, use absolute paths |
@@ -1083,22 +1083,22 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | capture 2: `last result:` `2 (capture refused)`, or task.log `step=capture rc=2` with `refused: precondition or configuration` | the config or the data-root precheck failed: a missing path, a data root inside a git work tree, the ACL, Windows Search | run 5.7's dry run without elevation; its stderr names the reason. If the dry run exits 0, the cause is most likely one that only SYSTEM meets: git missing from the machine PATH (rerun the 0.1 machine-PATH git gate) |
 | capture 3: `last result:` `3 (capture suspect)`, or task.log `<source_key> status=suspect` | a known key vanished from a fully read container; nothing of that origin was committed | report it; do not force (no `--full`, no `--rebuild-state`). Ask the owner whether the archive was damaged or the account switched |
 | `search` exit 2, `give a query or ...` | aggregate modes still need a selector | add `--since 1970-01-01` or an app selector |
-| `search` exit 2, no index yet | never collected | run the collector (5.5) or `collect` |
+| `search` exit 2, no index yet | never collected | run the fetch step (5.5) or `collect` |
 | `search` exit 2, index damaged or another version | outdated or broken index | `collect <app> --config <CFG> --rebuild-index` |
 | `check` exit 1, `differing_rows>0` | folded state disagrees with the ledger | report it. With the owner's approval (it rebuilds the folded state from the ledger and changes neither the ledger nor the index), run `check <app> --config <CFG> --rebuild-state`. It prints `replay check=no differing_rows=N head_seq=N`, where N is what it found before rebuilding, and exits 0. `ledger busy` instead means nothing was rebuilt: retry after the run. A `seal` line with a count above 0 also blocks it (exit 1, nothing rebuilt): stop and report. Then `check` again: `differing_rows=0`, `head_seq` unchanged. If it still differs, stop and report |
-| capture 75 on a first run | empty archive (no manifest yet) | run the collector before `collect` |
+| capture 75 on a first run | empty archive (no manifest yet) | run the fetch step before `collect` |
 | capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.9 step 5), check both numbers again |
-| capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`collect`, a collector's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
+| capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`collect`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
 | `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires client and token files`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
 | Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch. kakaotalk's task needs the same: tell the owner (rule 2) |
 | elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task, and tell the owner that kakaotalk's task needs the same (rule 2) |
 | `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `collect` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
-| `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded collector runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
+| `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded fetch runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
 | non-elevated status exit 3, `not registered, or not readable from this prompt` | SYSTEM task not readable without elevation | elevated status (7.2) |
 | gmail not-ok last result; `--auth-check` exit 2 | `auth_required` (token expired or revoked), or `auth_failed` (stop) | 6.1.9 |
-| discord collector `"channels": 0` with `"errors": 0` (bot) | the bot was added to no server | **[human]** step 3 of the bot setup in 6.2 |
+| discord fetch step `"channels": 0` with `"errors": 0` (bot) | the bot was added to no server | **[human]** step 3 of the bot setup in 6.2 |
 | Google **Publish app** disabled | no home page, privacy link or authorized domain | 6.1.3 step 5, then 6.1.4 |
 | Google console back at **Get started** | navigation during the save cancelled it | re-enter in the same project and wait for the overview |
 

@@ -10,7 +10,7 @@ The implementation uses the Python standard library.
 
 Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
 This app's folder contains `apps.py` (source keys, options and schedule), `origins.py`, `inputs.py`, `readers/`,
-`collector.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/` and `config.example.json`.
+`fetch.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/` and `config.example.json`.
 Core tests are at `<PROJECT>/tests/core/`;
 app tests are at `<PROJECT>/mattermost/tests/`. The `/raw-search` skill is
 `<PROJECT>/.claude/skills/raw-search/SKILL.md` (shared by every app).
@@ -27,7 +27,7 @@ need an existing `inputs_root`; live input resolution does not require it to exi
 Capture reads the archive directory read-only. Its one origin is `mm_archive`, with record kinds
 `ch`, `post`, `file`, `user` and `blob`. The archive contains `manifest.json` channel records, `posts/**.jsonl`
 post records (one file per channel; each post's `metadata.files` become `file` records), `users.json` and, once
-the collector keeps attached files, `files.json`: one `blob` record `mm:blob:<file_id>` per kept file with its
+the fetch step keeps attached files, `files.json`: one `blob` record `mm:blob:<file_id>` per kept file with its
 `post_id`, `sha256`, `size` and `path` (relative to the archive). The kept files themselves stay out of the
 ledger and are never read by capture. It is read in one stable pass between two reads of the
 manifest. A changed manifest retries the pass (at most three times); continued changes make the origin unstable.
@@ -37,15 +37,15 @@ Every version of a key seen in a stable pass is recorded once.
 empty). A channel whose display name or name contains a pattern, casefolded, is excluded, using mattertok's rule.
 mattertok excluded channels by default and this app does not: when continuing an archive mattertok wrote, copy
 mattertok's effective list into `mm_exclude_patterns` — its `MM_EXCLUDE_CHANNELS` setting, or when that is unset
-the built-in `DEFAULT_EXCLUDED_CHANNELS` of `mattertok/config.py` — or the collector fetches the channels mattertok
+the built-in `DEFAULT_EXCLUDED_CHANNELS` of `mattertok/config.py` — or the fetch step fetches the channels mattertok
 skipped. Frozen `T1`/`T2` inputs read `<inputs_root>/<set>/mm/archive`; live inputs read the configured archive.
 
 ## Collection and authentication
 
-`collector.py` is a standard-library port of the mattertok archiver (REST API v4). It writes mattertok's archive
+`fetch.py` is a standard-library port of the mattertok archiver (REST API v4). It writes mattertok's archive
 format, so an archive mattertok wrote continues from its cursors, and it needs no other program. Archive-only
 configs stay read-only; `mm_sync: true` makes live `manage.py collect mattermost` update the archive before
-capturing it. Frozen inputs never call the collector.
+capturing it. Frozen inputs never call the fetch step.
 
 - `mm_url` is the server's `https://` address; `mm_token_file` is a private file under `<DATA_PARENT>` holding a
   session token or personal access token on one line. `MM_TOKEN` takes precedence over the file. The token is
@@ -89,13 +89,13 @@ capturing it. Frozen inputs never call the collector.
   of posts already archived are not fetched again, as in mattertok.
 
 ```
-python -s -B -m mattermost.collector --login
-python -s -B -m mattermost.collector --auth-check
-python -s -B -m mattermost.collector --max-items 20 --capture
+python -s -B -m mattermost.fetch --login
+python -s -B -m mattermost.fetch --auth-check
+python -s -B -m mattermost.fetch --max-items 20 --capture
 python -s -B manage.py collect mattermost
 ```
 
-The collector prints one JSON line of counts and categories only (`channels`, `posts_written`,
+The fetch step prints one JSON line of counts and categories only (`channels`, `posts_written`,
 `files_written`, `excluded`, `unavailable`, `errors`, `limited`, `users`, `files_stored`, `files_failed`,
 `requests`); `posts_written` counts posts new to the archive or changed, `files_written` the channel files that
 changed, `files_stored` the attached files kept this run. mattertok's `send` is `admin.py post` (below). Not
@@ -107,7 +107,7 @@ in git history only, as archived reference code: `git checkout bee1809 -- matter
 ## Administration (admin.py)
 
 `admin.py` is the write side: it creates and checks channels, their members and incoming webhooks, and sends
-messages, with the collector's client, config and token (`mm_url`, `mm_token_file` or `MM_TOKEN`). Capture never
+messages, with the fetch step's client, config and token (`mm_url`, `mm_token_file` or `MM_TOKEN`). Capture never
 calls it.
 
 ```
@@ -292,7 +292,7 @@ the definition without registering it. Status shows definition differences, last
 finished step lines; it returns 3 when attention is needed. A new start is ignored while one runs, and a missed
 start runs when the machine returns.
 
-`collect mattermost` runs the capture step (the live input set; with `mm_sync`, the collector first) and then the
+`collect mattermost` runs the capture step (the live input set; with `mm_sync`, the fetch step first) and then the
 index step after every capture exit code. With `mm_sync`, `task_checks` refuses a config without `mm_url` or an
 existing protected token file. Only committed manifests enter the index, so the index step is a no-op when nothing new was committed.
 Steps are logged in `<DATA_ROOT>/reports/task.log`, and collect returns capture's exit code.

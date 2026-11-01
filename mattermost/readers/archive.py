@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """mm_archive (SPEC 7.4, 10.2): mattertok's archive directory -- manifest.json (channels), posts/**.jsonl (one
-file per channel), users.json and, once the collector keeps attached files, files.json (their pointers: blob
+file per channel), users.json and, once the fetch step keeps attached files, files.json (their pointers: blob
 records; the files themselves are never read here).
 
 The whole origin is read in one pass between two reads of manifest.json; if the manifest changed under us the
@@ -172,7 +172,7 @@ def read_once(root, patterns, denylist, origin):
     except (OSError, ValueError):
         rd.containers[users_sid] = {"status": "error"}
         rd.notes["read_error"] += 1
-    # files.json container, only once the collector wrote one: a config that keeps no files sees no change
+    # files.json container, only once the fetch step wrote one: a config that keeps no files sees no change
     files_sid = canon.source_id("files.json")
     fp = root / "files.json"
     try:

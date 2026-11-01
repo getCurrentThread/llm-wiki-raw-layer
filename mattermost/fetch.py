@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Read-only Mattermost REST API v4 collector, ported from mattertok's archiver (archive.py, client.py, auth.py).
+"""Read-only Mattermost REST API v4 fetch step, ported from mattertok's archiver (archive.py, client.py, auth.py).
 
 It writes mattertok's archive format -- manifest.json (one cursor state per channel), posts/**.jsonl (one post per
 line, oldest first) and users.json -- so mm_archive reads it unchanged and an existing mattertok archive continues
@@ -34,7 +34,7 @@ import sys
 import time
 from urllib import error, parse, request
 
-from tools.archiveio import CollectorError, atomic, bind, credential_path, inside, load, locked
+from tools.archiveio import FetchError, atomic, bind, credential_path, inside, load, locked
 
 PER_PAGE = 200
 FILE_FLUSH = 100            # files.json is rewritten every 100 kept files, so an interrupted run loses little
@@ -69,7 +69,7 @@ _OPEN = _opener()
 
 def _id(value):
     if not isinstance(value, str) or not _ID.fullmatch(value):
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     return value
 
 
@@ -84,16 +84,16 @@ def token(configured=""):
         try:
             value = credential_path(configured).read_text(encoding="utf-8").strip()
         except OSError:
-            raise CollectorError("auth_required") from None
+            raise FetchError("auth_required") from None
     if not value or any(c.isspace() or c == "\x00" for c in value):
-        raise CollectorError("auth_required")
+        raise FetchError("auth_required")
     return value
 
 
 def base_url(value):
     parts = parse.urlsplit(value or "")
     if parts.scheme != "https" or not parts.netloc or parts.query or parts.fragment:
-        raise CollectorError("bad_url")
+        raise FetchError("bad_url")
     return value.rstrip("/")
 
 
@@ -115,7 +115,7 @@ class MattermostClient:
         """429 honours Retry-After and 5xx / transport failures back off exponentially (four attempts). `binary`
         returns the reply's bytes instead of its JSON."""
         if not re.fullmatch(r"/[A-Za-z0-9_/-]+", path):
-            raise CollectorError("bad_endpoint")
+            raise FetchError("bad_endpoint")
         url = self.api + path + ("?" + parse.urlencode(query) if query else "")
         headers = {"Authorization": "Bearer " + self.credential, "Accept": "*/*" if binary else "application/json"}
         data = None
@@ -146,10 +146,10 @@ class MattermostClient:
                     delay *= 2
                     continue
                 # 401: the session expired or was revoked; `--login` issues a new one
-                raise CollectorError("auth_required" if status == 401 else "api_error", status) from None
+                raise FetchError("auth_required" if status == 401 else "api_error", status) from None
             except TRANSPORT:
                 if attempt == 3:
-                    raise CollectorError("transport_error") from None
+                    raise FetchError("transport_error") from None
                 self.sleep(delay)
                 delay *= 2
         if binary:
@@ -157,33 +157,33 @@ class MattermostClient:
         try:
             return json.loads(raw) if raw else None
         except ValueError:
-            raise CollectorError("bad_response") from None
+            raise FetchError("bad_response") from None
 
     def authenticate(self):
         me = self.request("GET", "/users/me")
         if not isinstance(me, dict):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         self.user_id = _id(me.get("id"))
         return me
 
     def my_teams(self):
         rows = self.request("GET", "/users/me/teams")
         if not isinstance(rows, list):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         return rows
 
     def my_channels(self, team_id):
         # archived channels too: one archived since the last run may still hold posts the archive lacks
         rows = self.request("GET", f"/users/me/teams/{_id(team_id)}/channels", {"include_deleted": "true"})
         if not isinstance(rows, list):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         return rows
 
     def posts(self, channel_id, query):
         data = self.request("GET", f"/channels/{_id(channel_id)}/posts", query)
         if not isinstance(data, dict) or not isinstance(data.get("order") or [], list) \
                 or not isinstance(data.get("posts") or {}, dict):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         return data
 
     def fetch_users(self, user_ids):
@@ -192,7 +192,7 @@ class MattermostClient:
         for i in range(0, len(missing), 100):
             rows = self.request("POST", "/users/ids", body=missing[i:i + 100])
             if not isinstance(rows, list):
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             for user in rows:
                 if isinstance(user, dict) and isinstance(user.get("id"), str) and _ID.fullmatch(user["id"]):
                     self.users[user["id"]] = user
@@ -208,7 +208,7 @@ class MattermostClient:
                 obj = self.request("GET", f"/users/{_id(user_id)}")
                 if isinstance(obj, dict) and obj.get("id") == user_id:
                     self.users[user_id] = obj
-            except CollectorError:
+            except FetchError:
                 pass
         return self.users.get(user_id)
 
@@ -220,7 +220,7 @@ def login(url, token_file, opener=_OPEN, ask=input, secret=getpass.getpass):
     endpoint = base_url(url) + "/api/v4/users/login"
     body = {"login_id": ask("Mattermost login id: ").strip(), "password": secret("Password (not shown): ")}
     if not body["login_id"] or not body["password"]:
-        raise CollectorError("auth_required")
+        raise FetchError("auth_required")
     for attempt in range(2):
         req = request.Request(endpoint, data=json.dumps(body).encode("utf-8"),
                               headers={"Content-Type": "application/json"}, method="POST")
@@ -241,14 +241,14 @@ def login(url, token_file, opener=_OPEN, ask=input, secret=getpass.getpass):
                 body["token"] = ask("MFA code: ").strip()
                 continue
             # a redirect is not followed: it means mm_url is not the server's address, not wrong credentials
-            raise CollectorError("api_error" if 300 <= e.code < 400 else "auth_failed", e.code) from None
+            raise FetchError("api_error" if 300 <= e.code < 400 else "auth_failed", e.code) from None
         except (*TRANSPORT, ValueError):
-            raise CollectorError("transport_error") from None
+            raise FetchError("transport_error") from None
     else:
-        raise CollectorError("auth_failed")
+        raise FetchError("auth_failed")
     if not isinstance(value, str) or not value or any(c.isspace() for c in value) \
             or not isinstance(me, dict) or not _ID.fullmatch(str(me.get("id", ""))):
-        raise CollectorError("auth_failed")
+        raise FetchError("auth_failed")
     atomic(path.parent, path, value.encode("ascii") + b"\n")
     return {"status": "auth_ready"}
 
@@ -304,7 +304,7 @@ def discover(client):
     for team in client.my_teams():
         try:
             rows = client.my_channels(team.get("id") if isinstance(team, dict) else None)
-        except CollectorError:
+        except FetchError:
             errors += 1
             continue
         for ch in rows:
@@ -352,7 +352,7 @@ def _batch(data):
     for pid in data.get("order") or []:
         post = posts.get(pid) if isinstance(pid, str) else None
         if not isinstance(post, dict) or post.get("id") != pid or not _ID.fullmatch(pid):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         batch.append(post)
     return batch
 
@@ -538,7 +538,7 @@ def store_files(root, client, man, patterns, cap, deadline, stats):
     from rawlayer.capture.run import HARD_FLOOR
     stored = load(root / "files.json", {})
     if not isinstance(stored, dict):
-        raise CollectorError("bad_archive")
+        raise FetchError("bad_archive")
     todo = {}
     for st, post in _archived(root, man):
         if st.get("error") == "unavailable" or excluded(patterns, st.get("display"), st.get("channel_name")):
@@ -560,7 +560,7 @@ def store_files(root, client, man, patterns, cap, deadline, stats):
             break
         try:
             data = client.file(fid)
-        except CollectorError as e:
+        except FetchError as e:
             if e.category == "auth_required":
                 raise
             stats["files_failed"] += 1
@@ -585,7 +585,7 @@ def _manifest(root):
         return {"version": 1, "base_url": "", "user_id": "", "username": "", "created_at": int(time.time()),
                 "updated_at": 0, "channels": {}}
     if not isinstance(man, dict) or man.get("version", 1) != 1 or not isinstance(man.get("channels"), dict):
-        raise CollectorError("bad_archive")
+        raise FetchError("bad_archive")
     return man
 
 
@@ -609,11 +609,11 @@ def sync(root, client, patterns=(), max_items=0, time_budget=TIME_BUDGET, files_
         man = _manifest(root)
         if (man.get("user_id") and man["user_id"] != me["id"]) or \
                 (man.get("base_url") and man["base_url"].rstrip("/") + "/api/v4" != client.api):
-            raise CollectorError("account_changed")         # an archive belongs to one account on one server
+            raise FetchError("account_changed")         # an archive belongs to one account on one server
         bind(root, me["id"])
         users = load(root / "users.json", {})
         if not isinstance(users, dict):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
         man.update(base_url=client.api[:-len("/api/v4")], user_id=me["id"], username=me.get("username", ""))
 
         def save():
@@ -647,13 +647,13 @@ def sync(root, client, patterns=(), max_items=0, time_budget=TIME_BUDGET, files_
             try:
                 if not fetch(client, st, got, deadline, flush, last_post_at):
                     stats["limited"] = True
-            except (CollectorError, OSError) as e:
+            except (FetchError, OSError) as e:
                 # 403/404: the channel's history is no longer readable (left, archived, permission removed)
                 failed = "unavailable" if getattr(e, "status", None) in (403, 404) else "collection_failed"
             st["error"] = failed
             try:
                 flush()                                     # what was fetched before a failure is kept too
-            except (CollectorError, OSError):
+            except (FetchError, OSError):
                 # the posts are not on disk: the manifest keeps the cursors of what was published
                 failed = "collection_failed"
                 if cid in man["channels"]:
@@ -671,7 +671,7 @@ def sync(root, client, patterns=(), max_items=0, time_budget=TIME_BUDGET, files_
         wanted = {u for u in authors if _ID.fullmatch(u)} | (_authors(root, man) - set(users))
         try:
             client.fetch_users(wanted)
-        except CollectorError:
+        except FetchError:
             stats["errors"] += 1
         for uid in sorted(wanted):
             u = client.users.get(uid)
@@ -700,7 +700,7 @@ def main(argv=None):
     if "--login" not in argv:
         from tools.archiveio import main as archive_main
         if "--help" in argv or "-h" in argv:
-            print("One-time sign-in: python -s -B -m mattermost.collector --login [--config CONFIG]")
+            print("One-time sign-in: python -s -B -m mattermost.fetch --login [--config CONFIG]")
         return archive_main("mattermost", sync_config, argv)
     import argparse
     from rawlayer import registry
@@ -716,7 +716,7 @@ def main(argv=None):
         report = login(cfg.mm_url, cfg.mm_token_file)
         print(json.dumps({"app": "mattermost", **report}))
         return 0
-    except CollectorError as e:
+    except FetchError as e:
         print(json.dumps({"app": "mattermost", "status": e.category, "http_status": e.status}))
         return 2
     except Exception as e:

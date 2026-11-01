@@ -5,7 +5,7 @@ import json
 import re
 import time
 from urllib import error, parse, request
-from tools.archiveio import CollectorError
+from tools.archiveio import FetchError
 
 
 class Bucket:
@@ -44,7 +44,7 @@ class GmailClient:
 
     def request(self, path, query=None):
         if not re.fullmatch(r"/(profile|labels|messages|history|messages/[0-9a-f]{1,16})", path):
-            raise CollectorError("bad_endpoint")
+            raise FetchError("bad_endpoint")
         units = 20 if path.startswith("/messages/") else {"/messages": 5, "/history": 2}.get(path, 1)
         url = "https://gmail.googleapis.com/gmail/v1/users/me" + path
         if query:
@@ -57,7 +57,7 @@ class GmailClient:
                 with self.opener(req, timeout=60) as response:
                     obj = json.loads(response.read())
                 if not isinstance(obj, dict):
-                    raise CollectorError("bad_response")
+                    raise FetchError("bad_response")
                 return obj
             except error.HTTPError as e:
                 try:
@@ -71,10 +71,10 @@ class GmailClient:
                 if (retryable or e.code in (500, 502, 503, 504)) and attempt < 5:
                     self.sleep(retry_delay(e.headers.get("Retry-After"), attempt))
                     continue
-                raise CollectorError("auth_required" if e.code == 401 else "api_error", e.code) from None
+                raise FetchError("auth_required" if e.code == 401 else "api_error", e.code) from None
             except (error.URLError, OSError, ValueError):
-                raise CollectorError("transport_error") from None
-        raise CollectorError("api_error")
+                raise FetchError("transport_error") from None
+        raise FetchError("api_error")
 
 
 def pages(client, path, query=None, field="messages"):
@@ -86,11 +86,11 @@ def pages(client, path, query=None, field="messages"):
         obj = client.request(path, q)
         rows = obj.get(field, [])
         if not isinstance(rows, list) or not all(isinstance(v, dict) for v in rows):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         yield obj, rows
         cursor = obj.get("nextPageToken")
         if cursor is None:
             return
         if not isinstance(cursor, str) or not cursor or cursor in seen:
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         seen.add(cursor)

@@ -9,7 +9,7 @@ from tests.core import appfix
 from rawlayer import collect, schedule
 from rawlayer.capture.config import Config
 from rawlayer.search import common, textindex as ti
-from gmail.collector import sync, sync_config
+from gmail.fetch import sync, sync_config
 from gmail.search import SPEC, DRIVER, GmailApplier, mail_paragraphs
 from gmail.origins import GmArchive
 from gmail import inputs
@@ -158,7 +158,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertGreater(GmArchive().estimate_peak(type("Inputs", (), {"gm_archive": self.fx.root})()), 0)
         from gmail.api import GmailClient
         client = self.http.client()
-        with patch("gmail.collector.refresh", return_value="synthetic"), patch("gmail.collector.GmailClient", return_value=client):
+        with patch("gmail.fetch.refresh", return_value="synthetic"), patch("gmail.fetch.GmailClient", return_value=client):
             self.assertEqual(sync_config(cfg, auth_only=True)["status"], "authenticated")
 
     def test_bad_records_total_and_state_before_content(self):

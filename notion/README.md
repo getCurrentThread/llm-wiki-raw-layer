@@ -1,7 +1,7 @@
 # Notion raw-layer app
 
 `nt_archive` reads atomic archive snapshots. The app includes a token-free Notion Desktop SQLite reader and
-an official `ntn` API collector. Its ledger and `index/notion.sqlite` belong in its own protected data root.
+an official `ntn` API fetch step. Its ledger and `index/notion.sqlite` belong in its own protected data root.
 `nt_sync: true` makes live `manage.py collect notion` update the archive first; frozen inputs stay read-only.
 
 ## Collection and authentication
@@ -26,8 +26,8 @@ permission does not prevent content collection: known user labels remain and aut
 
 ```
 ntn login
-python -s -B -m notion.collector --auth-check
-python -s -B -m notion.collector --max-items 3 --capture
+python -s -B -m notion.fetch --auth-check
+python -s -B -m notion.fetch --max-items 3 --capture
 python -s -B manage.py collect notion
 ```
 
@@ -35,7 +35,7 @@ python -s -B manage.py collect notion
 includes recursive children and per-block comments, so large pages can require many requests. Search,
 data-source query, block children, properties, users and comments paginate explicitly. Partial fetches keep
 the previous complete snapshot. Initial/daily/full sweeps recheck known pages independently of edit-time
-watermarks; `--full` forces an API sweep. Responses/logs are never printed by the collector; output is aggregate.
+watermarks; `--full` forces an API sweep. Responses/logs are never printed by the fetch step; output is aggregate.
 API authentication is verified with a read-only `/v1/users/me` call.
 
 ## Archive contract, version 1
@@ -112,13 +112,13 @@ Search JSON includes watermark/freshness. Search results are private plaintext.
 Frozen inputs read `<inputs_root>/<set>/nt/archive`. SYSTEM capture runs on the schedule in
 [../README.md](../README.md#scheduled-tasks). Desktop mode can use this task. API sync with `ntn` must run as the owning user because its
 keychain is per-user; the existing SYSTEM task installer refuses `nt_sync` with `nt_source: "api"`.
-Archive-only SYSTEM capture can still consume an archive completed by a user-account API collector.
+Archive-only SYSTEM capture can still consume an archive completed by a user-account API fetch step.
 Preview with `python -s -B manage.py schedule install notion --config <CFG> --dry-run` after preparing the
 external config and its data root.
 
 ## API collection details
 
-The collector overlaps minute-level edit timestamps and performs daily full sweeps. Child pages/databases
+The fetch step overlaps minute-level edit timestamps and performs daily full sweeps. Child pages/databases
 remain separate containers; synced blocks fetch original children. It queries comments on each block instead
 of assuming page-level queries include inline discussions. Failed child/comment requests cannot mark a page
 gone: only an inaccessible page lookup does so. Backoff handles throttling/transient failures. See

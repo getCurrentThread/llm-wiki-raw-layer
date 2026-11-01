@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Mattermost administration over REST API v4: the write-side counterpart of the read-only collector, replacing
+"""Mattermost administration over REST API v4: the write-side counterpart of the read-only fetch step, replacing
 ad-hoc scripts (a private channel per team with its members and one incoming webhook, channel headers, messages
 sent through a webhook and pinned, mattertok's `send`).
 
@@ -31,8 +31,8 @@ import re
 import sys
 from urllib import error, request
 
-from mattermost.collector import TRANSPORT, MattermostClient, _id, base_url, credential_path, token
-from tools.archiveio import CollectorError, atomic, load, now
+from mattermost.fetch import TRANSPORT, MattermostClient, _id, base_url, credential_path, token
+from tools.archiveio import FetchError, atomic, load, now
 
 PER_PAGE = 200
 RECENT = 60                 # posts read to find an identical message (at-most-once) or the post to pin
@@ -42,14 +42,14 @@ _TEAM = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 
 def bad(category):
-    raise CollectorError(category)
+    raise FetchError(category)
 
 
 class AdminClient(MattermostClient):
     writes = 0                  # writes attempted: an error after one is a partial run (exit 1), not a refusal
 
     def _once(self, req):
-        """One attempt, paced like every request; HTTP errors and transport failures become CollectorErrors."""
+        """One attempt, paced like every request; HTTP errors and transport failures become FetchErrors."""
         self._pace()
         try:
             self.requests += 1
@@ -58,9 +58,9 @@ class AdminClient(MattermostClient):
         except error.HTTPError as e:
             status = e.code
             e.close()
-            raise CollectorError("auth_required" if status == 401 else "api_error", status) from None
+            raise FetchError("auth_required" if status == 401 else "api_error", status) from None
         except TRANSPORT:
-            raise CollectorError("transport_error") from None
+            raise FetchError("transport_error") from None
 
     def write(self, method, path, body=None):
         if not re.fullmatch(r"/[A-Za-z0-9_/-]+", path):
@@ -75,7 +75,7 @@ class AdminClient(MattermostClient):
         try:
             return json.loads(raw) if raw else None
         except ValueError:
-            raise CollectorError("bad_response") from None
+            raise FetchError("bad_response") from None
 
     def webhook(self, url, text):
         """POST to an incoming webhook: no Authorization header, the URL is the secret."""
@@ -87,7 +87,7 @@ class AdminClient(MattermostClient):
         """GET, None when the server answers 404 (absent); any other error raises."""
         try:
             return self.request("GET", path, query)
-        except CollectorError as e:
+        except FetchError as e:
             if e.status == 404:
                 return None
             raise
@@ -147,7 +147,7 @@ def result_path(value):
     """RESULT holds webhook URLs: an absolute path inside the data parent, checked before anything else."""
     try:
         return credential_path(value)
-    except CollectorError:
+    except FetchError:
         bad("unsafe_result_path")
 
 
@@ -332,7 +332,7 @@ def cmd_apply(a):
             try:
                 status = apply_item(client, team_id, client.user_id, users, c, entry, st)
                 items[key] = "created" if st["created"] > before else status
-            except CollectorError as e:
+            except FetchError as e:
                 if e.category == "auth_required":
                     raise
                 items[key] = "failed:" + e.category
@@ -471,7 +471,7 @@ def main(argv=None):
     a = p.parse_args(sys.argv[1:] if argv is None else argv)
     try:
         body, code = COMMANDS[a.command](a)
-    except CollectorError as e:
+    except FetchError as e:
         body, code = {"status": e.category, **({"http_status": e.status} if e.status else {})}, 2
     except Exception as e:
         body, code = {"status": "error", "error_type": type(e).__name__}, 2

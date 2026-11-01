@@ -13,7 +13,7 @@ from unittest import mock
 
 if os.name == "nt":
     from kakaotalk import admin
-    from tools.archiveio import CollectorError
+    from tools.archiveio import FetchError
 
 VT = 0x2000000
 TPL = {"msgId": 0x1000, "roomVtable": VT, "sender_id": 7, "template_hex": "00" * 0x1D0, "texthdr_hex": "00" * 32}
@@ -67,8 +67,8 @@ class TestSend(unittest.TestCase):
         """script.load() runs the script up to the client's send call: a frida error there is not a refusal."""
         body, code = self.run_send([], attach_error=RuntimeError("transport lost"))
         self.assertEqual((body["status"], body["detail"], code), ("failed_after_write", "RuntimeError", 1))
-        with self.assertRaises(CollectorError):
-            self.run_send([], attach_error=CollectorError("frida_missing"))
+        with self.assertRaises(FetchError):
+            self.run_send([], attach_error=FetchError("frida_missing"))
         with self.assertRaises(RuntimeError):
             self.run_send([], attach_error=RuntimeError("x"), dry_run=True)
 
@@ -84,7 +84,7 @@ class TestSend(unittest.TestCase):
     def test_room_refusals_attach_nothing(self):
         for rooms, category in (({}, "no_room"), ({0x100: VT, 0x200: VT}, "ambiguous_room"),
                                 ({0x100: VT + 4}, "no_room")):
-            with self.assertRaises(CollectorError) as cm:
+            with self.assertRaises(FetchError) as cm:
                 self.run_send([], rooms=rooms)
             self.assertEqual(cm.exception.category, category)
             self.assertEqual((self.attached, self.writes), ([], []))

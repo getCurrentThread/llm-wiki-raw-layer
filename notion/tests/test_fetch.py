@@ -3,8 +3,8 @@ import json
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
-from notion.collector import NotionClient, fetch_page, sync
-from tools.archiveio import CollectorError, load, locked
+from notion.fetch import NotionClient, fetch_page, sync
+from tools.archiveio import FetchError, load, locked
 from .fixtures import Fixture, PID, BID, OTHER, UID, COMMENT, block, page, rt
 from . import helpers as h
 
@@ -25,7 +25,7 @@ class Client:
             return {"id": UID, "object": "user", "name": "Synthetic"}
         if path == f"/v1/pages/{PID}":
             if self.fail == "page":
-                raise CollectorError("api_error", 404)
+                raise FetchError("api_error", 404)
             return copy.deepcopy(self.value["page"])
         raise AssertionError("unexpected endpoint")
 
@@ -33,25 +33,25 @@ class Client:
         self.calls.append(path)
         if path == "/v1/users":
             if not self.directory:
-                raise CollectorError("api_error", 403)
+                raise FetchError("api_error", 403)
             yield {"id": UID, "name": "Synthetic"}
         elif path == "/v1/search":
             if not body["filter"]["in_trash"]:
                 yield dict(self.value["page"], object="page")
         elif path == f"/v1/blocks/{PID}/children":
             if self.fail == "children":
-                raise CollectorError("api_error", 404)
+                raise FetchError("api_error", 404)
             yield from copy.deepcopy(list(self.value["blocks"].values()))
         elif path == "/v1/comments":
             if self.fail == "comments":
-                raise CollectorError("api_error", 403)
+                raise FetchError("api_error", 403)
             if query["block_id"] == PID:
                 yield from copy.deepcopy(self.comment_rows)
         else:
             raise AssertionError("unexpected endpoint")
 
 
-class CollectorTests(unittest.TestCase):
+class FetchTests(unittest.TestCase):
     def setUp(self):
         self.fx, self.client = Fixture(), Client()
         self.addCleanup(h.force_rmtree, self.fx.base)
@@ -122,10 +122,10 @@ class CollectorTests(unittest.TestCase):
         def request(path, **kwargs):
             return {"id": OTHER} if path == "/v1/users/me" else original(path, **kwargs)
         self.client.request = request
-        with self.assertRaisesRegex(CollectorError, "account_changed"):
+        with self.assertRaisesRegex(FetchError, "account_changed"):
             sync(self.fx.root, self.client)
         with locked(self.fx.root):
-            with self.assertRaisesRegex(CollectorError, "collector_busy"):
+            with self.assertRaisesRegex(FetchError, "collector_busy"):
                 sync(self.fx.root, self.client)
 
     def test_nested_synced_blocks_and_child_page_boundary(self):
@@ -148,7 +148,7 @@ class CollectorTests(unittest.TestCase):
         def runner(argv, **kwargs):
             calls.append((argv,kwargs))
             return outputs.pop(0)
-        with patch("notion.collector.executable", return_value="ntn"):
+        with patch("notion.fetch.executable", return_value="ntn"):
             client=NotionClient(runner=runner,sleep=lambda delay:None)
         self.assertEqual(len(list(client.items('/v1/search','POST'))),2)
         self.assertIn('--data',calls[0][0])
@@ -158,12 +158,12 @@ class CollectorTests(unittest.TestCase):
     def test_client_auth_error_redaction_and_cursor_guard(self):
         secret = "synthetic-private-token"
         runner=lambda *args,**kwargs:SimpleNamespace(returncode=1,stdout='',stderr='not logged in '+secret)
-        with patch("notion.collector.executable", return_value="ntn"):
+        with patch("notion.fetch.executable", return_value="ntn"):
             client=NotionClient(runner=runner,sleep=lambda delay:None)
-        with self.assertRaises(CollectorError) as raised:
+        with self.assertRaises(FetchError) as raised:
             client.request('/v1/users/me')
         self.assertEqual(str(raised.exception),'auth_required')
         self.assertNotIn(secret,str(raised.exception))
         client.request=lambda *args,**kwargs:{'results':[],'has_more':True,'next_cursor':'same'}
-        with self.assertRaisesRegex(CollectorError,'pagination_stalled'):
+        with self.assertRaisesRegex(FetchError,'pagination_stalled'):
             list(client.items('/v1/users'))

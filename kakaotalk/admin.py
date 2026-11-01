@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """KakaoTalk administration: scriptable message sending through the running Windows client's own Loco WRITE
-path — the write-side counterpart of the read-only collector, mattermost admin.py's counterpart here. The
+path — the write-side counterpart of the read-only fetch step, mattermost admin.py's counterpart here. The
 client is driven with frida, so session, TLS and sync handling stay entirely the client's own; no credential
 is read, stored or printed (the app's key material is never touched).
 
@@ -45,7 +45,7 @@ import subprocess
 import sys
 import time
 
-from tools.archiveio import CollectorError, atomic, load, now
+from tools.archiveio import FetchError, atomic, load, now
 
 VERSION = "26.9.1.5339"
 BUILDER = 0x017F9FF0                    # TalkChatRoom WRITE packet builder (thiscall: room, msgOuter, 0)
@@ -64,7 +64,7 @@ k32 = ctypes.windll.kernel32
 
 
 def bad(category):
-    raise CollectorError(category)
+    raise FetchError(category)
 
 
 # ---------------------------------------------------------------------------------------------------------------- client
@@ -178,9 +178,9 @@ def data_path(value):
     try:
         if not value or not path.is_absolute() \
                 or not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
-            raise CollectorError("unsafe_path")
+            raise FetchError("unsafe_path")
         precheck.check(path.parent)
-    except CollectorError:
+    except FetchError:
         raise
     except Exception:
         bad("unsafe_path")
@@ -190,7 +190,7 @@ def data_path(value):
 def read_template(path):
     try:
         data = load(path, None)
-    except CollectorError:
+    except FetchError:
         bad("bad_template")
     if not isinstance(data, dict) or data.get("v") != 1:
         bad("bad_template")
@@ -544,7 +544,7 @@ def cmd_send(a):
                         tpl["template_hex"], tpl["texthdr_hex"], RESPONSE_WAIT * 1000)
     try:
         session, script, lines = _attach(pid, source)
-    except CollectorError:
+    except FetchError:
         raise                                           # frida_missing: nothing was attached
     except Exception as e:                              # load() runs the script, which may have called the client
         if a.dry_run:
@@ -633,7 +633,7 @@ def main(argv=None):
         if a.state:
             a.state = data_path(a.state)
         body, code = COMMANDS[a.command](a)
-    except CollectorError as e:
+    except FetchError as e:
         body, code = {"status": e.category}, 2
     except Exception:
         body, code = {"status": "error", "error_type": type(sys.exc_info()[1]).__name__}, 2

@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 import re
 import zlib
-from tools.archiveio import CollectorError, atomic, load, locked, now
-from .collector import CHANNEL_TYPES, _heads, dce_message
+from tools.archiveio import FetchError, atomic, load, locked, now
+from .fetch import CHANNEL_TYPES, _heads, dce_message
 from .keys import snowflake_ms
 from .readers.archive import msg_native
 
@@ -55,7 +55,7 @@ def payloads(data):
 def scan(source):
     source = Path(source)
     if not source.is_dir():
-        raise CollectorError("desktop_missing")
+        raise FetchError("desktop_missing")
     # Deliberately exclude Local Storage, cookies, keychains and session files.
     roots = [source / "Cache/Cache_Data", source / "Service Worker/CacheStorage"]
     messages, channels, routes = {}, {}, {}
@@ -89,7 +89,7 @@ def scan(source):
                 continue
             try:
                 if not path.resolve().is_relative_to(source.resolve()):
-                    raise CollectorError("unsafe_path")
+                    raise FetchError("unsafe_path")
                 before = path.stat()
                 if not 0 < before.st_size <= MAX_BYTES:
                     stats["files_skipped"] += 1

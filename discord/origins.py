@@ -1,4 +1,4 @@
-from tools.archiveio import sync_first
+from tools.archiveio import fetch_first
 from rawlayer.capture.origins import MultiVersionMixin, Origin
 from .readers import archive
 
@@ -9,7 +9,7 @@ class DcArchive(MultiVersionMixin, Origin):
     day_kinds = frozenset({"msg"})
 
     def read_once(self, ctx):
-        sync_first(ctx, ctx.cfg.dc_sync, ctx.inputs.dc_archive, "discord")
+        fetch_first(ctx, ctx.cfg.dc_sync, ctx.inputs.dc_archive, "discord")
         return archive.read_once(ctx.inputs.dc_archive, [p.casefold() for p in ctx.cfg.dc_exclude],
                                  ctx.denylist, self.name)
 

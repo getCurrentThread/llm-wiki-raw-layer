@@ -3,9 +3,9 @@ import io
 import json
 import unittest
 from urllib.error import HTTPError
-from discord.collector import DiscordClient, dce_message, sync
+from discord.fetch import DiscordClient, dce_message, sync
 from discord.readers.archive import read_once
-from tools.archiveio import CollectorError, load, locked
+from tools.archiveio import FetchError, load, locked
 from .fixtures import Fixture, CID, MID, UID
 from . import helpers as h
 
@@ -31,7 +31,7 @@ class Client:
         raise AssertionError("unexpected endpoint")
     def messages(self,cid,lower=0):
         if self.fail:
-            raise CollectorError("api_error",403)
+            raise FetchError("api_error",403)
         yield from copy.deepcopy([m for m in self.rows if int(m['id'])>lower])
 
 
@@ -44,7 +44,7 @@ class Response:
     def read(self):return self.data
 
 
-class CollectorTests(unittest.TestCase):
+class FetchTests(unittest.TestCase):
     def setUp(self):
         self.fx, self.client = Fixture(), Client()
         self.addCleanup(h.force_rmtree,self.fx.base)
@@ -110,9 +110,9 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result['forwardedMessage'][0]['content'],'forwarded')
         self.assertEqual(result['stickers'][0]['name'],'sticker')
 
-    def test_collector_lock_and_bad_archive(self):
+    def test_fetch_lock_and_bad_archive(self):
         with locked(self.fx.root):
-            with self.assertRaisesRegex(CollectorError,'collector_busy'):
+            with self.assertRaisesRegex(FetchError,'collector_busy'):
                 self.collect()
         man=load(self.fx.root/'manifest.json')
         man['channels'][CID]['files']=['exports/../escape.json']
@@ -152,7 +152,7 @@ class CollectorTests(unittest.TestCase):
         def opener(*args,**kwargs):
             raise HTTPError('https://discord.com',401,'private-secret',{},io.BytesIO(b'private-secret'))
         client=DiscordClient('private-secret',token_type='bot',opener=opener,sleep=lambda delay:None)
-        with self.assertRaises(CollectorError) as raised:
+        with self.assertRaises(FetchError) as raised:
             client.authenticate()
         self.assertEqual(str(raised.exception),'auth_failed')
         self.assertNotIn('private-secret',str(raised.exception))

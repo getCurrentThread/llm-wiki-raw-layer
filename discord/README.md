@@ -1,9 +1,9 @@
 # Discord raw-layer app
 
 `dc_archive` keeps a protected data root, append-only ledger and `index/discord.sqlite`.
-The app includes a stdlib collector (`collector.py`) with API and token-free desktop-cache sources.
+The app includes a stdlib fetch step (`fetch.py`) with API and token-free desktop-cache sources.
 Archive-only configs remain read-only; `dc_sync: true` makes live `manage.py collect discord` update the
-archive before capturing it. Frozen inputs never call a collector. Core files are unchanged.
+archive before capturing it. Frozen inputs never call a fetch step. Core files are unchanged.
 
 ## Collection and authentication
 
@@ -29,12 +29,12 @@ to 7. Empty refreshes cannot prove mass deletion because loss of history permiss
 array. Restricted message-content responses and failed channel fetches preserve the old cursor/partitions.
 
 ```
-python -s -B -m discord.collector --auth-check
-python -s -B -m discord.collector --capture
+python -s -B -m discord.fetch --auth-check
+python -s -B -m discord.fetch --capture
 python -s -B manage.py collect discord
 ```
 
-The collector CLI prints counts/categories only; `--max-items N` bounds channel publication for a diagnostic
+The fetch step CLI prints counts/categories only; `--max-items N` bounds channel publication for a diagnostic
 run. `--capture` runs capture/index after collection, without collecting twice. Production configs and tokens
 remain outside the checkout. The DCE port covers the JSON fields used by this app's projection; it does not
 implement DCE HTML/text formats, media downloading, Markdown rewriting, or system-message fallback rendering.
@@ -70,7 +70,7 @@ channel and files. DM guild id is the string `"0"`. `users.json` maps user ids t
 Message ids must be positive decimal snowflakes below `2**63` (the search index's signed INTEGER range);
 invalid message/user ids are skipped and counted as `pk_bad`.
 
-The collector publishes partitions, then users, then manifest, using temporary files plus atomic replace
+The fetch step publishes partitions, then users, then manifest, using temporary files plus atomic replace
 with retries for Windows shared readers. Partitions and their manifest references are retained permanently.
 New messages use `after=last_message_id`; an N-day refresh emits only changed projection signatures.
 Messages missing from a completed refresh window are retained as copies with `_removedAt` (ISO UTC).
@@ -88,7 +88,7 @@ thread may retain the same starter id independently. Timestamps come from `(snow
 
 ## Message signature and shared test vectors
 
-`readers.archive.msg_native()` is the collector/reader projection contract:
+`readers.archive.msg_native()` is the fetch/reader projection contract:
 
 - Keep id, type, timestamp, timestampEdited, isPinned, content and `_removedAt`.
 - Keep author.id, attachments `{id,fileName,fileSizeBytes}`, stickers `{id,name}`.
@@ -126,7 +126,7 @@ Labels and text are private plaintext; follow the session's privacy rules when r
 
 Frozen input sets read `<inputs_root>/<set>/dc/archive`. Scheduled capture runs as SYSTEM (times and limit:
 [../README.md](../README.md#scheduled-tasks)). Run genesis manually (or plan a 2-hour task limit) for a large archive.
-With `dc_sync` disabled, an external collector must finish before capture starts. With it enabled, collection
+With `dc_sync` disabled, an external fetch step must finish before capture starts. With it enabled, collection
 runs inside the app's live read hook. Task registration is a separate operation.
 To preview the task definition, supply a configured external config:
 `python -s -B manage.py schedule install discord --config <CFG> --dry-run`.

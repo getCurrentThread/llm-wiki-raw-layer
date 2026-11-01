@@ -34,7 +34,7 @@ class OriginRun:
         # keys a settled container of this run recorded: one record per key per run.
         # shortcut: a key read under two containers at once, with different values, still gets one rev per run
         # (the containers take turns), and a key that moves unchanged is first marked absent, then put again; no
-        # app's reader yields either today (keys embed their container, or the collector refuses a duplicate id).
+        # app's reader yields either today (keys embed their container, or the fetch step refuses a duplicate id).
         # Track every observed key per run if a source ever can.
         self.recorded = set()
         # At genesis no key can sit under another container, so skip the per-key fallback lookup.

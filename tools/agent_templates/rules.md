@@ -36,7 +36,7 @@ Checkout: `{{PROJECT}}`. Append-only raw ledgers with FTS5 search over the owner
 - The `llm-wiki-setup` skill installs apps, turns on scheduled collection, checks health and recovers, by the
   checkout's `llm.md` and its doctor: `{{BOOT}} doctor`
 - Agent tests: `{{RUN}} test core claudecode discord gmail kakaotalk mattermost notion`.
-- Always run Python as `python -s -B`. Never run `collect`, `schedule` or a collector unless the owner asks.
+- Always run Python as `python -s -B`. Never run `collect`, `schedule` or a fetch step unless the owner asks.
   `mattermost/admin.py` and `kakaotalk/admin.py` write outward (posts, channels, messages): only when the owner
   asks for that write, after their read-only step or `--dry-run`.
 - This block, the skills, the subagent and the MCP server are managed by the checkout's agent integration

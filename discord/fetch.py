@@ -1,4 +1,4 @@
-"""Read-only Discord API v10 collector; immutable DCE-shaped JSON partitions."""
+"""Read-only Discord API v10 fetch step; immutable DCE-shaped JSON partitions."""
 import copy
 import datetime as dt
 import json
@@ -8,7 +8,7 @@ import re
 import time
 from urllib import error, parse, request
 import uuid
-from tools.archiveio import CollectorError, atomic, bind, credential_path, inside, load, locked, now
+from tools.archiveio import FetchError, atomic, bind, credential_path, inside, load, locked, now
 from .keys import snowflake_ms
 from .readers.archive import _safe_rel, msg_native
 
@@ -21,7 +21,7 @@ MESSAGE_TYPES = {0: "Default", 6: "ChannelPinnedMessage", 19: "Reply", 20: "Chat
 
 def _id(value):
     if snowflake_ms(value) is None:
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     return value
 
 
@@ -55,23 +55,23 @@ def token(configured=""):
         try:
             value = path.read_text(encoding="utf-8").strip()
         except OSError:
-            raise CollectorError("auth_required") from None
+            raise FetchError("auth_required") from None
     if not value or any(x in value for x in ("\n", "\r", "\x00")):
-        raise CollectorError("auth_required")
+        raise FetchError("auth_required")
     return value
 
 
 class DiscordClient:
     def __init__(self, credential, token_type="auto", opener=request.urlopen, sleep=time.sleep):
         if token_type not in ("auto", "bot", "user"):
-            raise CollectorError("bad_token_type")
+            raise FetchError("bad_token_type")
         self.credential = credential.removeprefix("Bot ")
         self.token_type, self.opener, self.sleep = token_type, opener, sleep
         self.requests, self.wait_until, self.is_bot = 0, 0.0, None
 
     def request(self, path, query=None, bot=None):
         if not re.fullmatch(r"/[A-Za-z0-9_/@-]+", path):
-            raise CollectorError("bad_endpoint")
+            raise FetchError("bad_endpoint")
         if bot is None:
             bot = self.is_bot if self.is_bot is not None else self.token_type != "user"
         auth = ("Bot " if bot else "") + self.credential
@@ -101,20 +101,20 @@ class DiscordClient:
                 if status in (429, 500, 502, 503, 504) and attempt < 5:
                     self.sleep(min(120, float(retry or 2 ** attempt)))
                     continue
-                raise CollectorError("auth_failed" if status == 401 else "api_error", status) from None
+                raise FetchError("auth_failed" if status == 401 else "api_error", status) from None
             except (error.URLError, OSError, ValueError):
-                raise CollectorError("transport_error") from None
-        raise CollectorError("retry_exhausted")
+                raise FetchError("transport_error") from None
+        raise FetchError("retry_exhausted")
 
     def authenticate(self):
         try:
             me = self.request("/users/@me", bot=self.token_type != "user")
-        except CollectorError as e:
+        except FetchError as e:
             if self.token_type != "auto" or e.status != 401:
                 raise
             me = self.request("/users/@me", bot=False)
         if not isinstance(me, dict):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         _id(me.get("id"))
         self.is_bot = bool(me.get("bot"))
         return me
@@ -127,13 +127,13 @@ class DiscordClient:
                 q["after"] = cursor
             rows = self.request("/users/@me/guilds", q)
             if not isinstance(rows, list):
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             yield from rows
             if len(rows) < 200:
                 return
             next_cursor = max((_id(v.get("id")) for v in rows), key=int)
             if cursor is not None and int(next_cursor) <= int(cursor):
-                raise CollectorError("pagination_stalled")
+                raise FetchError("pagination_stalled")
             cursor = next_cursor
 
     def archived(self, cid, kind, joined=False):
@@ -145,16 +145,16 @@ class DiscordClient:
                 q["before"] = cursor
             obj = self.request(route, q)
             if not isinstance(obj, dict) or not isinstance(obj.get("threads"), list):
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             yield from obj["threads"]
             if not obj.get("has_more"):
                 return
             if not obj["threads"]:
-                raise CollectorError("pagination_stalled")
+                raise FetchError("pagination_stalled")
             last = obj["threads"][-1]
             cursor = last.get("id") if joined else last.get("thread_metadata", {}).get("archive_timestamp")
             if not isinstance(cursor, str) or cursor in seen:
-                raise CollectorError("pagination_stalled")
+                raise FetchError("pagination_stalled")
             seen.add(cursor)
 
     def messages(self, cid, lower=0):
@@ -167,12 +167,12 @@ class DiscordClient:
                 q["before"] = before
             rows = self.request(f"/channels/{cid}/messages", q)
             if not isinstance(rows, list):
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             if not rows:
                 return
             ids = [int(_id(v.get("id"))) for v in rows]
             if before and max(ids) >= int(before):
-                raise CollectorError("pagination_stalled")
+                raise FetchError("pagination_stalled")
             for obj, ident in zip(rows, ids):
                 if ident > lower:
                     yield obj
@@ -186,7 +186,7 @@ def dce_message(obj):
     ident = _id(obj.get("id"))
     author = obj.get("author")
     if not isinstance(author, dict):
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     _id(author.get("id"))
     out = {"id": ident, "type": MESSAGE_TYPES.get(obj.get("type", 0), str(obj.get("type"))),
            "timestamp": obj.get("timestamp"), "timestampEdited": obj.get("edited_timestamp"),
@@ -212,15 +212,15 @@ def _heads(root, ch):
     heads = {}
     files = ch.get("files", [])
     if not isinstance(files, list) or files != sorted(files) or len(set(files)) != len(files):
-        raise CollectorError("bad_archive")
+        raise FetchError("bad_archive")
     for rel in files:
         if not _safe_rel(rel):
-            raise CollectorError("unsafe_path")
+            raise FetchError("unsafe_path")
         obj = load(inside(root, Path(root) / rel))
         if not isinstance(obj, dict) or obj.get("channel", {}).get("id") != ch["id"] \
                 or not isinstance(obj.get("messages"), list) or type(obj.get("messageCount")) is not int \
                 or obj["messageCount"] != len(obj["messages"]):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
         for msg in obj["messages"]:
             heads[_id(msg.get("id"))] = msg
     return heads
@@ -243,7 +243,7 @@ def discover(client, selected=()):
         try:
             base = client.request(f"/guilds/{gid}/channels")
             if not isinstance(base, list):
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             for ch in base:
                 ch = dict(ch, guild_id=gid)
                 channels[_id(ch.get("id"))] = ch
@@ -257,10 +257,10 @@ def discover(client, selected=()):
                     try:
                         for thread in client.archived(ch["id"], kind, joined):
                             channels[_id(thread.get("id"))] = dict(thread, guild_id=gid)
-                    except CollectorError as e:
+                    except FetchError as e:
                         if e.status not in (403, 404):
                             errors += 1
-        except CollectorError:
+        except FetchError:
             errors += 1
     if not client.is_bot:
         for ch in client.request("/users/@me/channels"):
@@ -277,7 +277,7 @@ def sync(root, client, channel_ids=(), refresh_days=7, patterns=(), max_items=0)
         bind(root, me["id"])
         man = load(root / "manifest.json", {"version": 1, "guilds": {}, "channels": {}})
         if man.get("version") != 1 or not isinstance(man.get("channels"), dict) or not isinstance(man.get("guilds"), dict):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
         users = load(root / "users.json", {})
         guilds, discovered, errors = discover(client, channel_ids)
         stats["errors"] += errors
@@ -294,7 +294,7 @@ def sync(root, client, channel_ids=(), refresh_days=7, patterns=(), max_items=0)
             if raw.get("type") in (10, 11, 12) and not parent_raw and raw.get("parent_id"):
                 try:
                     parent_raw = client.request(f"/channels/{_id(raw['parent_id'])}")
-                except CollectorError:
+                except FetchError:
                     parent_raw = {}
             category_id = parent_raw.get("parent_id") if raw.get("type") in (10, 11, 12) else raw.get("parent_id")
             category = discovered.get(category_id, {}).get("name")
@@ -315,10 +315,10 @@ def sync(root, client, channel_ids=(), refresh_days=7, patterns=(), max_items=0)
                                                      for mid, msg in heads.items()):
                     # READ_MESSAGE_HISTORY loss returns [] rather than an error.
                     # An entirely empty refresh cannot establish mass deletion.
-                    raise CollectorError("empty_refresh")
+                    raise FetchError("empty_refresh")
                 if messages and all(m.get("type", 0) == 0 and not any(m.get(field) for field in
                                    ("content", "attachments", "embeds", "sticker_items", "message_snapshots")) for m in messages):
-                    raise CollectorError("message_content_unavailable")
+                    raise FetchError("message_content_unavailable")
                 delta = [m for mid, m in sorted(fresh.items(), key=lambda p: int(p[0]))
                          if mid not in heads or msg_native(m) != msg_native(heads[mid])]
                 if refresh_days and high:
@@ -355,7 +355,7 @@ def sync(root, client, channel_ids=(), refresh_days=7, patterns=(), max_items=0)
                 man["channels"][cid] = ch
                 stats["channels"] += 1
                 stats["messages_written"] += len(delta)
-            except (CollectorError, ValueError, TypeError, KeyError):
+            except (FetchError, ValueError, TypeError, KeyError):
                 stats["errors"] += 1
                 # Preserve known partitions/cursor; a failed or incomplete fetch
                 # must never infer deletion or advance the channel watermark.
@@ -375,7 +375,7 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
         source = cfg.dc_desktop_path or desktop.default_path()
         if auth_only:
             if not Path(source).is_dir():
-                raise CollectorError("desktop_missing")
+                raise FetchError("desktop_missing")
             return {"status": "local_ready", "authentication_required": False}
         return desktop.sync(cfg.sources["dc_archive"], source, cfg.dc_exclude, cfg.dc_channel_ids, max_items)
     client = DiscordClient(token(cfg.dc_token_file), cfg.dc_token_type)

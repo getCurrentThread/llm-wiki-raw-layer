@@ -1,4 +1,4 @@
-from tools.archiveio import sync_first
+from tools.archiveio import fetch_first
 from rawlayer.capture.origins import MultiVersionMixin, Origin
 from .readers import archive
 
@@ -8,7 +8,7 @@ class CcArchive(MultiVersionMixin, Origin):
     kinds = day_kinds = frozenset({"msg"})
 
     def read_once(self, ctx):
-        sync_first(ctx, ctx.cfg.cc_sync, ctx.inputs.cc_archive, "claudecode")
+        fetch_first(ctx, ctx.cfg.cc_sync, ctx.inputs.cc_archive, "claudecode")
         return archive.read_once(ctx.inputs.cc_archive, ctx.denylist, self.name)
 
     def estimate_peak(self, inputs):

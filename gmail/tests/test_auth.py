@@ -10,7 +10,7 @@ from urllib import error, request
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from gmail.auth import pkce, callback_code, authorize, refresh, token_request, credential_path, SCOPE
-from tools.archiveio import CollectorError, load
+from tools.archiveio import FetchError, load
 from .fixtures import Fixture, Response
 from . import helpers as h
 
@@ -64,9 +64,9 @@ class AuthTests(unittest.TestCase):
 
     def test_state_mismatch_duplicate_and_error(self):
         for url in ("/callback?state=wrong&code=synthetic", "/callback?state=right&state=wrong&code=x"):
-            with self.assertRaisesRegex(CollectorError, "state_mismatch"):
+            with self.assertRaisesRegex(FetchError, "state_mismatch"):
                 callback_code(url, "right")
-        with self.assertRaisesRegex(CollectorError, "auth_failed"):
+        with self.assertRaisesRegex(FetchError, "auth_failed"):
             callback_code("/callback?state=right&error=access_denied", "right")
 
     def test_loopback_real_http_exchange_and_refresh(self):
@@ -123,20 +123,20 @@ class AuthTests(unittest.TestCase):
         def opener(req, **kwargs):
             raise HTTPError("https://example.com", 400, "synthetic-secret", {},
                             io.BytesIO(b'{"error":"invalid_grant","description":"synthetic-secret"}'))
-        with self.assertRaisesRegex(CollectorError, "auth_required") as caught:
+        with self.assertRaisesRegex(FetchError, "auth_required") as caught:
             token_request({}, opener)
         self.assertNotIn("synthetic-secret", str(caught.exception))
 
     def test_protected_paths_and_missing_token(self):
-        with self.assertRaisesRegex(CollectorError, "unsafe_token_path"):
+        with self.assertRaisesRegex(FetchError, "unsafe_token_path"):
             credential_path("relative-token.json")
         with patch("rawlayer.capture.precheck.check"):
-            with self.assertRaisesRegex(CollectorError, "auth_required"):
+            with self.assertRaisesRegex(FetchError, "auth_required"):
                 refresh(self.client_file, self.token_file, opener=lambda *a, **k: self.fail("network"))
 
     def test_credential_path_refuses_archive_and_ledger_folders(self):
         for folder in ("archive", "raw", "RAW/ledger"):
-            with self.subTest(folder=folder), self.assertRaisesRegex(CollectorError, "unsafe_token_path"):
+            with self.subTest(folder=folder), self.assertRaisesRegex(FetchError, "unsafe_token_path"):
                 credential_path(str(self.fx.base / folder / "token.json"))
 
     def test_auth_missing_refresh_not_persisted(self):
@@ -155,7 +155,7 @@ class AuthTests(unittest.TestCase):
             return Response({"access_token": "new-synthetic", "refresh_token": "new-synthetic-refresh"})
         with patch("rawlayer.capture.precheck.check"), patch("time.sleep", lambda n: None), \
                 patch("os.replace", side_effect=PermissionError(13, "synthetic refusal")):
-            with self.assertRaisesRegex(CollectorError, "archive_busy"):
+            with self.assertRaisesRegex(FetchError, "archive_busy"):
                 refresh(self.client_file, self.token_file, opener=opener)
         self.assertEqual(load(self.token_file), {"refresh_token": "old-synthetic-refresh"})
         self.assertFalse(list(self.fx.base.glob("*.tmp")))

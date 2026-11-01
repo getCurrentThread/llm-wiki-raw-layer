@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from tools.archiveio import CollectorError, atomic, bind, inside, load, locked, now
+from tools.archiveio import FetchError, atomic, bind, inside, load, locked, now
 from .keys import nt_id, iso_ms
 from .readers.project import project
 from .search import page_title
@@ -20,7 +20,7 @@ def executable(configured=""):
     if configured:
         path = Path(configured)
         if not path.is_file() or path.suffix.lower() != ".exe" and os.name == "nt":
-            raise CollectorError("cli_missing")
+            raise FetchError("cli_missing")
         return str(path)
     found = shutil.which("ntn.exe" if os.name == "nt" else "ntn")
     if found:
@@ -29,7 +29,7 @@ def executable(configured=""):
         path = Path(os.environ.get("APPDATA", "")) / "npm/node_modules/ntn/dist/ntn-win32-x64/ntn.exe"
         if path.is_file():
             return str(path)
-    raise CollectorError("cli_missing")
+    raise FetchError("cli_missing")
 
 
 class NotionClient:
@@ -39,7 +39,7 @@ class NotionClient:
 
     def request(self, path, method="GET", body=None, query=None):
         if not re.fullmatch(r"/v1/[A-Za-z0-9_%/-]+", path):
-            raise CollectorError("bad_endpoint")
+            raise FetchError("bad_endpoint")
         argv = [self.cli, "api", path, "-X", method, "--notion-version", API_VERSION]
         if body is not None:
             argv += ["--data", "@-"]
@@ -54,7 +54,7 @@ class NotionClient:
                 r = self.runner(argv, input=json.dumps(body) if body is not None else "", env=env,
                                 capture_output=True, text=True, encoding="utf-8", timeout=90)
             except (OSError, subprocess.SubprocessError):
-                raise CollectorError("transport_error") from None
+                raise FetchError("transport_error") from None
             self.requests += 1
             try:
                 value = json.loads(r.stdout)
@@ -72,9 +72,9 @@ class NotionClient:
                 self.sleep(min(120, float(delay[1]) if delay else 2 ** attempt))
                 continue
             if status == 401 or status is None and any(x in detail for x in ("not logged", "login", "credential", "token")):
-                raise CollectorError("auth_required", status)
-            raise CollectorError("api_error", status)
-        raise CollectorError("retry_exhausted")
+                raise FetchError("auth_required", status)
+            raise FetchError("api_error", status)
+        raise FetchError("retry_exhausted")
 
     def items(self, path, method="GET", body=None, query=None):
         cursor, seen = None, set()
@@ -86,13 +86,13 @@ class NotionClient:
                 target["start_cursor"] = cursor
             obj = self.request(path, method, b if method == "POST" else None, q)
             if not isinstance(obj.get("results"), list):
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             yield from obj["results"]
             if not obj.get("has_more"):
                 break
             cursor = obj.get("next_cursor")
             if not isinstance(cursor, str) or not cursor or cursor in seen:
-                raise CollectorError("pagination_stalled")
+                raise FetchError("pagination_stalled")
             seen.add(cursor)
 
 
@@ -113,7 +113,7 @@ def _complete_properties(client, page):
         from urllib.parse import quote, unquote
         ident = quote(unquote(str(prop.get("id", ""))), safe="")
         if not ident:
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         rows = list(client.items(f"/v1/pages/{page['id']}/properties/{ident}"))
         prop[typ] = [v[typ] for v in rows if typ in v]
         prop.pop("has_more", None)
@@ -122,12 +122,12 @@ def _complete_properties(client, page):
 def fetch_page(client, pid, comments=True):
     try:
         before = client.request(f"/v1/pages/{pid}")
-    except CollectorError as e:
+    except FetchError as e:
         if e.status in (403, 404):
-            raise CollectorError("page_gone", e.status) from None
+            raise FetchError("page_gone", e.status) from None
         raise
     if nt_id(before.get("id")) != pid:
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     _complete_properties(client, before)
     blocks, order, comment_map, visiting = {}, [], {}, set()
 
@@ -136,17 +136,17 @@ def fetch_page(client, pid, comments=True):
             for obj in client.items("/v1/comments", query={"block_id": ident}):
                 cid = nt_id(obj.get("id"))
                 if cid is None:
-                    raise CollectorError("bad_response")
+                    raise FetchError("bad_response")
                 comment_map[cid] = obj
 
     def children(ident, depth, parent):
         if ident in visiting or depth > 200:
-            raise CollectorError("block_cycle")
+            raise FetchError("block_cycle")
         visiting.add(ident)
         for obj in client.items(f"/v1/blocks/{ident}/children"):
             bid = nt_id(obj.get("id"))
             if bid is None:
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             if bid in blocks:
                 continue
             blocks[bid] = obj
@@ -159,7 +159,7 @@ def fetch_page(client, pid, comments=True):
                 if isinstance(synced, dict):
                     source = nt_id(synced.get("block_id"))
                     if source is None:
-                        raise CollectorError("bad_response")
+                        raise FetchError("bad_response")
             if (obj.get("has_children") or source != bid) and typ not in ("child_page", "child_database"):
                 children(source, depth + 1, bid)
         visiting.remove(ident)
@@ -168,7 +168,7 @@ def fetch_page(client, pid, comments=True):
     children(pid, 0, None)
     after = client.request(f"/v1/pages/{pid}")
     if any(before.get(k) != after.get(k) for k in ("last_edited_time", "in_trash", "archived")):
-        raise CollectorError("page_unstable")
+        raise FetchError("page_unstable")
     return {"page": before, "blocks": blocks, "order": order, "comments": comment_map}
 
 
@@ -199,16 +199,16 @@ def sync(root, client, page_ids=(), comments=True, full=False, max_items=0):
     with locked(root):
         me = client.request("/v1/users/me")
         if not isinstance(me.get("id"), str):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         bind(root, me["id"])
         users = load(root / "users.json", {})
         try:
             for user in client.items("/v1/users"):
                 uid = nt_id(user.get("id"))
                 if uid is None:
-                    raise CollectorError("bad_response")
+                    raise FetchError("bad_response")
                 users[uid] = user
-        except CollectorError as e:
+        except FetchError as e:
             if e.status != 403:
                 raise
             # Content access need not include directory access. Keep known users;
@@ -218,13 +218,13 @@ def sync(root, client, page_ids=(), comments=True, full=False, max_items=0):
         atomic(root, root / "users.json", users)
         man = load(root / "manifest.json", {"version": 1, "pages": {}, "data_sources": {}})
         if man.get("version") != 1 or not isinstance(man.get("pages"), dict) or not isinstance(man.get("data_sources"), dict):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
         state = load(root / "_collector_state.json", {})
         last_sweep = iso_ms(state.get("last_full_sweep")) or 0
         sweep = full or (iso_ms(stamp) - last_sweep >= 86400000)
         selected = {nt_id(v) for v in page_ids}
         if None in selected:
-            raise CollectorError("bad_page_id")
+            raise FetchError("bad_page_id")
         candidates, sources = {}, {}
         # Full pagination makes discovery independent of coarse page edit timestamps.
         if not selected:
@@ -234,7 +234,7 @@ def sync(root, client, page_ids=(), comments=True, full=False, max_items=0):
                 for obj in client.items("/v1/search", "POST", body=body):
                     ident = nt_id(obj.get("id"))
                     if ident is None:
-                        raise CollectorError("bad_response")
+                        raise FetchError("bad_response")
                     if obj.get("object") == "page":
                         candidates[ident] = obj
                     elif obj.get("object") == "data_source":
@@ -248,7 +248,7 @@ def sync(root, client, page_ids=(), comments=True, full=False, max_items=0):
                     for obj in client.items(f"/v1/data_sources/{sid}/query", "POST"):
                         if obj.get("object") == "page" and nt_id(obj.get("id")):
                             candidates[nt_id(obj["id"])] = obj
-                except CollectorError as e:
+                except FetchError as e:
                     failed(e)
         else:
             candidates = {pid: {} for pid in selected}
@@ -271,7 +271,7 @@ def sync(root, client, page_ids=(), comments=True, full=False, max_items=0):
             stats["pages_attempted"] += 1
             try:
                 value = fetch_page(client, pid, comments)
-            except CollectorError as e:
+            except FetchError as e:
                 # Only the page lookup can establish lost page access. A missing child
                 # or comments permission failure must preserve the previous full snapshot.
                 if e.category == "page_gone" and old:
@@ -312,7 +312,7 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
         source = cfg.nt_desktop_path or desktop.default_path()
         if auth_only:
             if not Path(source).is_file():
-                raise CollectorError("desktop_missing")
+                raise FetchError("desktop_missing")
             return {"status": "local_ready", "authentication_required": False}
         return desktop.sync(cfg.sources["nt_archive"], source, cfg.nt_page_ids, max_items or cfg.nt_max_pages)
     client = NotionClient(cfg.nt_cli)

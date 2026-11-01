@@ -1,4 +1,4 @@
-from tools.archiveio import sync_first
+from tools.archiveio import fetch_first
 from rawlayer.capture.origins import Origin
 from .readers import archive
 
@@ -9,7 +9,7 @@ class GmArchive(Origin):
     day_kinds = frozenset({"msg"})
 
     def read(self, ctx):
-        sync_first(ctx, ctx.cfg.gm_sync, ctx.inputs.gm_archive, "gmail")
+        fetch_first(ctx, ctx.cfg.gm_sync, ctx.inputs.gm_archive, "gmail")
         return archive.containers(ctx.inputs.gm_archive, self.name)
 
     def estimate_peak(self, inputs):

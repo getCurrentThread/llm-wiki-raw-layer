@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.origins import Unstable
-from tools.archiveio import CollectorError
+from tools.archiveio import FetchError
 from claudecode.origins import CcArchive
 from claudecode.readers.archive import read_once
 from .fixtures import Fixture, CID, MID, row
@@ -110,26 +110,26 @@ class CaptureTests(unittest.TestCase):
                                inputs=SimpleNamespace(name=name, cc_archive=self.fx.root), denylist=frozenset())
 
     def test_capture_frozen_never_collects(self):
-        sync = Mock(side_effect=AssertionError("collector called"))
-        with patch.dict(sys.modules, {"claudecode.collector": SimpleNamespace(sync_config=sync)}):
+        sync = Mock(side_effect=AssertionError("fetch called"))
+        with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}):
             CcArchive().read_once(self.context("frozen"))
         sync.assert_not_called()
 
     def test_capture_live_collects_and_incomplete_errors(self):
         sync = Mock(return_value={"errors": 0})
         ctx = self.context()
-        with patch.dict(sys.modules, {"claudecode.collector": SimpleNamespace(sync_config=sync)}), \
+        with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}), \
                 patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": "0"}), patch("rawlayer.capture.precheck.check") as check:
             CcArchive().read_once(ctx)
             sync.assert_called_once_with(ctx.cfg)
             check.assert_called_once_with(self.fx.root)
             sync.return_value = {"errors": 1}
-            with self.assertRaisesRegex(CollectorError, "collection_incomplete"):
+            with self.assertRaisesRegex(FetchError, "collection_incomplete"):
                 CcArchive().read_once(ctx)
 
     def test_capture_archive_ready_never_collects(self):
-        sync = Mock(side_effect=AssertionError("collector called"))
-        with patch.dict(sys.modules, {"claudecode.collector": SimpleNamespace(sync_config=sync)}), \
+        sync = Mock(side_effect=AssertionError("fetch called"))
+        with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}), \
                 patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": "1"}):
             CcArchive().read_once(self.context())
         sync.assert_not_called()

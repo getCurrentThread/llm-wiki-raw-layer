@@ -6,7 +6,7 @@ import io
 import json
 import unittest
 from unittest.mock import patch
-from gmail.collector import sync, main
+from gmail.fetch import sync, main
 from gmail.mime import extract
 from gmail.search import SPEC
 from rawlayer.search import common
@@ -94,7 +94,7 @@ class ContentOnlyTests(unittest.TestCase):
         self.http.history = [{"historyId": "20", "history": []}]
         self.http.failures["/messages/" + OTHER] = [403]
         out = io.StringIO()
-        with patch("gmail.collector.sync_config", side_effect=lambda *a, **kw: self.sync()), \
+        with patch("gmail.fetch.sync_config", side_effect=lambda *a, **kw: self.sync()), \
                 patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(out):
             self.assertEqual(main(["--config", str(self.fx.config_path)]), 75)
         self.assertEqual(json.loads(out.getvalue())["errors"], 1)
@@ -106,8 +106,8 @@ class ContentOnlyTests(unittest.TestCase):
         self.http.history = [{"historyId": "20", "history": []}]
         # Simulate a state dropped during reconciliation; the final guard must
         # prevent cursor publication even though the minimal request succeeded.
-        import gmail.collector as collector
-        archive = collector._archive
+        import gmail.fetch as fetch
+        archive = fetch._archive
 
         class DroppingState(dict):
             def __setitem__(self, key, value):
@@ -121,7 +121,7 @@ class ContentOnlyTests(unittest.TestCase):
             known, states = archive(*args)
             return known, DroppingState(states)
 
-        with patch("gmail.collector._archive", side_effect=missing):
+        with patch("gmail.fetch._archive", side_effect=missing):
             self.assertEqual(self.sync()["errors"], 1)
         self.assertEqual(load(self.fx.root / "manifest.json")["cursor"], "10")
 

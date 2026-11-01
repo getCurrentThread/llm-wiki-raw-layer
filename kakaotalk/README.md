@@ -245,7 +245,7 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   `failed_after_write` (1: the injected script reached the client's send call — its `[CALLED]` marker — and
   no success followed, a builder failure, an exception or a timeout; also any frida error while the script
   loads, since loading runs it up to that call; the message may have arrived, so check the room before
-  resending); `refused` (2: every failure before that call, nothing was sent). Requires the `frida` Python package (imported lazily; the collector never needs it).
+  resending); `refused` (2: every failure before that call, nothing was sent). Requires the `frida` Python package (imported lazily; the fetch step never needs it).
 
 ## Search
 

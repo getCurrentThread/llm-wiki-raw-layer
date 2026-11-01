@@ -6,7 +6,7 @@ import uuid
 
 from rawlayer.capture.canon import pk_text
 from tools import archiveio
-from tools.archiveio import CollectorError
+from tools.archiveio import FetchError
 from .keys import iso_ms
 
 
@@ -111,7 +111,7 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
             rel = path.relative_to(source).as_posix()
             try:
                 if not path.resolve().is_relative_to(source.resolve()):
-                    raise CollectorError("unsafe_path")
+                    raise FetchError("unsafe_path")
                 before = path.stat()
                 fingerprint = {"size": before.st_size, "mtime_ns": before.st_mtime_ns, "container": cid}
                 if not full and man["files"].get(rel) == fingerprint:
@@ -142,7 +142,7 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
                     stored = archiveio.load(archiveio.inside(root, root / partition))
                     known.update(row["uuid"] for row in stored["rows"])
                 except (OSError, ValueError, TypeError, KeyError, RecursionError):
-                    raise CollectorError("bad_archive") from None
+                    raise FetchError("bad_archive") from None
             rows = []
             for n, line in enumerate(data.split(b"\n")[:-1]):
                 try:
@@ -190,10 +190,10 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
 def sync(root, claude_dir, max_items=0, full=False, clock=None):
     try:
         return _sync(root, claude_dir, max_items, full, clock)
-    except CollectorError:
+    except FetchError:
         raise
     except (OSError, ValueError, TypeError, KeyError, RecursionError):
-        raise CollectorError("archive_error") from None
+        raise FetchError("archive_error") from None
 
 
 def sync_config(cfg, auth_only=False, full=False, max_items=0):
@@ -204,7 +204,7 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
     except (TypeError, ValueError, OSError):
         ready = False
     if not ready:
-        raise CollectorError("source_missing")
+        raise FetchError("source_missing")
     if auth_only:
         return {"status": "local_ready", "authentication_required": False}
     return sync(cfg.sources["cc_archive"], source, max_items, full)

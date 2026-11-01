@@ -83,7 +83,7 @@ KINDS = {key: kind for by_source in NEEDS.values() for needs in by_source.values
          if kind in ("file", "dir")}
 _WORD = re.compile(r"[a-z]{1,16}")
 # sources whose sync never runs in the SYSTEM task (llm.md 6.3: ntn's keychain is the owner's; the task stays
-# archive-only and the owner runs the collector)
+# archive-only and the owner runs the fetch step)
 NO_TASK_SYNC = {"notion": ("api",)}
 _INT = re.compile(r"-?(0|[1-9][0-9]*)")
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}(\.[A-Za-z_][A-Za-z0-9_]{0,39})?$")

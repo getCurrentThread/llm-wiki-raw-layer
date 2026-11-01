@@ -6,7 +6,7 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, urlunsplit
-from tools.archiveio import CollectorError
+from tools.archiveio import FetchError
 from .keys import gm_id, MAX_MS
 
 
@@ -58,7 +58,7 @@ def clean_text(value):
 
 def extract(obj, body_max_bytes=131072):
     if gm_id(obj.get("id")) is None or gm_id(obj.get("threadId")) is None:
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     try:
         raw = obj["raw"]
         data = base64.b64decode(raw + "=" * (-len(raw) % 4), altchars=b"-_", validate=True)
@@ -67,7 +67,7 @@ def extract(obj, body_max_bytes=131072):
         if not 0 <= timestamp <= MAX_MS or type(obj.get("sizeEstimate")) is not int:
             raise ValueError("timestamp")
     except (KeyError, ValueError, TypeError):
-        raise CollectorError("bad_response") from None
+        raise FetchError("bad_response") from None
     plain, html, attachments = [], [], []
 
     def visit(part, path):

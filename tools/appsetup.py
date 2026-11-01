@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """What the apps' AppConfig.setup_defaults share (`manage.py setup <app>`, and `tools/bootstrap.py config defaults
 <app>` on a config.json that is already there): fill a config key only while it is unset (missing, empty, or still
-a config.example.json placeholder <...>), and create the archive folder an app's collector writes into. A value
+a config.example.json placeholder <...>), and create the archive folder an app's fetch step writes into. A value
 the owner set is never replaced. Only key names reach `note`, never the values: they are machine paths."""
 import os
 from pathlib import Path

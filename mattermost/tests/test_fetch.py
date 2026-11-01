@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The app's Mattermost collector (mattertok's archiver, ported) against an in-process fake server: backfill and
+"""The app's Mattermost fetch step (mattertok's archiver, ported) against an in-process fake server: backfill and
 forward cursors, timestamp ties at page edges, retention, purged cursors, archived channels, resuming a mattertok
 archive, exclusion, unavailable channels, partial progress and interruption, torn files, users, account binding,
 bounds, kept files, the HTTP client (retries, redirects), sign-in, the command line, options and the origin hook."""
@@ -18,10 +18,10 @@ from urllib.request import BaseHandler
 from urllib.response import addinfourl
 
 from rawlayer.capture.config import Config
-from tools.archiveio import CollectorError, load
-from mattermost import collector
+from tools.archiveio import FetchError, load
+from mattermost import fetch
 from mattermost.apps import MatterConfig, _url
-from mattermost.collector import MattermostClient, login, sync, token
+from mattermost.fetch import MattermostClient, login, sync, token
 from mattermost.readers import archive as reader
 from mattermost.tests.fixtures import Fixture
 from mattermost.tests.helpers import _force, by_key, capture, invariants, records, replay_diff
@@ -96,14 +96,14 @@ class Server:
             return [self.users[u] for u in body if u in self.users]
         if parts[0] == "users":
             if parts[1] not in self.users:
-                raise CollectorError("api_error", 404)
+                raise FetchError("api_error", 404)
             return self.users[parts[1]]
         if parts[0] == "channels" and parts[2] == "posts":
             return self.page(parts[1], query)
         if parts[0] == "files" and binary:
             status = self.file_fail.get(parts[1])
             if status is not None:
-                raise CollectorError("auth_required" if status == 401 else "api_error", status)
+                raise FetchError("auth_required" if status == 401 else "api_error", status)
             return self.files[parts[1]]
         raise AssertionError("unexpected endpoint")
 
@@ -113,7 +113,7 @@ class Server:
         if status is not None and seen > skip:
             if isinstance(status, BaseException):
                 raise status
-            raise CollectorError("api_error", status)
+            raise FetchError("api_error", status)
         rows = sorted(self.posts[cid], key=lambda p: (p["create_at"], p["id"]))
         visible = [p for p in rows if p["create_at"] >= self.cut]
         stamp = {p["id"]: p["create_at"] for p in rows}
@@ -360,7 +360,7 @@ class TestSync(Base):
         purged = self.srv.posts[cid].pop()["id"]
         self.srv.add(cid, 450)
         self.srv.fail[cid] = (RuntimeError("killed"), 5)    # the third catch-up page
-        with patch.object(collector, "FLUSH_POSTS", 100), self.assertRaises(RuntimeError):
+        with patch.object(fetch, "FLUSH_POSTS", 100), self.assertRaises(RuntimeError):
             self.sync()
         self.assertEqual(self.manifest()["channels"][cid]["newest_post_id"], purged)
         self.assertEqual(len(self.lines(cid)), 5 + 399)
@@ -389,7 +389,7 @@ class TestSync(Base):
         committed = self.manifest()["channels"][cid]
         self.srv.add(cid, 2)
         fresh = self.srv.channel(2, name="second", posts=2)
-        with patch.object(collector, "publish", side_effect=CollectorError("archive_busy")):
+        with patch.object(fetch, "publish", side_effect=FetchError("archive_busy")):
             stats = self.sync()
         self.assertEqual((stats["errors"], stats["posts_written"]), (2, 0))
         man = self.manifest()["channels"]
@@ -404,7 +404,7 @@ class TestSync(Base):
         done = self.srv.channel(1, posts=3)
         cid = self.srv.channel(2, name="long", posts=450)
         self.srv.fail[cid] = (RuntimeError("killed"), 2)
-        with patch.object(collector, "FLUSH_POSTS", 100), self.assertRaises(RuntimeError):
+        with patch.object(fetch, "FLUSH_POSTS", 100), self.assertRaises(RuntimeError):
             self.sync()
         man = self.manifest()["channels"]
         self.assertTrue(man[done]["backfill_done"])
@@ -417,9 +417,9 @@ class TestSync(Base):
         self.assertEqual(self.srv.post_calls(cid)[0]["before"], man[cid]["oldest_cursor"])
         self.assertEqual(self.ids(cid), self.served(cid))
 
-    def test_collector_lock_is_exclusive(self):
+    def test_fetch_lock_is_exclusive(self):
         self.srv.channel(1, posts=1)
-        with collector.locked(self.fx.mm), self.assertRaisesRegex(CollectorError, "collector_busy"):
+        with fetch.locked(self.fx.mm), self.assertRaisesRegex(FetchError, "collector_busy"):
             self.sync()
         self.assertEqual(self.sync()["errors"], 0)
 
@@ -463,7 +463,7 @@ class TestSync(Base):
             original = man[key]
             man[key] = value
             self.fx.mm.joinpath("manifest.json").write_text(json.dumps(man), encoding="utf-8")
-            with self.assertRaisesRegex(CollectorError, "account_changed"):
+            with self.assertRaisesRegex(FetchError, "account_changed"):
                 self.sync()
             man[key] = original
             self.fx.mm.joinpath("manifest.json").write_text(json.dumps(man), encoding="utf-8")
@@ -525,7 +525,7 @@ class TestFiles(Base):
         self.assertFalse(self.kept(short).exists())
         self.assertEqual(len(self.lines(cid)), 4)
         self.srv.file_fail[missing] = 401
-        with self.assertRaisesRegex(CollectorError, "auth_required"):
+        with self.assertRaisesRegex(FetchError, "auth_required"):
             self.sync(files_cap=100)
 
     def test_off_switch_skipped_channels_deadline_and_disk_floor(self):
@@ -534,7 +534,7 @@ class TestFiles(Base):
         self.assertEqual(self.sync()["files_stored"], 0)        # no cap: nothing is kept
         self.assertFalse((self.fx.mm / "files.json").exists())
         self.assertEqual(self.file_calls(), [])
-        with patch.object(collector.shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)):
+        with patch.object(fetch.shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)):
             self.assertTrue(self.sync(files_cap=100)["limited"])
         self.assertTrue(self.sync(files_cap=100, time_budget=-1)["limited"])
         self.assertEqual(self.file_calls(), [])
@@ -583,18 +583,18 @@ class TestHttp(unittest.TestCase):
         self.assertEqual(seen[0].get_header("Authorization"), "Bearer private-secret")
         self.assertEqual(seen[0].full_url, URL + "/api/v4/users/me")
         for status, category in ((401, "auth_required"), (403, "api_error")):
-            with self.assertRaises(CollectorError) as raised:
+            with self.assertRaises(FetchError) as raised:
                 self.client([http_error(status, b"private-secret")]).authenticate()
             self.assertEqual((str(raised.exception), raised.exception.status), (category, status))
             self.assertNotIn("private-secret", repr(raised.exception.args))
-        with self.assertRaisesRegex(CollectorError, "bad_url"):
+        with self.assertRaisesRegex(FetchError, "bad_url"):
             MattermostClient("http://mm.example", "t")
 
     def test_truncated_reply_is_retried(self):
         client = self.client([http.client.IncompleteRead(b"{"), Response({"id": ME})])
         self.assertEqual(client.authenticate()["id"], ME)
         self.assertEqual(client.requests, 2)
-        with self.assertRaisesRegex(CollectorError, "transport_error"):
+        with self.assertRaisesRegex(FetchError, "transport_error"):
             self.client([http.client.RemoteDisconnected("synthetic")] * 4).authenticate()
 
     def test_redirect_is_refused_not_followed(self):
@@ -611,9 +611,9 @@ class TestHttp(unittest.TestCase):
                 response.msg = "Found"
                 return response
         transport = Redirect()
-        client = MattermostClient(URL, "private-secret", opener=collector._opener(transport),
+        client = MattermostClient(URL, "private-secret", opener=fetch._opener(transport),
                                   sleep=lambda s: None, rate=0)
-        with self.assertRaises(CollectorError) as raised:
+        with self.assertRaises(FetchError) as raised:
             client.authenticate()
         self.assertEqual((str(raised.exception), raised.exception.status), ("api_error", 302))
         self.assertEqual(transport.seen, [(URL + "/api/v4/users/me", "Bearer private-secret")])
@@ -644,17 +644,17 @@ class TestHttp(unittest.TestCase):
             with patch.dict(os.environ, {"MM_TOKEN": "env-token"}):
                 self.assertEqual(token(str(path)), "env-token")
             path.unlink()
-            with self.assertRaisesRegex(CollectorError, "auth_failed"):
+            with self.assertRaisesRegex(FetchError, "auth_failed"):
                 login(URL, str(path), lambda req, timeout=None: (_ for _ in ()).throw(http_error(401)),
                       ask=lambda prompt: "someone", secret=lambda prompt: "wrong")
-            with self.assertRaises(CollectorError) as raised:      # a redirect: mm_url is wrong, not the password
+            with self.assertRaises(FetchError) as raised:      # a redirect: mm_url is wrong, not the password
                 login(URL, str(path), lambda req, timeout=None: (_ for _ in ()).throw(http_error(302)),
                       ask=lambda prompt: "someone", secret=lambda prompt: "pw-secret")
             self.assertEqual((str(raised.exception), raised.exception.status), ("api_error", 302))
             self.assertFalse(path.exists())
-            with patch.dict(os.environ, {"MM_TOKEN": ""}), self.assertRaisesRegex(CollectorError, "auth_required"):
+            with patch.dict(os.environ, {"MM_TOKEN": ""}), self.assertRaisesRegex(FetchError, "auth_required"):
                 token(str(path))
-        with patch.dict(os.environ, {"MM_TOKEN": ""}), self.assertRaisesRegex(CollectorError, "unsafe_token_path"):
+        with patch.dict(os.environ, {"MM_TOKEN": ""}), self.assertRaisesRegex(FetchError, "unsafe_token_path"):
             token("relative-token.txt")
 
 
@@ -681,8 +681,8 @@ class TestApp(Base):
                          ["mm_sync requires a protected token path"])
         with self.assertRaises(ValueError):
             _url("http://mm.example")
-        with patch.dict(os.environ, {"MM_TOKEN": "t"}), patch.object(collector, "sync", return_value={}) as run:
-            collector.sync_config(self.config(mm_url=URL, mm_files_max_mb=25))
+        with patch.dict(os.environ, {"MM_TOKEN": "t"}), patch.object(fetch, "sync", return_value={}) as run:
+            fetch.sync_config(self.config(mm_url=URL, mm_files_max_mb=25))
         self.assertEqual(run.call_args.kwargs["files_cap"], 25 * 1024 ** 2)
 
     def test_origin_collects_first_only_with_mm_sync(self):
@@ -692,7 +692,7 @@ class TestApp(Base):
         def fake(cfg, **kw):
             calls.append(cfg)
             return sync(cfg.sources["mm_archive"], self.srv.client(), cfg.mm_exclude)
-        with patch.object(collector, "sync_config", side_effect=fake), patch("rawlayer.capture.precheck.check"):
+        with patch.object(fetch, "sync_config", side_effect=fake), patch("rawlayer.capture.precheck.check"):
             self.assertEqual(capture(self.fx), 0)           # mm_sync off: the archive is only read
             self.assertEqual(calls, [])
             self.config(mm_sync=True, mm_url=URL)
@@ -702,7 +702,7 @@ class TestApp(Base):
             with patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": "1"}):
                 self.assertEqual(capture(self.fx), 0)
             self.assertEqual(len(calls), 1)
-        with patch.object(collector, "sync_config", return_value={"errors": 1}), \
+        with patch.object(fetch, "sync_config", return_value={"errors": 1}), \
                 patch("rawlayer.capture.precheck.check"), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(capture(self.fx), 75)
 
@@ -710,16 +710,16 @@ class TestApp(Base):
         argv, out = ["--config", str(self.fx.config_path)], io.StringIO()
         with patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(out):
             for result, code in (({"status": "ok", "errors": 0}, 0), ({"status": "ok", "errors": 2}, 75),
-                                 (CollectorError("auth_required"), 2), (CollectorError("account_changed"), 2),
-                                 (CollectorError("collector_busy"), 75), (RuntimeError("synthetic"), 1)):
+                                 (FetchError("auth_required"), 2), (FetchError("account_changed"), 2),
+                                 (FetchError("collector_busy"), 75), (RuntimeError("synthetic"), 1)):
                 kw = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
-                with patch.object(collector, "sync_config", **kw):
-                    self.assertEqual(collector.main(argv), code)
-            with patch.object(collector, "login", return_value={"status": "auth_ready"}) as signin:
-                self.assertEqual(collector.main(["--login", *argv]), 0)
+                with patch.object(fetch, "sync_config", **kw):
+                    self.assertEqual(fetch.main(argv), code)
+            with patch.object(fetch, "login", return_value={"status": "auth_ready"}) as signin:
+                self.assertEqual(fetch.main(["--login", *argv]), 0)
             self.assertEqual(signin.call_count, 1)
-            with patch.object(collector, "login", side_effect=CollectorError("auth_failed", 401)):
-                self.assertEqual(collector.main(["--login", *argv]), 2)
+            with patch.object(fetch, "login", side_effect=FetchError("auth_failed", 401)):
+                self.assertEqual(fetch.main(["--login", *argv]), 2)
         reports = [json.loads(line) for line in out.getvalue().splitlines()]
         self.assertEqual(reports[-2], {"app": "mattermost", "status": "auth_ready"})
         self.assertEqual(reports[-1], {"app": "mattermost", "status": "auth_failed", "http_status": 401})

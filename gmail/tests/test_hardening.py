@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 from rawlayer.capture import fsio, publicout
-from gmail.collector import sync, main
+from gmail.fetch import sync, main
 from gmail.readers.archive import containers, safe_rel
 from gmail.keys import gm_id
 from tools.archiveio import load
@@ -121,18 +121,18 @@ class HardeningTests(unittest.TestCase):
             with self.assertRaises(publicout.LeakError):
                 publicout.check({"status": secret})
 
-    def test_collector_cli_aggregate_exit_codes_and_source_key(self):
+    def test_fetch_cli_aggregate_exit_codes_and_source_key(self):
         import contextlib
         import io
-        from tools.archiveio import CollectorError
+        from tools.archiveio import FetchError
         for result, expected in (({"status": "ok", "errors": 0}, 0), ({"status": "ok", "errors": 1}, 75),
-                                 (CollectorError("auth_required"), 2), (CollectorError("account_changed"), 2)):
+                                 (FetchError("auth_required"), 2), (FetchError("account_changed"), 2)):
             out = io.StringIO()
             kw = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
-            with patch("gmail.collector.sync_config", **kw), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(out):
+            with patch("gmail.fetch.sync_config", **kw), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(out):
                 self.assertEqual(main(["--config", str(self.fx.config_path)]), expected)
             publicout.check(json.loads(out.getvalue()))
         out = io.StringIO()
-        with patch("gmail.collector.sync_config", return_value={"status": "owner@example.com"}), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(out):
+        with patch("gmail.fetch.sync_config", return_value={"status": "owner@example.com"}), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(out):
             main(["--config", str(self.fx.config_path)])
         self.assertNotIn("owner@example.com", out.getvalue())

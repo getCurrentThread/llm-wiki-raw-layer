@@ -22,9 +22,9 @@ root with inherited ACLs. Both `gm_client_file` and `gm_token_file` must be abso
 Keep `gm_sync: false` until manual genesis is complete. Do not put client JSON or tokens in this repository.
 
 ```
-python -s -B -m gmail.collector --auth --config <CFG>
-python -s -B -m gmail.collector --auth-check --config <CFG>
-python -s -B -m gmail.collector --max-items 1000 --capture --config <CFG>
+python -s -B -m gmail.fetch --auth --config <CFG>
+python -s -B -m gmail.fetch --auth-check --config <CFG>
+python -s -B -m gmail.fetch --max-items 1000 --capture --config <CFG>
 # Repeat the preceding command until limited=false; cursor stays unset during genesis.
 python -s -B manage.py collect gmail --config <CFG>
 # Set gm_sync=true in the external config if scheduled capture should sync the API.
@@ -36,7 +36,7 @@ python -s -B manage.py schedule install gmail --config <CFG>
 `127.0.0.1` loopback port, random checked state and PKCE S256; it times out after five minutes. Code exchange
 uses Google's fixed token endpoint. Only the refresh token is atomically persisted; access tokens are
 refreshed on every run and remain in memory. See [installed-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app).
-`--auth-check` refreshes and reads the profile; it does not publish message content. The collector otherwise
+`--auth-check` refreshes and reads the profile; it does not publish message content. The fetch step otherwise
 prints only vocabulary-validated aggregate counts/categories, never message text, addresses, IDs or credentials.
 
 Genesis reads `users.getProfile` before listing, binds the lowercased account address's SHA-256 digest,
@@ -61,13 +61,13 @@ messages/minute before discovery/history costs), leaving headroom. It honors num
 exponential backoff for 429 and rateLimitExceeded/userRateLimitExceeded 403, with at most six attempts;
 transient 5xx responses also retry. Large mailboxes need repeated manual genesis runs.
 
-Default collector exclusions, by API label ID: SPAM, TRASH, DRAFT, CATEGORY_PROMOTIONS, CATEGORY_SOCIAL,
+Default fetch-step exclusions, by API label ID: SPAM, TRASH, DRAFT, CATEGORY_PROMOTIONS, CATEGORY_SOCIAL,
 CATEGORY_UPDATES. First-seen excluded messages have state only and are not raw-fetched. Previously captured
 messages keep their content when excluded later. Removing an exclusion can make an unknown message eligible.
 UNREAD is the default volatile state label and never changes a ledger signature. The reader applies no exclusions.
 Labels may race between listing and get; a raw response that newly gained an excluded label is discarded.
 
-Exit codes: collector 0 success or bounded genesis, 2 authentication/account refusal, 75 incomplete requests,
+Exit codes: fetch step 0 success or bounded genesis, 2 authentication/account refusal, 75 incomplete requests,
 busy archive or incomplete incremental work, 1 unexpected/config failure. Capture uses the core's 0/2/3/75/1
 contract; malformed/missing containers yield 75, and removing a retained key from a healthy container yields 3.
 `--capture` runs capture/index once after collection, with automatic sync disabled for that child.
@@ -113,14 +113,14 @@ Message/thread IDs are TEXT, validated against `^[0-9a-f]{1,16}$`, with no paddi
 Invalid primary keys are skipped and counted as `pk_bad`.
 
 Publishing order is content partitions, changed state shards, labels.json, then manifest **last**. Replaced
-files use temporary writes, fsync and atomic rename. Collector state is checkpointed after the manifest,
+files use temporary writes, fsync and atomic rename. Fetch state is checkpointed after the manifest,
 so a crash replays pending IDs. Valid orphan content partitions from a crashed publication are adopted on
 the next sync without duplicating content; malformed orphan JSON requires repair rather than silent deletion.
 
 The plain Origin returns one lazy container per manifest-listed file. Only one bounded content partition is
 decoded at a time; no whole-mailbox body map is created. Missing/malformed partitions or shards fail their
 container, preserving healthy sibling progress. All resolved paths stay below the archive. Orphan JSON is
-counted; temporary and collector-private files are ignored. Manifest bytes are checked at discovery and
+counted; temporary and fetch-private files are ignored. Manifest bytes are checked at discovery and
 before/after each lazy read; concurrent publication can yield 75 and needs a retry, rather than a mixed cursor.
 
 Keys: `gm:msg:<id>` (immutable), `gm:lbls:<id>` (mutable), `gm:label:<label-id>` (mutable directory).

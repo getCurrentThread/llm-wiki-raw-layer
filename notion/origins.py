@@ -1,4 +1,4 @@
-from tools.archiveio import sync_first
+from tools.archiveio import fetch_first
 from rawlayer.capture.origins import Origin
 from .readers import archive
 
@@ -9,7 +9,7 @@ class NtArchive(Origin):
     day_kinds = frozenset({"block"})
 
     def read(self, ctx):
-        sync_first(ctx, ctx.cfg.nt_sync, ctx.inputs.nt_archive, "notion")
+        fetch_first(ctx, ctx.cfg.nt_sync, ctx.inputs.nt_archive, "notion")
         return archive.containers(ctx.inputs.nt_archive, self.name)
 
     def estimate_peak(self, inputs):

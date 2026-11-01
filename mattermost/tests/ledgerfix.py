@@ -71,7 +71,7 @@ class MatterSources:
 
 
 def stored_entry(fid, pid, size=3):
-    """A files.json entry as the collector writes it (the file itself is never read by capture or the index)."""
+    """A files.json entry as the fetch step writes it (the file itself is never read by capture or the index)."""
     return {"post_id": pid, "sha256": "0" * 64, "size": size, "path": f"files/{fid[:2]}/{fid}"}
 
 

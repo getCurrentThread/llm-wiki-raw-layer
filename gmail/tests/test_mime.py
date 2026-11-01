@@ -4,7 +4,7 @@ from email.message import EmailMessage
 import hashlib
 import unittest
 from gmail.mime import extract, clean_text
-from tools.archiveio import CollectorError
+from tools.archiveio import FetchError
 from .fixtures import raw_message
 
 
@@ -68,5 +68,5 @@ class MimeTests(unittest.TestCase):
                              ("internalDate", "-1"), ("internalDate", str(2 ** 63 - 1))):
             obj = raw_message()
             obj[field] = value
-            with self.assertRaises(CollectorError):
+            with self.assertRaises(FetchError):
                 extract(obj)

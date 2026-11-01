@@ -1,4 +1,4 @@
-"""Synthetic collector contracts; no owner sources are read."""
+"""Synthetic fetch step contracts; no owner sources are read."""
 import datetime as dt
 import json
 from pathlib import Path
@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from claudecode import collector as cc
-from tools.archiveio import CollectorError
+from claudecode import fetch as cc
+from tools.archiveio import FetchError
 
 
-class CollectorTests(unittest.TestCase):
+class FetchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -274,7 +274,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_config(self):
         for source in ("", "relative", str(self.source / "missing"), None):
-            with self.subTest(source=source), self.assertRaisesRegex(CollectorError, "^source_missing$"):
+            with self.subTest(source=source), self.assertRaisesRegex(FetchError, "^source_missing$"):
                 cc.sync_config(SimpleNamespace(cc_claude_dir=source), auth_only=True)
         cfg = SimpleNamespace(cc_claude_dir=str(self.source), sources={"cc_archive": self.root})
         self.assertEqual(cc.sync_config(cfg, auth_only=True),
@@ -307,10 +307,10 @@ class CollectorTests(unittest.TestCase):
 
     def test_archive_exceptions_are_categories_only(self):
         with patch.object(cc.archiveio, "load", side_effect=OSError("synthetic private path")):
-            with self.assertRaisesRegex(CollectorError, "^archive_error$"):
+            with self.assertRaisesRegex(FetchError, "^archive_error$"):
                 self.sync()
-        with patch.object(cc.archiveio, "load", side_effect=CollectorError("bad_archive")):
-            with self.assertRaisesRegex(CollectorError, "^bad_archive$"):
+        with patch.object(cc.archiveio, "load", side_effect=FetchError("bad_archive")):
+            with self.assertRaisesRegex(FetchError, "^bad_archive$"):
                 self.sync()
 
     def test_partition_bound_and_monotonic_clock(self):

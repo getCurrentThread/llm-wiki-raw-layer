@@ -36,7 +36,7 @@ and the latest put (highest rev) is the post as it stands:
 * Facets: channels(channel_id, label, name, team, ch_type, n, senders, first_ts, last_ts, n_deleted, n_system,
   n_gone), n = rows that are neither deleted nor system posts.
 * stored: the post's kept files, {file_id: path relative to the archive}, from the blob records mm:blob:<file_id>
-  (the collector's files.json: post_id, sha256, size, path) whose post_id is the post.
+  (the fetch step's files.json: post_id, sha256, size, path) whose post_id is the post.
 * Not indexed, only counted (counts table): file records (the post carries the same metadata), bad keys, odd
   values.
 

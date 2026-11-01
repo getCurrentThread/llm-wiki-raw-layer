@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import sqlite3
 import uuid
-from tools.archiveio import CollectorError, atomic, inside, load, locked, now
+from tools.archiveio import FetchError, atomic, inside, load, locked, now
 from .keys import nt_id
 from .readers.project import project
 
@@ -31,7 +31,7 @@ def _json(value, fallback):
         try:
             return json.loads(value)
         except (ValueError, UnicodeError):
-            raise CollectorError("bad_cache_json") from None
+            raise FetchError("bad_cache_json") from None
     return value
 
 
@@ -88,7 +88,7 @@ def native_block(raw):
 def read_cache(source):
     source = Path(source)
     if not source.is_file():
-        raise CollectorError("desktop_missing")
+        raise FetchError("desktop_missing")
     # SQLite backup includes the live WAL, unlike copying only notion.db.
     with contextlib.closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as src, \
             contextlib.closing(sqlite3.connect(":memory:")) as db:
@@ -96,13 +96,13 @@ def read_cache(source):
         db.row_factory = sqlite3.Row
         available = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "block" not in available:
-            raise CollectorError("unsupported_cache_schema")
+            raise FetchError("unsupported_cache_schema")
         wanted = ("id", "type", "properties", "content", "parent_id", "parent_table", "alive", "created_time", "last_edited_time",
                   "created_by", "last_edited_by", "created_by_id", "last_edited_by_id", "format", "crdt_data", "crdt_format_version")
         columns = {r[1] for r in db.execute('PRAGMA table_info("block")')}
         selected = [c for c in wanted if c in columns]
         if not {"id", "type", "properties", "content"}.issubset(columns):
-            raise CollectorError("unsupported_cache_schema")
+            raise FetchError("unsupported_cache_schema")
         blocks, crdt_only = {}, 0
         for row in db.execute('SELECT ' + ','.join('"' + c + '"' for c in selected) + ' FROM block'):
             obj = dict(row)
@@ -138,7 +138,7 @@ def sync(root, source, selected=(), max_items=0):
     root, stamp = Path(root), now()
     selected = {nt_id(v) for v in selected}
     if None in selected:
-        raise CollectorError("bad_page_id")
+        raise FetchError("bad_page_id")
     stats = {"status": "ok", "source": "desktop", "coverage": "cached_only", "blocks_cached": len(blocks),
              "crdt_only_blocks": crdt_only, "pages_written": 0, "pages_scanned": 0, "missing_children": 0,
              "unsupported_pages": 0, "errors": 0, "limited": False}

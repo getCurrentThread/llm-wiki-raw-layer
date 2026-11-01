@@ -78,7 +78,7 @@ class TaskChecks(Base):
         cases = (("", "protected"), ("token.txt", "protected"), (str(outside), "protected"),
                  (str(token), "requires a token file"))
         with mock.patch("rawlayer.capture.precheck.check"), \
-                mock.patch("discord.collector.machine_token_vars", return_value=[]):
+                mock.patch("discord.fetch.machine_token_vars", return_value=[]):
             for path, want in cases:
                 with self.subTest(path=path):
                     found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=path))
@@ -86,13 +86,13 @@ class TaskChecks(Base):
                     self.assertIn(want, found[0])
             token.write_text("x", encoding="utf-8")
             self.assertEqual(self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token))), [])
-            with mock.patch("discord.collector.machine_token_vars", return_value=["DISCORD_BOT_TOKEN"]):
+            with mock.patch("discord.fetch.machine_token_vars", return_value=["DISCORD_BOT_TOKEN"]):
                 found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token)))
             self.assertEqual(len(found), 1)
             self.assertIn("machine-wide DISCORD_BOT_TOKEN", found[0])
 
     def test_api_token_folder_failing_precheck(self):
-        # the collector's own precheck of the token's folder (ACL, Windows Search): the same refusal as a bad path
+        # the fetch step's own precheck of the token's folder (ACL, Windows Search): the same refusal as a bad path
         from rawlayer.capture.config import ConfigError
         token = Path(tempfile.mkdtemp(prefix="dc-tok-", dir=TEST_PARENT)) / "token.txt"
         self.addCleanup(shutil.rmtree, token.parent, True)

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
-from tools.archiveio import CollectorError, atomic, bind, inside, load, locked, now
+from tools.archiveio import FetchError, atomic, bind, inside, load, locked, now
 from .api import GmailClient, pages
 from .apps import EXCLUDED
 from .auth import authorize, refresh
@@ -20,7 +20,7 @@ PARTITION_BYTES = 16 * 1024 * 1024
 def _labels(value):
     if not isinstance(value, list) or not all(isinstance(v, str) and v and ":" not in v
                                               and not any(ord(c) < 32 for c in v) for v in value):
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     return sorted(set(value))
 
 
@@ -28,20 +28,20 @@ def _profile(client):
     value = client.request("/profile")
     if not isinstance(value.get("emailAddress"), str) or not value["emailAddress"] \
             or not isinstance(value.get("historyId"), str) or not value["historyId"].isdigit():
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     return value
 
 
 def _directory(client, old, stamp):
     rows = client.request("/labels").get("labels")
     if not isinstance(rows, list) or not all(isinstance(v, dict) for v in rows):
-        raise CollectorError("bad_response")
+        raise FetchError("bad_response")
     result, current = copy.deepcopy(old), set()
     for obj in rows:
         ident = obj.get("id")
         _labels([ident])
         if not all(isinstance(obj.get(k), str) for k in ("name", "type")):
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         current.add(ident)
         result[ident] = {k: obj[k] for k in ("id", "name", "type")}
     for ident in set(result) - current:
@@ -76,40 +76,40 @@ def _archive(root, man):
     known = set()
     files = man.get("files")
     if not isinstance(files, list) or files != sorted(set(files)):
-        raise CollectorError("bad_archive")
+        raise FetchError("bad_archive")
     # Recover fully written partitions after a crash before manifest publication.
     # Hold IDs only; one bounded partition is decoded at a time.
     existing = set(files)
     existing.update(p.relative_to(root).as_posix() for p in (root / "exports").glob("*.json"))
     for rel in sorted(existing):
         if not safe_rel(rel, "exports"):
-            raise CollectorError("unsafe_path")
+            raise FetchError("unsafe_path")
         path = inside(root, root / rel)
         try:
             rows = partition(path.read_bytes())
         except (OSError, ValueError, TypeError):
-            raise CollectorError("bad_archive") from None
+            raise FetchError("bad_archive") from None
         for obj in rows:
             ident = gm_id(obj.get("id"))
             if ident is None or ident in known:
-                raise CollectorError("bad_archive")
+                raise FetchError("bad_archive")
             known.add(ident)
     man["files"] = sorted(existing)
     states = {}
     shards = man.get("state_files")
     if not isinstance(shards, list) or shards != sorted(set(shards)):
-        raise CollectorError("bad_archive")
+        raise FetchError("bad_archive")
     shards = sorted(set(shards) | {p.relative_to(root).as_posix() for p in (root / "state").glob("*.json")})
     man["state_files"] = shards
     for rel in shards:
         if not safe_rel(rel, "state"):
-            raise CollectorError("unsafe_path")
+            raise FetchError("unsafe_path")
         obj = load(inside(root, root / rel))
         if not isinstance(obj, dict):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
         for ident, value in obj.items():
             if gm_id(ident) is None or ident[:2] != Path(rel).stem or not isinstance(value, dict):
-                raise CollectorError("bad_archive")
+                raise FetchError("bad_archive")
             _labels(value.get("label_ids"))
             states[ident] = value
     return known, states
@@ -144,7 +144,7 @@ class Writer:
     def add(self, obj):
         size = len(json.dumps(obj, ensure_ascii=True, sort_keys=True).encode("ascii")) + 2
         if size + 100 > PARTITION_BYTES:
-            raise CollectorError("bad_response")
+            raise FetchError("bad_response")
         if self.chunk and (len(self.chunk) >= self.cap or self.bytes + size + 100 > PARTITION_BYTES):
             self.flush()
         self.chunk.append(obj)
@@ -182,7 +182,7 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
         if not isinstance(man, dict) or man.get("version") != 1 \
                 or type(man.get("genesis_complete")) is not bool \
                 or man.get("cursor") is not None and (not isinstance(man["cursor"], str) or not man["cursor"].isdigit()):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
         old_cursor, old_genesis = man["cursor"], man["genesis_complete"]
         man["binding_sha256"] = hashlib.sha256(profile["emailAddress"].lower().encode()).hexdigest()
         known, states = _archive(root, man)
@@ -190,7 +190,7 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
         labels = load(inside(root, root / "labels.json"), {})
         pending = load(inside(root, root / "_collector_state.json"), {})
         if not isinstance(labels, dict) or not isinstance(pending, dict):
-            raise CollectorError("bad_archive")
+            raise FetchError("bad_archive")
 
         def bounded():
             return bool(max_items and attempts >= max_items or time.monotonic() >= deadline)
@@ -205,7 +205,7 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
             # Partial fetch failures can leave immutable content without state.
             # Never move the cursor past an unreconciled content ID.
             if known - set(values):
-                raise CollectorError("collection_failed")
+                raise FetchError("collection_failed")
 
         def fetch(ident, values):
             nonlocal attempts
@@ -216,11 +216,11 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
                 return values
             if bounded():
                 stats["limited"] = True
-                raise CollectorError("collection_failed")
+                raise FetchError("collection_failed")
             attempts += 1
             obj = client.request("/messages/" + ident, {"format": "raw"})
             if obj.get("id") != ident:
-                raise CollectorError("bad_response")
+                raise FetchError("bad_response")
             actual = _labels(obj.get("labelIds"))
             # A message may enter an excluded category after the listing.
             if set(actual) & exclude:
@@ -240,10 +240,10 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
                     for obj, rows in pages(client, "/history", {"startHistoryId": man["cursor"],
                                           "historyTypes": ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"]}, "history"):
                         if not isinstance(obj.get("historyId"), str) or not obj["historyId"].isdigit():
-                            raise CollectorError("bad_response")
+                            raise FetchError("bad_response")
                         cursor = obj["historyId"]
                         history.extend(rows)
-                except CollectorError as e:
+                except FetchError as e:
                     if e.status != 404:
                         raise
                     sweep = True
@@ -291,11 +291,11 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
                     for field in ("messagesAdded", "labelsAdded", "labelsRemoved", "messagesDeleted"):
                         entries = event.get(field, [])
                         if not isinstance(entries, list):
-                            raise CollectorError("bad_response")
+                            raise FetchError("bad_response")
                         for entry in entries:
                             msg = entry.get("message") if isinstance(entry, dict) else None
                             if not isinstance(msg, dict):
-                                raise CollectorError("bad_response")
+                                raise FetchError("bad_response")
                             ident = gm_id(msg.get("id"))
                             if ident is None:
                                 stats["pk_bad"] += 1
@@ -324,16 +324,16 @@ def sync(root, client, exclude_labels=EXCLUDED, volatile_labels=("UNREAD",), bod
                 for ident in sorted(known - set(updates)):
                     if time.monotonic() >= deadline:
                         stats["limited"] = True
-                        raise CollectorError("collection_failed")
+                        raise FetchError("collection_failed")
                     obj = client.request("/messages/" + ident, {"format": "minimal", "fields": "id,labelIds"})
                     if obj.get("id") != ident:
-                        raise CollectorError("bad_response")
+                        raise FetchError("bad_response")
                     updates[ident] = state(_labels(obj.get("labelIds")))
                 consistent(updates)
                 states = updates
                 man["cursor"] = cursor
                 _publish(root, man, states, labels)
-        except CollectorError as e:
+        except FetchError as e:
             if e.category in ("auth_required", "account_changed"):
                 raise
             stats["errors"] += 1
@@ -365,7 +365,7 @@ def main(argv=None):
         from tools.archiveio import main as archive_main
         target = sys.stdout
         if "--help" in argv or "-h" in argv:
-            target.write("One-time authorization: python -s -B -m gmail.collector --auth [--config CONFIG]\n")
+            target.write("One-time authorization: python -s -B -m gmail.fetch --auth [--config CONFIG]\n")
 
         class PublicStream:
             # archiveio owns the CLI semantics. Validate its aggregate JSON at
@@ -409,7 +409,7 @@ def main(argv=None):
         report = authorize(cfg.gm_client_file, cfg.gm_token_file)
         print(publicout.render_json(report).decode("ascii"))
         return 0
-    except CollectorError as e:
+    except FetchError as e:
         print(publicout.render_json({"status": e.category}).decode("ascii"))
         return 2
     except Exception:

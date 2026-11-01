@@ -64,7 +64,7 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
     search.py                  app index and search interface
     tests/                     app tests with synthetic inputs
     config.example.json        machine config shape
-  tools/archiveio.py           the collectors' shared file, lock and exit-code helpers
+  tools/archiveio.py           the fetch steps' shared file, lock and exit-code helpers
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
   tools/appsetup.py            the apps' shared setup defaults (AppConfig.setup_defaults)
   tools/agentkit.py            the agent integration (bootstrap.py agents): global install, sync-repo
@@ -182,12 +182,12 @@ real conversation data are committed. The default test command runs every suite 
 `core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok`
 when all suites pass. Agents run the named form above (AGENTS.md).
 
-Discord, Notion, Gmail, Mattermost and Claude Code include app-owned collectors; enable `dc_sync` / `nt_sync` /
+Discord, Notion, Gmail, Mattermost and Claude Code include app-owned fetch steps; enable `dc_sync` / `nt_sync` /
 `gm_sync` / `mm_sync` / `cc_sync` to fetch before live capture. Claude Code reads local conversation files from
 `cc_claude_dir` (setup fills `<HOME>\.claude`) without credentials:
-`python -s -B -m claudecode.collector [--max-items N] [--capture]`.
+`python -s -B -m claudecode.fetch [--max-items N] [--capture]`.
 Discord and Notion support token-free desktop-cache sources; their API sources use Discord credentials or the official `ntn` keychain. Desktop caches provide partial coverage and never
-treat eviction as deletion. Gmail reads the Gmail API with a read-only OAuth token, and Mattermost's collector (a
+treat eviction as deletion. Gmail reads the Gmail API with a read-only OAuth token, and Mattermost's fetch step (a
 port of the mattertok archiver, REST API v4 with a session token) writes mattertok's archive format. Their READMEs
 define the options, archive contracts and authentication boundaries.
 

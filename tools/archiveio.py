@@ -1,4 +1,4 @@
-"""Private, atomic archive publication shared by the app-owned collectors."""
+"""Private, atomic archive publication shared by the app-owned fetch steps."""
 import contextlib
 import datetime as dt
 import json
@@ -9,7 +9,7 @@ import sys
 import uuid
 
 
-class CollectorError(ValueError):
+class FetchError(ValueError):
     def __init__(self, category, status=None):
         self.category, self.status = category, status
         super().__init__(category)  # Never include remote bodies, paths, IDs, or credentials.
@@ -24,14 +24,14 @@ def load(path, default=None):
     if not path.exists():
         return default
     def reject(value):
-        raise CollectorError("bad_archive")
+        raise FetchError("bad_archive")
     return json.loads(path.read_text(encoding="utf-8"), parse_constant=reject)
 
 
 def inside(root, path):
     path = Path(path)
     if not path.resolve().is_relative_to(Path(root).resolve()):
-        raise CollectorError("unsafe_path")
+        raise FetchError("unsafe_path")
     return path
 
 
@@ -42,7 +42,7 @@ def atomic(root, path, value, immutable=False):
     path = inside(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if immutable and path.exists():
-        raise CollectorError("partition_exists")
+        raise FetchError("partition_exists")
     if not isinstance(value, bytes):
         value = (json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True) + "\n").encode("ascii")
     tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
@@ -54,36 +54,36 @@ def atomic(root, path, value, immutable=False):
         try:
             replace_retry(tmp, path)
         except PermissionError:
-            raise CollectorError("archive_busy") from None
+            raise FetchError("archive_busy") from None
     finally:
         tmp.unlink(missing_ok=True)
 
 
 def credential_path(value):
     """A token or credential file as a Path: absolute, under the data parent, in a folder that passes capture's
-    precheck. Raises CollectorError("unsafe_token_path") or precheck's ConfigError."""
+    precheck. Raises FetchError("unsafe_token_path") or precheck's ConfigError."""
     from rawlayer.capture import paths, precheck
     path = Path(value)
     if not value or not path.is_absolute() or not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
-        raise CollectorError("unsafe_token_path")
+        raise FetchError("unsafe_token_path")
     # only the fetch step writes an archive and only capture writes a ledger (data root layout: archive/, raw/)
     # shortcut: the folders are matched by their conventional names, not read from a config; upgrade if they become configurable
     if {"archive", "raw"} & {n.lower() for n in path.resolve().relative_to(Path(paths.DATA_PARENT).resolve()).parts}:
-        raise CollectorError("unsafe_token_path")
+        raise FetchError("unsafe_token_path")
     precheck.check(path.parent)
     return path
 
 
-def sync_first(ctx, enabled, archive, app):
-    """An origin's read on live capture with the app's *_sync on: run the app's collector into its archive first
-    (unless the collector itself started this capture: RAWLAYER_ARCHIVE_READY). Any collector error stops the
+def fetch_first(ctx, enabled, archive, app):
+    """An origin's read on live capture with the app's *_sync on: run the app's fetch step into its archive first
+    (unless the fetch step itself started this capture: RAWLAYER_ARCHIVE_READY). Any fetch error stops the
     origin's read, so nothing half-fetched is diffed."""
     if enabled and ctx.inputs.name == "live" and os.environ.get("RAWLAYER_ARCHIVE_READY") != "1":
         import importlib
         from rawlayer.capture.precheck import check
         check(archive)
-        if importlib.import_module(app + ".collector").sync_config(ctx.cfg).get("errors"):
-            raise CollectorError("collection_incomplete")
+        if importlib.import_module(app + ".fetch").sync_config(ctx.cfg).get("errors"):
+            raise FetchError("collection_incomplete")
 
 
 @contextlib.contextmanager
@@ -105,7 +105,7 @@ def locked(root):
                 import fcntl
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            raise CollectorError("collector_busy") from None
+            raise FetchError("collector_busy") from None
         try:
             yield
         finally:
@@ -122,7 +122,7 @@ def bind(root, ident):
     path = Path(root) / "_collector_identity.json"
     old = load(path)
     if old is not None and old.get("sha256") != digest:
-        raise CollectorError("account_changed")
+        raise FetchError("account_changed")
     atomic(root, path, {"sha256": digest})
 
 
@@ -180,7 +180,7 @@ def main(app, sync_config, argv=None):
                                      "--config", str(cfg.path)], env=env)
             return result.returncode or (75 if report.get("errors", 0) else 0)
         return 0 if report.get("errors", 0) == 0 else 75
-    except CollectorError as e:
+    except FetchError as e:
         print(json.dumps({"app": app, "status": e.category, "http_status": e.status}))
         return 2 if e.category in ("auth_required", "auth_failed", "account_changed") else 75
     except Exception as e:

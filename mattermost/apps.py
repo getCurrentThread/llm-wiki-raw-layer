@@ -18,12 +18,12 @@ def _url(v):
 
 class MatterConfig(AppConfig):
     label = "mattermost"
-    # config.json "sources": the archive directory (mattertok's format; the app's collector keeps it current)
+    # config.json "sources": the archive directory (mattertok's format; the app's fetch step keeps it current)
     source_keys = ("mm_archive",)
     # channels whose display name or name contains one of these (casefolded) are not read (mattertok's rule).
-    # mm_sync: live capture runs the app's collector first (mattermost/collector.py); mm_url is the server and
+    # mm_sync: live capture runs the app's fetch step first (mattermost/fetch.py); mm_url is the server and
     # mm_token_file a private file under the data parent holding the session token `--login` writes.
-    # mm_files_max_mb: the collector also keeps each attached file of at most this many MB (0: none).
+    # mm_files_max_mb: the fetch step also keeps each attached file of at most this many MB (0: none).
     options = (Option("mm_exclude_patterns", [], _patterns, attr="mm_exclude"),
                Option("mm_sync", False, boolean), Option("mm_url", "", _url),
                Option("mm_token_file", "", text), Option("mm_files_max_mb", 0, nonnegative)) + wiki_options("mm")
@@ -53,7 +53,7 @@ class MatterConfig(AppConfig):
         if not cfg.mm_sync:
             return []
         from rawlayer.capture.config import ConfigError
-        from .collector import credential_path
+        from .fetch import credential_path
         if not cfg.mm_url:
             return ["mm_sync requires mm_url"]
         try:

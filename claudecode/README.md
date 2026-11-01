@@ -2,14 +2,14 @@
 
 `cc_archive` keeps a protected data root, append-only ledger and `index/claudecode.sqlite` of the owner's
 Claude Code conversations: prompts, Claude's reply text and a one-line summary of each tool call. Tool results,
-thinking and attachments are left out. The app includes a stdlib collector (`collector.py`) that copies what it
+thinking and attachments are left out. The app includes a stdlib fetch step (`fetch.py`) that copies what it
 keeps from the owner's `.claude` folder into the archive. Claude Code deletes transcripts after about 30 days; the
 archive keeps them. With `cc_sync: true`, live `manage.py collect claudecode` updates the archive before capturing
-it. Frozen inputs never call the collector. Core files are unchanged.
+it. Frozen inputs never call the fetch step. Core files are unchanged.
 
 ```
-python -s -B -m claudecode.collector --max-items 20
-python -s -B -m claudecode.collector --capture
+python -s -B -m claudecode.fetch --max-items 20
+python -s -B -m claudecode.fetch --capture
 python -s -B manage.py collect claudecode
 ```
 
@@ -17,12 +17,12 @@ python -s -B manage.py collect claudecode
 
 | option | default | meaning |
 |---|---|---|
-| `cc_sync` | `false` | run the collector before live capture |
+| `cc_sync` | `false` | run the fetch step before live capture |
 | `cc_claude_dir` | `""` | absolute path of the owner's `.claude` folder; `setup` fills `<HOME>\.claude`. Required with `cc_sync`, because the scheduled task runs as SYSTEM, whose home is another profile |
 
 `sources.cc_archive` is `<DATA_ROOT>\archive`.
 
-## Sources the collector reads (read-only)
+## Sources the fetch step reads (read-only)
 
 Paths are relative to `cc_claude_dir`:
 
@@ -108,18 +108,18 @@ at most 10000 rows. A container's `files` list is in ascending (stamp) order wit
 stamp is later than the container's last one. Within a container a `uuid` appears once: a run writes only rows
 whose `uuid` is not in the container's existing partitions. Rows are immutable once archived.
 
-The collector reads a source file only when its `(size, mtime_ns)` differs from `files` (or with `--full`).
+The fetch step reads a source file only when its `(size, mtime_ns)` differs from `files` (or with `--full`).
 When a source file disappears its `files` entry, container and partitions stay: Claude Code's cleanup is not a
 deletion. Nothing in the archive is ever deleted or rewritten except `manifest.json`, published atomically last.
 
-## Collector interface
+## Fetch interface
 
-`claudecode/collector.py` follows `discord/desktop.py` and `tools/archiveio.py`:
+`claudecode/fetch.py` follows `discord/desktop.py` and `tools/archiveio.py`:
 
 - `sync(root, claude_dir, max_items=0, full=False, clock=None) -> stats`: under `archiveio.locked(root)`;
   partitions with `archiveio.atomic(..., immutable=True)`; manifest last. `max_items` bounds the number of
   changed source files processed (then `limited: true`). `clock` (epoch ms) is for tests (the 24-hour rule).
-- `sync_config(cfg, auth_only=False, full=False, max_items=0)`: refuses with `CollectorError("source_missing")`
+- `sync_config(cfg, auth_only=False, full=False, max_items=0)`: refuses with `FetchError("source_missing")`
   unless `cfg.cc_claude_dir` is an absolute existing folder; `auth_only` returns
   `{"status": "local_ready", "authentication_required": False}`; else `sync(cfg.sources["cc_archive"],
   cfg.cc_claude_dir, max_items, full)`.
