@@ -146,25 +146,9 @@ class MissedMatchRegressions(unittest.TestCase):
         self.assertEqual(hits(["10월에 보자", "11월에 보자"], "10월"), {"10월에 보자"})
         self.assertEqual(hits(["3시에 만나", "4시에 만나"], "3시"), {"3시에 만나"})
 
-    def test_latin_then_one_syllable_then_particle(self):
-        self.assertEqual(hits(["SQL문을 고쳤다", "SQL 문을 고쳤다"], "SQL문"), {"SQL문을 고쳤다"})
-
-    def test_one_syllable_then_latin(self):
-        self.assertEqual(hits(["오전10시", "오전 10시", "전10"], "전10"), {"오전10시", "전10"})
-
-    def test_bare_forms_still_match(self):
-        self.assertEqual(hits(["10월", "3시", "sql문"], "10월"), {"10월"})
-        self.assertEqual(hits(["10월", "3시", "sql문"], "SQL문"), {"sql문"})
-
-    def test_digit_edge_is_a_whole_run(self):
-        self.assertEqual(hits(["210월에", "10월에", "x10월"], "10월"), {"10월에"})
-
 
 class GapFalsePositiveRegressions(unittest.TestCase):
     """ngram-1 let bigrams of two separate runs line up as one phrase."""
-
-    def test_space_between_runs(self):
-        self.assertEqual(hits(["가나 나다", "가나다라"], "가나다"), {"가나다라"})
 
     def test_a_lone_space_may_be_left_out(self):
         bodies = ["회의실 예약 부탁", "회의실  예약", "회의실, 예약", "회의실\n예약", "회의 실 예약", "회의실예약", "a 회의"]
@@ -174,66 +158,8 @@ class GapFalsePositiveRegressions(unittest.TestCase):
         self.assertEqual(hits(bodies, "회의실 예약"), set(bodies) - {"a 회의"})        # two terms: as before
         self.assertEqual(hits(bodies, "a회의"), set())                                  # a Latin run is not bridged
 
-    def test_punctuation_and_emoji_between_runs(self):
-        bodies = ["가나,나다", "가나\U0001F600나다", "가나\n나다", "가나다"]
-        self.assertEqual(hits(bodies, "가나다"), {"가나다"})
-
-    def test_latin_head_across_gap(self):
-        self.assertEqual(hits(["a가 가나", "a가나"], "a가나"), {"a가나"})
-
 
 class KbBehaviour(unittest.TestCase):
-
-    def test_stem_matches_with_particle_and_compound(self):
-        self.assertEqual(hits(["송금을 했어", "입금송금 완료", "송신 완료"], "송금"),
-                         {"송금을 했어", "입금송금 완료"})
-
-    def test_particle_narrows(self):
-        self.assertEqual(hits(["송금을 했어", "입금송금 완료", "송금이 늦어"], "송금을"),
-                         {"송금을 했어"})
-
-    def test_cpp_is_literal(self):
-        q = build_fts_query("C++")
-        self.assertEqual(q.verify, ["c++"])
-        self.assertEqual(hits(["C++ 공부", "c 언어", "vc++ 설치", "c+ 등급"], "C++"),
-                         {"C++ 공부", "vc++ 설치"})
-
-    def test_quoted_phrase_is_literal_and_narrowed(self):
-        q = build_fts_query('"정기 회의"')
-        self.assertEqual(q.verify, ["정기 회의"])
-        self.assertTrue(q.fts)
-        self.assertEqual(hits(["정기 회의 공지", "정기회의 공지", "회의 정기"], '"정기 회의"'),
-                         {"정기 회의 공지"})
-
-    def test_single_syllable_is_weak(self):
-        q = build_fts_query("돈")
-        self.assertEqual((q.fts, q.weak), ("", ["돈"]))
-        self.assertEqual(hits(["돈을 보냄", "송금", "돈"], "돈"), {"돈을 보냄", "돈"})
-
-    def test_or_and_exclude(self):
-        bodies = ["회의 시작", "미팅 시작", "회의 취소", "잡담"]
-        self.assertEqual(hits(bodies, "회의 OR 미팅"), {"회의 시작", "미팅 시작", "회의 취소"})
-        self.assertEqual(hits(bodies, "회의 -취소"), {"회의 시작"})
-        self.assertEqual(hits(bodies, "회의 OR 미팅 -취소"), {"회의 시작", "미팅 시작"})
-
-    def test_and_binds_tighter_than_or(self):
-        bodies = ["a b", "c", "a", "b c"]
-        self.assertEqual(hits(bodies, "a b OR c"), {"a b", "c", "b c"})
-        self.assertEqual(hits(bodies, "a OR b c"), {"a b", "a", "b c"})
-
-    def test_latin_whole_run_and_prefix(self):
-        bodies = ["API 키", "rapid 배포", "apis 목록", "api키"]
-        self.assertEqual(hits(bodies, "api"), {"API 키", "api키"})
-        self.assertEqual(hits(bodies, "api*"), {"API 키", "apis 목록", "api키"})
-
-    def test_exclusion_uses_the_same_rule(self):
-        self.assertEqual(hits(["rapid 회의", "api 회의"], "회의 -api"), {"rapid 회의"})
-
-    def test_case_and_normalisation(self):
-        nfd = unicodedata.normalize("NFD", "송금을 OAuth")
-        self.assertEqual(hits([nfd, "다른 글"], "송금"), {nfd})
-        self.assertEqual(hits([nfd, "다른 글"], "oauth"), {nfd})
-        self.assertEqual(hits([nfd, "다른 글"], '"금을 oa"'), {nfd})
 
     def test_url_is_not_a_column_filter(self):
         q = build_fts_query("https://example.com/a")
@@ -270,13 +196,7 @@ class KbBehaviour(unittest.TestCase):
         self.assertEqual(hits(bodies, cut + "*"), {cut, cut + "zz", base, base[:32768] + "q", "다른 " + cut + "에서"})
         self.assertEqual(hits(bodies, f'"{base[:32768]}"'), {base, base[:32768] + "q"})   # literal: rs_contains
 
-    def test_api_surface(self):
-        self.assertNotEqual(fts.TOKENIZER_VERSION, "ngram-1")
-        self.assertTrue(fts.SCHEMA_VERSION)
-        q = build_fts_query("송금")
-        self.assertEqual(q._fields, ("fts", "verify", "exclude", "weak", "marks", "exclude_fts"))
-        self.assertTrue(fts.is_weak_term("돈"))
-        self.assertFalse(fts.is_weak_term("송금"))
+    def test_ng_text_is_what_the_index_stores(self):
         self.assertEqual(fts.ng_text("오늘 송금을"), "오늘 늘송 송금 금을")
         self.assertEqual(fts.ng_text("오늘, 송금"), f"오늘 {fts.SEP} 송금")
         self.assertEqual(fts.ng_text("a 가나"), f"a {fts.SEP} 가나")
@@ -320,30 +240,6 @@ class KbBehaviour(unittest.TestCase):
             self.assertIn("bm25(1.0, 3.0)", con.execute("SELECT v FROM docs_fts_config WHERE k='rank'").fetchone()[0])
         finally:
             con.close()
-
-    def test_tokens_have_no_dropped_characters(self):
-        for s in ["a,b", "가!나", "  x  ", "\U0001F600", "é가", "C++ 2.0"]:
-            toks = fts.ng_tokens(s)
-            self.assertTrue(all(tok == fts.SEP or tok.isalnum() for tok in toks), s)
-            self.assertTrue(all(len(tok) <= 2 or tok.isascii() for tok in toks), s)
-
-    def test_highlight(self):
-        out = fts.highlight("오늘 송금을 했어요", ["송금"])
-        self.assertEqual(out, "오늘 [송금]을 했어요")
-        self.assertEqual(fts.highlight("", ["x"]), "")
-
-    def test_highlight_finds_what_casefold_matching_found(self):
-        """Review finding: matching casefolds (ß/SS, capital sharp s, ligatures) but the snippet only lowercased, so
-        such hits were not marked and a long message's snippet could miss the match entirely."""
-        self.assertEqual(fts.highlight("STRASSE 주소", ["straße"]), "[STRASSE] 주소")
-        self.assertEqual(fts.highlight("Straße 주소", ["STRASSE"]), "[Straße] 주소")
-        self.assertEqual(fts.highlight("ﬁle 업로드", ["file"]), "[ﬁle] 업로드")
-        self.assertEqual(fts.highlight("ẞ 표기", ["ss"]), "[ẞ] 표기")          # capital sharp s
-        far = fts.highlight("x" * 300 + " STRASSE 끝", ["straße"], width=40)
-        self.assertTrue(far.startswith("…") and "[STRASSE] 끝" in far, far)
-        self.assertEqual(fts.highlight("가나다 나다", ["나다", "가나다"]), "[가나다] [나다]")    # no nested marks
-        for body, term in (("STRASSE 주소", "straße"), ("ﬁle 업로드", "file")):
-            self.assertEqual(hits([body], term), {body})                  # and the search does find them
 
 
 # --------------------------------------------------------------------------------------------

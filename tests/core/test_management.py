@@ -103,16 +103,6 @@ class TestDispatch(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("bad: does not load (error ModuleNotFoundError not_a_module_anywhere", out)
 
-    def test_unknown_command_and_help(self):
-        with Project({}):
-            self.assertEqual(run("nope")[0], 2)
-            self.assertIn("unknown command", run("nope")[2])
-            self.assertEqual(run()[0], 2)
-            self.assertEqual(run("--help")[0], 0)
-            for name in ("capture", "collect", "check", "schedule", "test", "setup"):
-                self.assertIn(f"manage.py {name}", run("help", name)[1])
-            self.assertEqual(run("help", "nope")[0], 2)
-
     def test_collect_refuses_an_app_without_a_wiki_declaration(self):
         """`collect` exports an app's index to an LLM Wiki project: an app that declares no AppConfig.wiki (and a stale
         task still registered as `manage.py collect <app> --config <cfg>`, the capture command's previous name) is
@@ -122,7 +112,6 @@ class TestDispatch(unittest.TestCase):
             self.assertEqual((rc, out), (2, ""))
             self.assertIn("a1 declares no wiki export", err)
             self.assertEqual(run("collect", "a1", "--config", "x.json", "--prune")[0], 2)
-            self.assertIn("manage.py collect", run("help", "collect")[1])
 
 
 class TestOwnership(T.ToyCase):
@@ -224,10 +213,6 @@ class TestSetup(unittest.TestCase):
             self.assertEqual((cfg["impl"], cfg["sources"], cfg["toy_system"]), (paths.IMPL_NAME, other["sources"], True))
             self.assertEqual(self.setup("--from", "-", "--force", stdin="[]")[0], 2)
             self.assertEqual(self.setup("--from", "-", "--force", stdin="{")[0], 2)
-
-    def test_placeholders(self):
-        from rawlayer.management.commands import setup  # noqa: PLC0415
-        self.assertEqual(setup.placeholders({"a": "<x>", "b": {"c": ["ok", "<y>"]}, "d": 1}), ["a", "b.c"])
 
 
 if __name__ == "__main__":

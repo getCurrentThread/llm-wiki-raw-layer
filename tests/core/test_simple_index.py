@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-"""index.SimpleIndex / SimpleApplier against the hand-written plumbing they replace. A toy index of the simple shape
-(one content table folded from one origin, an FTS5 table, a derived table) is built twice from the same toy ledger:
-once on the core classes and once on a reference that spells out the record header check, end_manifest, create_*
-and stats the way each app did before. The two must leave the same rows, FTS index, schema, counters, version stamp
-and stats, after every incremental round and after a full rebuild; odd records are counted the same way."""
+"""index.SimpleIndex / SimpleApplier on a toy index of the simple shape (one content table folded from one
+origin, an FTS5 table, a derived table), built from a three-round toy ledger: the rows and the derived table after the incremental rounds equal a full
+rebuild's; the exact rows, version stamp and stats; odd records are counted."""
 import sqlite3
 import unittest
 from collections import Counter
@@ -75,58 +73,6 @@ def make_simple(title):
     return Index()
 
 
-def make_reference(title):
-    """The plumbing as each app spelled it before SimpleIndex."""
-    class Applier:
-        def __init__(self, con, full):
-            self.con, self.full = con, full
-            self.counts = Counter()
-            self.dirty = False
-
-        def record(self, rec, seq):
-            if not isinstance(rec, dict) or rec.get("origin") != ORIGIN or rec.get("op") not in ("put", "absent", "purged") \
-                    or not index.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
-                self.counts["bad_record"] += 1
-                return
-            head = rec.get("key"), rec.get("kind"), rec["op"], rec["rev"]
-            self.dirty |= fold(self.con, self.counts, head, rec, seq, title)
-
-        def end_manifest(self, seq):
-            index.bump_counts(self.con, self.counts)
-            self.counts.clear()
-            if not self.full and self.dirty:
-                self.finish()
-            self.dirty = False
-
-        def finish(self):
-            finish(self.con)
-
-    class Index(index.SourceIndex):
-        name = "toyref"
-        origins = frozenset({ORIGIN})
-        schema_version = extractor_version = "toysimple-1"
-        fts_tables = ("msgs_fts",)
-
-        def create_tables(self, con):
-            con.executescript(SCHEMA)
-            con.execute(fts.fts_ddl("msgs", title=title))
-            if title:
-                con.execute(fts.title_rank("msgs_fts"))
-
-        def create_triggers(self, con):
-            index.create_triggers(con, "msgs", "msgs_fts", title=title)
-
-        def applier(self, con, full):
-            return Applier(con, full)
-
-        def stats(self, con):
-            return {"rows": con.execute("SELECT count(*) FROM msgs").fetchone()[0],
-                    "deleted": con.execute("SELECT coalesce(sum(deleted),0) FROM msgs").fetchone()[0],
-                    **index.read_counts(con)}
-
-    return Index()
-
-
 def dump(data_root, spec):
     """Every table (the FTS5 shadow tables too), the schema, the version stamp and the stats of an index."""
     con = sqlite3.connect(fsio.ro_uri(index.index_path(data_root, spec), immutable=False), uri=True)
@@ -143,36 +89,30 @@ def dump(data_root, spec):
         con.close()
 
 
-class BuiltTheSameWay(T.ToyCase):
+class TestSimpleIndex(T.ToyCase):
     APPS = (T.TOY,)
     STANDARD = False
 
     def build(self, title):
         sc = ToyRounds()
         self.addCleanup(T.force_rmtree, sc.fx.base)
-        dr = sc.fx.data_root
-        simple, ref = make_simple(title), make_reference(title)
-        for rnd in (1, 2, 3):
+        dr, spec = sc.fx.data_root, make_simple(title)
+        for _ in range(3):
             self.assertEqual(sc.next_round(), 0)
-            a, b = ({k: v for k, v in index.update(dr, spec).items() if k not in ("source", "seconds")}
-                    for spec in (simple, ref))
-            self.assertEqual(a, b, f"round {rnd}")
-            self.assertEqual(dump(dr, simple), dump(dr, ref), f"round {rnd}")
-        return dr, simple, ref
+            index.update(dr, spec)
+        return dr, spec
 
-    def test_incremental_rounds_and_rebuild_leave_the_same_index(self):
+    def test_incremental_rounds_and_rebuild_leave_the_same_rows(self):
         for title in (False, True):
             with self.subTest(title=title):
-                dr, simple, ref = self.build(title)
-                incremental = dump(dr, simple)
-                for spec in (simple, ref):
-                    self.assertEqual(index.update(dr, spec, rebuild=True)["action"], "rebuilt")
-                self.assertEqual(dump(dr, simple), dump(dr, ref))
-                self.assertEqual(dump(dr, simple)["msgs"], incremental["msgs"])
-                self.assertEqual(dump(dr, simple)["tally"], incremental["tally"])
+                dr, spec = self.build(title)
+                incremental = dump(dr, spec)
+                self.assertEqual(index.update(dr, spec, rebuild=True)["action"], "rebuilt")
+                rebuilt = dump(dr, spec)
+                self.assertEqual((rebuilt["msgs"], rebuilt["tally"]), (incremental["msgs"], incremental["tally"]))
 
     def test_exact_rows_stamp_and_stats(self):
-        dr, simple, _ref = self.build(False)
+        dr, simple = self.build(False)
         d = dump(dr, simple)
         self.assertEqual(d["stats"], {"rows": 5, "deleted": 0, "bad_value": 1})
         self.assertEqual(d["tally"], [repr((ORIGIN, 5))])

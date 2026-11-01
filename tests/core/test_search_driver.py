@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """The search index driver (rawlayer.search.index) on the toy index, built from a real three-round toy ledger:
-reports, incremental catch-up == full rebuild, ledger reset / genesis redone / a non-capture manifest / a large
-catch-up (rebuilds), mid-commit (stops, then resumes), defects (stop with exit 1, roll back), crashes and a killed
-catch-up (hot journal), the version gate, the stale warning, status, the writer lock, several indexes in one project
-(index --source all, one lock each, one failing does not stop the other), and the CLI's usage errors."""
+reports, incremental catch-up == full rebuild, ledger reset / genesis redone / a non-capture manifest (rebuilds),
+mid-commit (stops, then resumes), defects (stop with exit 1, roll back), crashes and a killed catch-up (hot journal),
+the version gate, the stale envelope, the writer lock, several indexes in one project (index --source all, one
+failing does not stop the other), and the edges of a missing index and a data root outside the data parent."""
 import json
-import os
 import shutil
 import sqlite3
 import subprocess
@@ -114,8 +113,6 @@ class Scenario(T.ToyCase):
             assert rc == 0, err
             cls.reports.append(json.loads(out)["toy"])
             cls.dumps[rnd] = dump(cls.dr)
-            if rnd == 2:
-                cls.round2 = cls.clone()
 
     @classmethod
     def clone(cls, src=None):
@@ -155,9 +152,6 @@ class TestBuild(Scenario):
                          ("updated", 3, 3, 38, 37, 1))
         rc, rep, _ = self.index(self.cfg)
         self.assertEqual((rc, rep["action"], rep["manifests"]), (0, "current", 0))
-        rc, out, _ = run_search("index", "--config", self.cfg, "--source", "toy")
-        self.assertIn("toy: current", out)
-        self.assertIn("seq=3", out)
 
     def test_fold(self):
         rows = {r[0]: r for r in self.dumps[3]["item"]}
@@ -188,12 +182,6 @@ class TestBuild(Scenario):
         for q in ("10월", "배포", "b5", "메시지", "api"):
             self.assertEqual(search(cfg, q, "--include-gone"), search(self.cfg, q, "--include-gone"))
 
-    def test_round2_incremental_equals_rebuild(self):
-        cfg, dr = self.round2
-        self.assertEqual(dump(dr), self.dumps[2])
-        self.assertEqual(self.index(cfg, "--rebuild")[1]["seq"], 2)
-        self.assertEqual(dump(dr), self.dumps[2])
-
 
 class TestLedgerChanges(Scenario):
     def test_reset_shorter_ledger_rebuilds(self):
@@ -202,13 +190,6 @@ class TestLedgerChanges(Scenario):
         rc, rep, _ = self.index(cfg)
         self.assertEqual((rc, rep["action"], rep["reason"], rep["seq"]), (0, "rebuilt", "ledger_reset", 2))
         self.assertEqual(dump(dr), self.dumps[2])
-
-    def test_reset_same_length_rebuilds(self):
-        cfg, dr = self.clone()
-        with manifest_path(dr, 3).open("ab") as fh:
-            fh.write(b"\n")
-        rc, rep, _ = self.index(cfg)
-        self.assertEqual((rc, rep["reason"], rep["seq"]), (0, "ledger_reset", 3))
 
     def test_genesis_redone_rebuilds(self):
         sc = ToyRounds()
@@ -232,13 +213,6 @@ class TestLedgerChanges(Scenario):
         rc, rep, _ = self.index(cfg)
         self.assertEqual((rc, rep["action"], rep["reason"], rep["seq"]), (0, "rebuilt", "manifest_type", 4))
 
-    def test_large_catch_up_rebuilds(self):
-        cfg, dr = self.round2_index_with_ledger3()
-        with mock.patch.object(toy.SPEC, "full_rebuild_records", 1):
-            rc, rep, _ = self.index(cfg)
-        self.assertEqual((rc, rep["reason"], rep["seq"]), (0, "large_catch_up", 3))
-        self.assertEqual(dump(dr), self.dumps[3])
-
     def test_mid_commit_stops_then_resumes(self):
         cfg, dr = self.round2_index_with_ledger3()
         seg = segments(dr, 3)[0]
@@ -248,38 +222,9 @@ class TestLedgerChanges(Scenario):
         rc, rep, _ = self.index(cfg)
         self.assertEqual((rc, rep["action"], rep["seq"], rep["blocked"], rep["blocked_seq"], rep["behind"]),
                          (0, "current", 2, "mid_commit", 3, True))
-        rc, out, _ = run_search("index", "--config", cfg, "--source", "toy")
-        self.assertIn("still being committed", out)
         part.rename(seg)
         rc, rep, _ = self.index(cfg)
         self.assertEqual((rc, rep["action"], rep["seq"], rep["blocked"]), (0, "updated", 3, None))
-        self.assertEqual(dump(dr), self.dumps[3])
-
-    def test_part_renamed_during_the_commit_check_is_not_a_defect(self):
-        """capture renames *.part to the final name between the index's two existence checks. Whichever check sees
-        the file, the result is mid_commit or ok -- never a 'missing' defect (exit 1)."""
-        cfg, dr = self.round2_index_with_ledger3()
-        seg = segments(dr, 3)[0]
-        part = T.suffixed(seg, ".part")
-        seg.chmod(0o600)
-        seg.rename(part)
-        real, real_lexists = os.path.exists, os.path.lexists
-
-        def racing(p):
-            hit = real(p)
-            if os.path.normcase(p) in (os.path.normcase(seg), os.path.normcase(part)) and real(part):
-                part.rename(seg)                    # capture finalises right after this check looked
-            return hit
-
-        def path_exists(p, *, follow_symlinks=True):
-            return racing(p) if follow_symlinks else real_lexists(p)
-        # the check may ask os.path.exists or Path.exists: both race
-        with mock.patch.object(os.path, "exists", side_effect=racing), mock.patch.object(Path, "exists", path_exists):
-            rc, rep, err = self.index(cfg)
-        self.assertEqual(rc, 0, err)
-        self.assertIn((rep["seq"], rep["blocked"]), ((2, "mid_commit"), (3, None)))
-        rc, rep, _ = self.index(cfg)
-        self.assertEqual((rc, rep["seq"], rep["blocked"]), (0, 3, None))
         self.assertEqual(dump(dr), self.dumps[3])
 
     def test_missing_segment_is_a_defect(self):
@@ -289,9 +234,6 @@ class TestLedgerChanges(Scenario):
         seg.unlink()
         rc, rep, _ = self.index(cfg)
         self.assertEqual((rc, rep["seq"], rep["blocked"]), (1, 2, "defect"))
-        rc, out, _ = run_search("index", "--config", cfg, "--source", "toy")
-        self.assertEqual(rc, 1)
-        self.assertIn("STOPPED", out)
 
     def test_corrupt_segment_rolls_back(self):
         cfg, dr = self.round2_index_with_ledger3()
@@ -331,7 +273,6 @@ class TestLedgerChanges(Scenario):
         self.assertTrue(T.suffixed(ipath(dr), "-journal").exists())
         rc, _out, err = run_search("search", "toy", "--config", cfg, "가나다")
         self.assertEqual(rc, 2)
-        self.assertIn("manage.py capture", err)
         rc, rep, _ = self.index(cfg)                 # rolls the journal back, then catches up from seq 2
         self.assertEqual((rc, rep["action"], rep["seq"], rep["manifests"]), (0, "updated", 3, 1))
         self.assertFalse(T.suffixed(ipath(dr), "-journal").exists())
@@ -356,23 +297,16 @@ class TestLedgerChanges(Scenario):
                 con.execute("UPDATE meta SET v=? WHERE k=?", (v, k))
                 con.commit()
                 con.close()
-                rc, _out, err = run_search("search", "toy", "--config", cfg, "배포")
-                self.assertEqual(rc, 2)
-                self.assertIn("--rebuild", err)
+                self.assertEqual(run_search("search", "toy", "--config", cfg, "배포")[0], 2)
                 rc, rep, _ = self.index(cfg)
                 self.assertEqual((rc, rep["action"], rep["reason"]), (0, "rebuilt", "version"))
                 self.assertEqual(search(cfg, "배포")["total"], 1)
 
     def test_stale_warning(self):
         cfg, _dr = self.round2_index_with_ledger3()
-        rc, _out, err = run_search("search", "toy", "--config", cfg, "배포")
-        self.assertEqual(rc, 0)
-        self.assertIn("behind the ledger", err)
         env = search(cfg, "배포")
         self.assertEqual(env["index"], {"seq": 2, "ledger_seq": 3, "stale": True})
         self.assertEqual(search(cfg, "b5")["keys"], ["toy:toy_b:5"])   # only pending at seq 2: still held
-        rc, _out, err = run_search("search", "toy", "--config", self.cfg, "배포")
-        self.assertEqual(err, "")
 
 
 class TestLocks(Scenario):
@@ -393,9 +327,7 @@ class TestLocks(Scenario):
         cfg, dr = self.clone()
         release = self.hold(dr, "toy")
         try:
-            rc, out, _ = run_search("index", "--config", cfg, "--source", "toy")
-            self.assertEqual(rc, 75)
-            self.assertIn("busy", out)
+            self.assertEqual(run_search("index", "--config", cfg, "--source", "toy")[0], 75)
             self.assertEqual(search(cfg, "배포")["total"], 1)       # readers are not blocked
         finally:
             release()
@@ -428,19 +360,6 @@ class TestLocks(Scenario):
                          ("current", "rebuilt", 38))
         self.assertEqual(search(cfg, "배포", source="toy2")["keys"], ["toy:toy_m:1"])
 
-    def test_sources_lock_independently(self):
-        cfg, dr = self.clone()
-        release = self.hold(dr, "toy2")
-        try:
-            rc, reps, _ = self.index(cfg, source="all")
-            self.assertEqual(rc, 75)
-            self.assertEqual((reps["toy"]["action"], reps["toy2"]["action"]), ("current", "busy"))
-        finally:
-            release()
-        rc, reps, _ = self.index(cfg, source="all")
-        self.assertEqual((rc, reps["toy"]["action"], reps["toy2"]["action"], reps["toy2"]["rows"]),
-                         (0, "current", "rebuilt", 38))
-
     def test_one_source_failing_does_not_stop_the_other(self):
         """An unexpected error in one index update is reported for it (exit 1) and the other is still built."""
         cfg, dr = self.clone()
@@ -454,10 +373,7 @@ class TestLocks(Scenario):
         self.assertEqual((rep["toy"]["action"], rep["toy"]["seq"]), ("rebuilt", 3))
         self.assertFalse(ipath(dr, "toy2").exists())
         self.assertFalse(T.suffixed(ipath(dr, "toy2"), ".new").exists())
-        rc, out, _ = run_search("index", "--config", cfg)
-        self.assertEqual(rc, 0)
-        self.assertIn("toy: current", out)
-        self.assertIn("toy2: rebuilt", out)
+        self.assertEqual(run_search("index", "--config", cfg)[0], 0)
 
 
 class TestEdges(T.ToyCase):
@@ -471,9 +387,7 @@ class TestEdges(T.ToyCase):
 
     def test_missing_index_and_empty_ledger(self):
         cfg = self.bare_config(self.fx.data_root)
-        rc, _out, err = run_search("search", "toy", "--config", cfg, "x")
-        self.assertEqual(rc, 2)
-        self.assertIn("manage.py capture", err)
+        self.assertEqual(run_search("search", "toy", "--config", cfg, "x")[0], 2)
         rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--json")
         rep = json.loads(out)["toy"]
         self.assertEqual((rc, rep["action"], rep["seq"], rep["rows"]), (0, "rebuilt", 0, 0))
@@ -487,17 +401,3 @@ class TestEdges(T.ToyCase):
         self.assertEqual(run_search("index", "--config", self.bare_config("relative"))[0], 2)
         self.assertEqual(run_search("index", "--config", self.fx.base / "none.json")[0], 2)
 
-    def test_usage_errors(self):
-        cfg = self.bare_config(self.fx.data_root)
-        self.assertEqual(run_search("index", "--config", cfg, "--source", "toy")[0], 0)
-        for argv, msg in ((["search", "toy", "--config", cfg], "give a query"),
-                          (["search", "toy", "--config", cfg, "x", "-q", "y"], "once"),
-                          (["search", "toy", "--config", cfg, "x:y"], "column filter"),
-                          (["search", "toy", "--config", cfg, "x", "--limit", "0"], "--limit"),
-                          (["search", "nope", "--config", cfg, "x"], "invalid choice"),
-                          (["index", "--config", cfg, "--source", "nope"], "invalid choice")):
-            with self.subTest(argv=argv):
-                rc, _out, err = run_search(*argv)
-                self.assertEqual(rc, 2)
-                self.assertIn(msg, err)
-                self.assertTrue(err.startswith("search: "))

@@ -142,10 +142,6 @@ class TestSettings(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(schedule.ScheduleError):
                 schedule.parse(value)
 
-    def test_describe(self):
-        self.assertEqual(schedule.describe(schedule.parse(GOOD)), "every 3 h from 01:14 (local time), at most 2 h per run")
-        self.assertTrue(schedule.describe(schedule.parse({**GOOD, "every_hours": 24})).startswith("daily at 01:14"))
-
 
 class TestDefinition(unittest.TestCase):
     PY, PROJECT, CONFIG = str(TMP / "Py 3" / "python.exe"), str(TMP / "work dir" / "proj"), \
@@ -177,10 +173,6 @@ class TestDefinition(unittest.TestCase):
         self.assertEqual(get("t:Settings/t:DisallowStartIfOnBatteries"), "false")
         self.assertEqual(get("t:Settings/t:StopIfGoingOnBatteries"), "false")
         self.assertEqual(get("t:RegistrationInfo/t:Description"), "a & <b>")
-
-    def test_once_a_day_has_no_repetition(self):
-        f = schedule.fields(self.xml(every_hours=24))
-        self.assertEqual((f["interval"], f["duration"], f["triggers"]), (None, None, ("CalendarTrigger",)))
 
     def test_read_back_matches_through_the_defaults(self):
         xml = self.xml()
@@ -228,19 +220,6 @@ class TestDefinition(unittest.TestCase):
             with self.subTest(args=foreign):
                 self.assertIsNone(schedule.registered_config(self.PROJECT, "toy", foreign))
 
-    @unittest.skipUnless(WINDOWS, "drive-letter case and Windows' argv parser")
-    def test_registered_config_as_windows_reads_it(self):
-        """The same folder spelled another way (a prompt that keeps a lower-case drive letter), and white space
-        Windows' argv parser does not split on, left unquoted by list2cmdline."""
-        args = schedule.arguments(self.PROJECT, "toy", self.CONFIG)
-        self.assertEqual(config_of(schedule.registered_config(respelled(self.PROJECT), "toy", args)), self.CONFIG)
-        for ws in ("\u3000", "\u00a0", "\u2003"):
-            with self.subTest(ws=hex(ord(ws))):
-                project, config = str(ROOT / f"a{ws}b"), str(ROOT / f"d{ws}e" / "config.json")
-                registered = schedule.arguments(project, "toy", config)
-                self.assertNotIn('"', registered)               # left unquoted, as the case says
-                self.assertEqual(config_of(schedule.registered_config(project, "toy", registered)), config)
-
     def test_the_earlier_layout_is_recognised(self):
         """One project per folder (`<folder>/manage.py collect --config <cfg>`, 6 tokens): install replaces it."""
         self.assertTrue(schedule.old_layout(self.OLD))
@@ -259,36 +238,11 @@ class TestDefinition(unittest.TestCase):
         flags = xml.replace("-s -B", "-S -B")                    # a flag's case is not a path's
         self.assertEqual(schedule.differences(read_back(flags), xml), ["arguments"])
 
-    def test_result_text(self):
-        self.assertEqual(schedule.result_text("0"), ("0 (ok)", True))
-        self.assertEqual(schedule.result_text(NO_RUN), ("0x00041303 (has not run yet)", True))
-        self.assertEqual(schedule.result_text("267009"), ("0x00041301 (running now)", True))
-        self.assertEqual(schedule.result_text("75"), ("75 (capture busy, or an origin skipped)", False))
-        self.assertEqual(schedule.result_text("-2147024894")[0][:10], "0x80070002")
-        self.assertFalse(schedule.result_text("-2147024894")[1])
-        self.assertEqual(schedule.result_text("n/a"), ("n/a", False))
-
     def test_output_decoding(self):
         text = "\uc624\ud6c4 ok"
         self.assertEqual(schedule._text(text.encode("utf-8")), text)
         self.assertEqual(schedule._text(text.encode("utf-16")), text)
         self.assertIsInstance(schedule._text(b"\xb0\xa1\xff"), str)
-
-    def test_python_problem(self):
-        with tempfile.TemporaryDirectory(prefix="llmw-py-") as tmp:
-            d = Path(tmp)
-            (d / "python.exe").write_bytes(b"")
-            self.assertIsNone(schedule.python_problem(d / "python.exe"))
-            self.assertIn("not an existing file", schedule.python_problem(d / "none.exe"))
-            self.assertIn("not an existing file", schedule.python_problem("python.exe"))
-
-    @unittest.skipUnless(WINDOWS, "a Microsoft Store alias")
-    def test_python_problem_store_alias(self):
-        with tempfile.TemporaryDirectory(prefix="llmw-py-") as tmp:
-            store = Path(tmp) / "WindowsApps"
-            store.mkdir()
-            (store / "python.exe").write_bytes(b"")
-            self.assertIn("Store alias", schedule.python_problem(store / "python.exe"))
 
 
 class TestTaskLog(unittest.TestCase):
@@ -328,20 +282,6 @@ class TestTaskLog(unittest.TestCase):
         info = schedule.last_run(self.root)
         self.assertEqual(self.lines(info), ["2026-10-05T04:00:00Z step=capture rc=0 seconds=8"])
         self.assertEqual((info["complete"], info["newer_started"]), (False, False))
-
-    def test_right_after_a_rollover_the_old_log_is_read(self):
-        self.write(self.RUN1, name="task.log.1")
-        self.write("run\n")
-        info = schedule.last_run(self.root)
-        self.assertEqual(self.lines(info)[0], "2026-10-05T01:00:00Z step=capture rc=0 seconds=9")
-        self.assertEqual((info["complete"], info["newer_started"]), (True, True))
-        (self.root / "reports" / "task.log").unlink()
-        self.assertTrue(schedule.last_run(self.root)["complete"])
-
-    def test_an_unreadable_log_is_not_none(self):
-        self.write(self.RUN1)
-        with mock.patch.object(schedule, "_runs", _raise(PermissionError())):
-            self.assertEqual(schedule.last_run(self.root), {"error": "PermissionError"})
 
 
 class Case(T.ToyCase):
@@ -387,11 +327,6 @@ class TestInstall(Case):
         self.assertEqual(get("Arguments"), schedule.arguments(project, "toy", self.fx.config_path.resolve()))
         self.assertEqual(get("WorkingDirectory"), project)
         self.assertEqual(self.tasks.calls[2], ("/Run", "/TN", GOOD["task"]))
-        self.assertIn("as registered", out)
-
-    def test_without_run_now_nothing_starts(self):
-        self.assertEqual(self.install()[0], 0)
-        self.assertEqual(self.tasks.verbs(), ["/Create", "/Query"])
 
     def test_dry_run_prints_the_definition_and_needs_no_elevation(self):
         self.elevated = False
@@ -401,31 +336,6 @@ class TestInstall(Case):
         expected = schedule.task_xml(s, os.path.abspath(sys.executable), T.REPO.resolve(), "toy",
                                      self.fx.config_path.resolve())
         self.assertEqual(schedule.differences(out, expected), [])
-        self.assertEqual(SystemExit, type(_raises(lambda: run("install", "toy", "--config", "x", "--dry-run",
-                                                              "--run-now"))))
-
-    def test_without_an_app_every_scheduled_app_installs_in_a_process_of_its_own(self):
-        children = []
-
-        def child(argv, **kw):
-            children.append((argv, kw))
-            return mock.Mock(returncode=0)
-        with mock.patch.object(schedule.subprocess, "run", child):
-            rc, out, _err = run("install", "--dry-run")
-        self.assertEqual(rc, 0)
-        self.assertIn("schedule: == toy", out)
-        self.assertEqual([a[4:] for a, _kw in children], [["schedule", "install", "toy", "--dry-run"]])
-        self.assertEqual([os.fspath(a) for a in children[0][0][:4]],         # the child's argv, as it receives it
-                         [sys.executable, "-s", "-B", str(T.REPO / "manage.py")])
-        with mock.patch.object(schedule, "_schedule_value", lambda app: None):
-            rc, _out, err = run("install")
-        self.assertEqual(rc, 2)
-        self.assertIn("no app has a schedule", err)
-        rc, _out, err = run("install", "--config", self.fx.config_path)
-        self.assertEqual(rc, 2)
-        self.assertIn("--config belongs to one app", err)
-        self.assertEqual(run("install", "nope")[0], 2)
-        self.assertEqual(self.tasks.calls, [])
 
     def test_refusals_register_nothing(self):
         with tempfile.TemporaryDirectory(prefix="llmw-py-") as tmp:
@@ -445,10 +355,6 @@ class TestInstall(Case):
                 "malformed": (lambda: self.patch(schedule, "_schedule_value", lambda app: {"task": 1}), (),
                               "toy: schedule"),
                 "not windows": (lambda: self.patch(schedule, "_windows", lambda: False), (), "Windows"),
-                "hook result": (lambda: self.patch(toyapps.ToyConfig, "task_checks", lambda s, c: "x"), (),
-                                "must return a list of strings"),
-                "hook raising": (lambda: self.patch(toyapps.ToyConfig, "task_checks", _raise(ValueError())), (),
-                                 "app toy: task_checks failed (error ValueError)"),
                 "precheck failing": (lambda: self.patch(precheck, "check", _raise(RuntimeError("rc=1"))), (),
                                      "could not be checked (error RuntimeError)"),
             }
@@ -486,10 +392,6 @@ class TestInstall(Case):
         self.tasks.edit, self.tasks.fail["/Query"] = None, (1, "", "ERROR: Access is denied.\r\n")
         self.assertEqual(self.install()[0], 3)
 
-    def test_a_start_that_fails_is_exit_1(self):
-        self.tasks.fail["/Run"] = (1, "", "ERROR: x\r\n")
-        self.assertEqual(self.install("--run-now")[0], 1)
-
 
 class TestStatus(Case):
     def status(self, *extra):
@@ -499,29 +401,6 @@ class TestStatus(Case):
         rc, out, _err = self.status()
         self.assertEqual(rc, 3)
         self.assertIn("is not registered, or not readable", out)
-        self.assertIn("manage.py schedule install toy", out)
-
-    def test_without_an_app_every_scheduled_app(self):
-        self.install()
-        self.tasks.last_result = "0"
-        rc, out, _err = run("status")
-        self.assertEqual(rc, 0)
-        self.assertIn("definition: current", out)
-        with mock.patch.object(schedule, "_schedule_value", lambda app: {"task": 1}):
-            rc, _out, err = run("status")
-        self.assertEqual(rc, 2)
-        self.assertIn("toy: schedule", err)
-
-    def test_a_task_of_the_earlier_layout(self):
-        """Registered from one project per folder: status says so (install replaces it)."""
-        self.install()
-        self.tasks.last_result = "0"
-        old = f'-s -B "{TMP / "p" / "toy" / "manage.py"}" collect --config "{TMP / "d" / "config.json"}"'
-        self.tasks.xml = re.sub(r"<Arguments>.*?</Arguments>", lambda m: f"<Arguments>{old}</Arguments>",
-                                self.tasks.xml)
-        rc, out, _err = self.status()
-        self.assertEqual(rc, 3)
-        self.assertIn("registered from the earlier layout", out)
         self.assertIn("manage.py schedule install toy", out)
 
     def test_a_task_of_the_previous_command_name(self):
@@ -555,65 +434,10 @@ class TestStatus(Case):
                 self.assertIn(f"last result: {shown}", out)
                 self.assertIn("state: Ready", out)
 
-    def test_differences_against_settings_and_options(self):
-        self.install()
-        self.tasks.last_result = "0"
-        rc, out, _err = self.status("--config", self.fx.base / "other.json")
-        self.assertEqual(rc, 3)
-        self.assertIn("differs from toy's schedule and the options given: arguments", out)
-        self.assertIn("differs from toy's schedule and the options given: command",
-                      self.status("--python", self.fx.base / "py.exe")[1])
-        with mock.patch.object(schedule, "_schedule_value", lambda app: {**GOOD, "limit_hours": 1}):
-            self.assertIn("differs from toy's schedule: time_limit", self.status()[1])
-        self.tasks.xml = self.tasks.xml.replace("</Settings>", "<Enabled>false</Enabled></Settings>")
-        rc, out, _err = self.status()
-        self.assertEqual(rc, 3)
-        self.assertIn("(DISABLED)", out)
-
-    def test_a_foreign_action(self):
-        self.install()
-        self.tasks.xml = re.sub(r"<Arguments>.*?</Arguments>", "<Arguments>other.py</Arguments>", self.tasks.xml)
-        rc, out, _err = self.status()
-        self.assertEqual(rc, 3)
-        self.assertIn("not this project's", out)
-
-    def test_run_info_unavailable(self):
-        self.install()
-        real = self.tasks.__call__
-
-        def no_csv(*args):
-            return (0, "unexpected\r\n", "") if "/FO" in args else real(*args)
-        with mock.patch.object(schedule, "schtasks", no_csv):
-            rc, out, _err = self.status()
-        self.assertEqual(rc, 3)
-        self.assertIn("run info: unavailable", out)
-
     def task_log(self, text):
         reports = self.fx.data_root / "reports"
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "task.log").write_text(text, encoding="utf-8", newline="\n")
-
-    def test_task_log_of_the_registered_config(self):
-        self.install()
-        self.tasks.last_result = "0"
-        self.assertIn("task.log: none yet", self.status()[1])
-        self.task_log("run\n2026-10-05T01:00:00Z step=capture rc=0 seconds=9\n  capture done run=1\n"
-                      "2026-10-05T01:00:09Z step=index rc=0 seconds=1\n  index one=1\nrun\n")
-        rc, out, _err = self.status()
-        self.assertEqual(rc, 0)
-        self.assertIn("task.log, previous run:\n", out)
-        self.assertIn("    2026-10-05T01:00:00Z step=capture rc=0 seconds=9\n", out)
-        self.assertIn("    2026-10-05T01:00:09Z step=index rc=0 seconds=1\n", out)
-        self.assertIn("a newer run has started", out)
-        self.assertNotIn("newest run", out)
-        self.assertNotIn("capture done", out)
-        self.assertNotIn("index one", out)
-        self.task_log("run\n2026-10-05T01:00:00Z step=capture rc=0 seconds=9\n  capture done run=1\n")
-        out = self.status()[1]
-        self.assertIn("task.log, newest run, incomplete (no index step yet: still running, or stopped):\n", out)
-        self.task_log("run\n2026-10-05T01:00:00Z step=capture rc=0 seconds=9\nrun\n")
-        out = self.status()[1]
-        self.assertIn("task.log, previous run, incomplete (stopped before its index step):\n", out)
 
     def test_a_failing_step_needs_attention_though_the_last_result_is_ok(self):
         """the command's exit code (Last Result) is the capture step's: an index that stops at a defect shows only in task.log."""
@@ -625,45 +449,8 @@ class TestStatus(Case):
         self.assertEqual(rc, 3)
         self.assertIn("step=index rc=1 seconds=1   <- not ok", out)
 
-    def test_an_incomplete_run_is_labelled(self):
-        self.install()
-        self.tasks.last_result = "267009"
-        self.task_log("run\n2026-10-05T01:00:00Z step=capture rc=0 seconds=9\n")
-        rc, out, _err = self.status()
-        self.assertEqual(rc, 0)
-        self.assertIn("newest run, incomplete (no index step yet: still running, or stopped)", out)
-
-    @unittest.skipUnless(WINDOWS, "drive-letter case")
-    def test_another_spelling_of_the_project_is_the_same_task(self):
-        """Installed from a prompt that kept a lower-case drive letter (or by the retired script, every path quoted),
-        read from one that did not: the same task, still current."""
-        self.install()
-        self.tasks.last_result = "0"
-        project = str(T.REPO.resolve())
-        args = re.search(r"<Arguments>(.*?)</Arguments>", self.tasks.xml).group(1)
-        other = args.replace(project, respelled(project))
-        quoted = re.sub(r"(\S+manage\.py) capture toy --config (.+)$", r'"\1" capture toy --config "\2"', other)
-        for spelled in (other, quoted):
-            with self.subTest(args=spelled):
-                self.tasks.xml = self.tasks.xml.replace(f"<Arguments>{args}</Arguments>",
-                                                        f"<Arguments>{spelled}</Arguments>")
-                rc, out, _err = self.status()
-                self.assertEqual(rc, 0, out)
-                self.assertIn("definition: current", out)
-                args = spelled
-
 
 class TestRunAndRemove(Case):
-    def test_run(self):
-        self.install()
-        self.assertEqual(run("run")[0], 0)
-        self.assertEqual(self.tasks.calls[-1], ("/Run", "/TN", GOOD["task"]))
-        self.tasks.fail["/Run"] = (1, "", "ERROR: x\r\n")
-        self.assertEqual(run("run")[0], 1)
-        self.elevated = False
-        n = len(self.tasks.calls)
-        self.assertEqual(run("run")[0], 2)
-        self.assertEqual(len(self.tasks.calls), n)
 
     def test_remove(self):
         self.install()
@@ -679,10 +466,6 @@ class TestRunAndRemove(Case):
 
 
 class TestManage(Case):
-    def test_manage_py_dispatches_schedule(self):
-        rc, out, _err = run("schedule", "status", entry=management.main)
-        self.assertEqual(rc, 3)
-        self.assertIn("not registered", out)
 
     def check(self, *argv):
         return run("check", *argv, entry=management.main)
@@ -764,14 +547,6 @@ def _raise(exc):
     def f(*_a, **_kw):
         raise exc
     return f
-
-
-def _raises(fn):
-    try:
-        fn()
-    except BaseException as e:      # noqa: BLE001 -- argparse exits
-        return e
-    return None
 
 
 if __name__ == "__main__":

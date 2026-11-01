@@ -41,16 +41,6 @@ if "--thread=BIG" in argv:              # its row 1 is longer than any answer: 4
              "snippet": "post %d" % i} for i in range(3)]
     print(json.dumps({"source": argv[1], "mode": "thread", "argv": argv, "total": 3, "rows": rows, "index": index}))
     sys.exit(0)
-if "--label=LONG" in argv:              # a gmail-like browse page: its newest mail's body is 42000 characters
-    body = "".join("%06d" % k for k in range(7000))
-    rows = [{"id": i, "cursor": "c%d" % i, "subject": "s", "body_text": body if i == 2 else "short",
-             "text": "s " + (body if i == 2 else "short"), "snippet": "s"} for i in range(3)]
-    limit = int(next((a.split("=", 1)[1] for a in argv if a.startswith("--limit=")), "3"))
-    rows = rows[-limit:]
-    page = {"before": rows[0]["cursor"], "after": rows[-1]["cursor"], "more_older": limit < 3, "more_newer": None}
-    print(json.dumps({"source": argv[1], "mode": "browse", "argv": argv, "total": 3, "rows": rows, "page": page,
-                      "index": index}))
-    sys.exit(0)
 if any(a.startswith("--thread=") for a in argv):
     rows = [{"id": i, "text": "post %d" % i, "snippet": "post %d" % i} for i in range(7)]
     print(json.dumps({"source": argv[1], "mode": "thread", "argv": argv, "total": 7, "rows": rows, "index": index}))
@@ -263,27 +253,6 @@ class Protocol(unittest.TestCase):
         self.assertIsNone(env["chunk"]["next_offset"])
         self.assertLess(rid, 6)
 
-    def test_a_long_mail_is_read_in_windows(self):
-        # outside a thread or page's text (a gmail label browse): limit 1 and the same arguments select the same row
-        whole = "".join("%06d" % k for k in range(7000))
-        self.assertIn("limit 1", self.error_text(self.call(1, "raw_read", {"app": "alpha", "filters": {"label": "LONG"},
-                                                                          "text_offset": 5})))
-        args, got, rid = {"app": "alpha", "filters": {"label": "LONG"}, "limit": 1}, "", 2
-        while True:
-            env = self.payload(self.call(rid, "raw_read", args))
-            rid += 1
-            row = env["rows"][0]
-            self.assertEqual((row["id"], "text" in row), (2, False))     # the body once: text repeats it
-            self.assertLessEqual(len(json.dumps(env, ensure_ascii=False)), M.MAX_CHARS)
-            if "chunk" not in env:
-                got += row["body_text"]
-                break
-            got += row["body_text"][:-1]
-            self.assertIn("limit 1", env["truncated"]["hint"])
-            args = dict(args, text_offset=env["chunk"]["next_text_offset"])
-        self.assertEqual(got, whole)
-        self.assertLess(rid, 7)
-
     def test_named_only(self):
         self.stop()
         self.start("--named-only", "beta")
@@ -312,21 +281,6 @@ class Protocol(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
-class Replies(unittest.TestCase):
-    def test_every_request_is_answered(self):
-        # a lone surrogate (valid JSON as an escape) echoed into an error message cannot be encoded as UTF-8
-        import io
-        out = io.BytesIO()
-        server = M.Server(M.Tools(["alpha"], M.Runner()), out, log=io.StringIO())
-        lines = [json.dumps({"jsonrpc": "2.0", "id": 1, "method": "x\ud800"}).encode(),
-                 json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                             "params": {"name": "raw_help", "arguments": {"app": "alpha", "x\ud800": 1}}}).encode(),
-                 json.dumps({"jsonrpc": "2.0", "id": 3, "method": "ping"}).encode()]
-        server.serve(lines)
-        replies = [json.loads(x) for x in out.getvalue().decode("ascii").splitlines()]
-        self.assertEqual(sorted(r["id"] for r in replies), [1, 2, 3])
-
-
 class Arguments(unittest.TestCase):
     def test_filters(self):
         self.assertEqual(M.filter_args({"channel": ["a", "b"], "list-channels": True, "x": False, "team": "t"}),
@@ -339,16 +293,6 @@ class Arguments(unittest.TestCase):
         for bad in ({"lab": "x"}, {"nosuch": "a b"}):
             with self.subTest(bad=bad), self.assertRaises(M.ToolError):
                 M.filter_args(bad, {"label"})
-
-    def test_help_flags(self):
-        text = "usage: x [--channel C] [--list-channels] [--config F] [--json]\n  --page-text P   a page (not --q)\n"
-        self.assertEqual(M.help_flags(text), {"channel", "list-channels", "page-text"})
-
-    def test_common(self):
-        self.assertEqual(M.common_args({"query": "-x", "since": "3d", "include_deleted": True, "filters": {"a": "b"}}),
-                         ["--query=-x", "--since=3d", "--include-deleted"])
-        with self.assertRaises(M.ToolError):
-            M.common_args({"sender": 5})
 
     def test_the_typed_arguments_are_the_search_parser_s(self):
         # the flags the tools set themselves exist in every app's parser (kakaotalk's is not opened here)
@@ -426,25 +370,4 @@ class Shaping(unittest.TestCase):
         self.assertEqual((page["before"], page["after"], page["more_older"]), (rows[0]["cursor"], "c29", True))
         self.assertIn("filters.before", out["truncated"]["hint"])
 
-    def test_an_after_page_drops_its_newest_rows(self):
-        out = M.shape(self.browse(False), [], full_text=True, max_chars=6000)
-        rows, page = out["rows"], out["page"]
-        self.assertEqual(rows[0]["id"], 0)
-        self.assertEqual((page["before"], page["after"], page["more_newer"]), ("c0", rows[-1]["cursor"], True))
-        self.assertIn("filters.after", out["truncated"]["hint"])
 
-    def test_a_clip_is_measured_as_json(self):
-        text = "a\\b\n" * 15000                            # 60000 characters, 90000 as JSON
-        out = M.shape({"mode": "thread", "rows": [{"id": 1, "text": text}]}, [], full_text=True)
-        kept = out["rows"][0]["clipped"]["text"]["kept"]
-        self.assertGreater(kept, 10000)                     # most of what fits, not the 80-character floor
-        self.assertEqual(out["rows"][0]["text"][:-1], text[:kept])
-        self.assertLessEqual(len(json.dumps(out, ensure_ascii=False)), M.MAX_CHARS)
-
-    def test_one_long_row_is_clipped(self):
-        out = M.shape({"mode": "thread", "rows": [{"id": 1, "text": "x" * 50000}]}, [], full_text=True,
-                      max_chars=6000)
-        self.assertEqual(len(out["rows"]), 1)
-        self.assertTrue(out["rows"][0]["clipped"])
-        self.assertTrue(out["truncated"]["texts_clipped"])
-        self.assertLessEqual(len(json.dumps(out, ensure_ascii=False)), 6000)

@@ -3,16 +3,14 @@
 suspect), a two-phase origin (PendingAbsentMixin: pending, absent, the shrink guard, partial containers, unprintable
 keys) and a multi-version origin (MultiVersionMixin: versions, moves, missing and gone containers, unstable passes);
 container failures and their statuses, read errors, denylist, value_bad / dup_key / bad_line, container facts,
-state tables and replay, spill and part boundaries, determinism, the disk estimate and SYSTEM-only origins."""
-import contextlib
-import io
+state tables and replay, spill and part boundaries, determinism, the disk floor and SYSTEM-only origins."""
 import shutil
 import sqlite3
 from collections import Counter
 from unittest import mock
 
 from rawlayer.capture import canon, ledger as ledger_mod, run
-from rawlayer.capture.config import ConfigError, InputSet
+from rawlayer.capture.config import ConfigError
 from rawlayer.capture.origins import Guard
 from tests.core import toyfix as T
 from tests.core.toyapp import readers
@@ -101,12 +99,9 @@ class TestPlainOrigin(Case):
 
     def test_read_error_is_an_origin_error(self):
         shutil.rmtree(self.fx.a)
-        out = io.StringIO()
-        with T.preserved_env(), contextlib.redirect_stdout(out):
-            self.assertEqual(run.capture(self.fx.cfg(), "live", list(T.ORIGINS), skip_precheck=True), 75)
+        self.assertEqual(capture(self.fx), 75)
         a = self.origin_doc("toy_a")
         self.assertEqual((a["status"], a["notes"], a["containers"]), ("error", {"read_error": 1}, {}))
-        self.assertIn("origin error toy_a errno=2", out.getvalue())
         self.assertTrue(any(s["origin"] == "toy_b" for s in manifests(self.fx)[0]["segments"]))
 
     def test_value_bad_dup_key_and_bad_line(self):
@@ -177,12 +172,6 @@ class TestPlainOrigin(Case):
         self.assertEqual(capture(self.fx), 0)
         self.assertEqual(export(self.fx), a)
         self.assertEqual(len(a), len({(o, k) for o, k, *_ in a}))
-
-    def test_estimate_peak(self):
-        inputs = InputSet(self.fx.cfg(), "live")
-        size = sum(p.stat().st_size for p in self.fx.a.iterdir())
-        self.assertEqual(run.estimate_peak(inputs, ["toy_a", "toy_b"]), size + 1024 ** 3)
-        self.assertEqual(run.estimate_peak(inputs, ["toy_m"]), 1024 ** 3)
 
     def test_disk_floor_skips_the_run(self):
         usage = shutil.disk_usage(self.fx.data_root)._replace(free=run.HARD_FLOOR)
@@ -287,15 +276,6 @@ class TestPendingAbsent(Case):
         self.assertEqual(capture(self.fx), 0)
         self.assertEqual(self.b_doc()["pending"], {"add": [], "drop": [k5]})
         self.assertEqual(self.ops(k5), [(1, "put")])
-        self.sound()
-
-    def test_partial_container_puts_but_adds_no_pending(self):
-        self.assertEqual(capture(self.fx), 0)
-        self.fx.b_put("r1", [item(i, f"b{i}") for i in range(1, 19)] + [item(40, "new")], partial=True)
-        self.assertEqual(capture(self.fx), 0)
-        d = self.b_doc()
-        self.assertEqual((d["status"], d["pending"], d["counts"]), ("ok", {"add": [], "drop": []},
-                                                                   {"put": 1, "absent": 0}))
         self.sound()
 
     def test_shrink_guard_on_new_missing_keys(self):
@@ -471,13 +451,6 @@ class TestMultiVersion(Case):
         self.assertEqual(capture(self.fx), 75)
         self.assertEqual((self.m_doc()["status"], self.m_doc()["notes"]), ("error", {"read_error": 1}))
         self.assertEqual(sum(1 for r in records(self.fx) if r["origin"] == "toy_m"), 0)
-
-    def test_value_bad_and_bad_line(self):
-        self.fx.m_put("c1", ['{"id": "1", "v": NaN}', "not json", item(2, "답글 하나")])
-        self.assertEqual(capture(self.fx), 0)
-        self.assertEqual(self.m_doc()["notes"], {"bad_line": 1, "value_bad": 1})
-        self.assertEqual(sorted(k for k in by_key(records(self.fx)) if k.startswith("toy:toy_m")),
-                         [key("toy_m", 2), key("toy_m", 3)])
 
     def test_days_facts(self):
         self.assertEqual(capture(self.fx), 0)

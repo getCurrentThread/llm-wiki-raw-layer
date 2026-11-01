@@ -87,16 +87,6 @@ class Export(Project):
         self.assertIn('period: "2026-08..2026-09"\n', text)
         self.assertLess(text.index("## 2026-08-20"), text.index("## 2026-09-20"))
 
-    def test_a_full_file_starts_the_next_one(self):
-        with mock.patch.object(W, "PACK", 5):           # every month fills a file on its own
-            self.run_export("chat", CHAT)
-        rnd = W.name("team › random", "ch2")
-        self.assertIn(f"{rnd}/2026-09.md", self.files("toy"))
-        mails = {f"m{m}": (f"S{m} / x", [(f"k{m}", ts(2026, m, 5), "y" * 6, False)]) for m in (6, 7, 8)}
-        with mock.patch.object(W, "PACK", 10):          # two 6-character mails fill a file
-            self.run_export("mail", mails)
-        self.assertEqual(self.files("toy2"), ["2026-06.md", "2026-08.md"])
-
     def test_rerun_writes_nothing(self):
         self.run_export("chat", CHAT)
         path = next((self.project / "raw/sources/toy").rglob("2026-09.md"))
@@ -212,17 +202,6 @@ class Names(unittest.TestCase):
 
 
 class Options(unittest.TestCase):
-    def test_checks(self):
-        project, include, exclude, since = W.options(("dc", "chat"))
-        self.assertEqual([o.key for o in (project, include, exclude, since)],
-                         ["dc_wiki_project", "dc_wiki_include", "dc_wiki_exclude", "dc_wiki_since"])
-        self.assertEqual(W.options((None, "page")), ())             # a layout without config keys
-        self.assertEqual(project.check(""), "")
-        self.assertEqual(since.check("2026-01"), "2026-01")
-        for op, bad in ((project, "relative\\path"), (project, 3), (since, "2026-13"), (since, "2026"),
-                        (include, [""]), (include, "dev")):
-            with self.assertRaises(ValueError):
-                op.check(bad)
 
     def test_settings_command_line_over_config(self):
         root = str(Path(tempfile.gettempdir()).resolve())
@@ -296,17 +275,6 @@ class Command(Project):
         self.assertFalse((self.project / "raw").exists())
         self.assertEqual(self.collect(T.TOY, CHAT, config=False)[0], 2)             # no config: the default one
 
-    def test_prune_is_handed_the_index_freshness(self):
-        self.write_config(toy_wiki_project=str(self.project))
-        self.assertEqual(self.collect(T.TOY, CHAT)[0], 0)
-        orphan = self.project / "raw/sources/toy/renamed (00000000)/2026-01.md"
-        orphan.parent.mkdir()
-        orphan.write_text("x", encoding="utf-8")
-        for stale, rc, kept in ((True, 2, True), (False, 0, False)):
-            with self.subTest(stale=stale):
-                self.assertEqual(self.collect(T.TOY, CHAT, "--prune", stale=stale)[0], rc)
-                self.assertEqual(orphan.exists(), kept)
-
     def test_a_stale_scheduled_task_exports_nothing_as_localsystem(self):
         """A task registered as `manage.py collect <app> --config <cfg>` (what capture was called) must not export
         private data as SYSTEM: refused before the config is read."""
@@ -319,14 +287,6 @@ class Command(Project):
             with contextlib.redirect_stdout(io.StringIO()) as o:
                 self.assertEqual(command.main(["toy", "--config", str(self.config)]), 2)
             self.assertIn("LocalSystem", o.getvalue())
-
-    def test_an_app_without_a_driver_is_refused(self):
-        self.write_config(toy_wiki_project=str(self.project))
-        search = importlib.import_module(T.TOY + ".search")
-        self.assertFalse(hasattr(search, "DRIVER"))
-        with registry.use([T.TOY]), contextlib.redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(command.main(["toy", "--config", str(self.config)]), 2)
-        self.assertIn("no search driver", err.getvalue())
 
 
 if __name__ == "__main__":

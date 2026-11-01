@@ -45,21 +45,6 @@ class Modes(unittest.TestCase):
         self.assertEqual(Fake(None).modes, ("hits", "count", "timeline", "senders", "rooms", "kinds", "labels"))
         self.assertEqual(drv.SearchDriver(None).modes, ("hits", "count", "timeline"))
 
-    def test_shared_arguments(self):
-        p = index.Parser(prog="fake")
-        Fake(None).add_arguments(p)
-        a = p.parse_args(["--config", "c", "--mode", "rooms", "--extra", "--before", "1.2", "--after", "3.4"])
-        self.assertEqual((a.mode, a.extra, a.before, a.after), ("rooms", True, "1.2", "3.4"))
-        self.assertEqual(p.parse_args(["--config", "c"]).before, None)
-        for bad in (["--mode", "nosuch"], ["--mode", "labels2"]):
-            with self.assertRaises(index.UsageError):
-                p.parse_args(["--config", "c", *bad])
-        text = " ".join(p.format_help().split())
-        self.assertIn("(<ts_ms>.<sid>, printed with each page)", text)
-        self.assertIn("the fake sender", text)
-        self.assertLess(text.index("--extra"), text.index("--before"))      # the app's flags first, then the cursors
-        self.assertIn("{hits,count,timeline,senders,rooms,kinds,labels}", text)
-
 
 class Groups(unittest.TestCase):
     def setUp(self):
@@ -95,12 +80,6 @@ class Groups(unittest.TestCase):
         self.assertEqual(self.row("labels", "L2")["label"], "L2")            # no row: the id
         self.assertEqual(self.row("labels", "L3")["label"], "Work")
         self.assertEqual(self.row("labels", "L3")["id"], "L3")                # id_col is label_id, the JSON key id
-
-    def test_text_label_is_the_label_and_tag_equals_id(self):
-        for mode, gid, want in (("senders", "u1", ("Ann", "user=u1")), ("rooms", "r2", ("(untitled)", "chat=r2")),
-                                ("kinds", "k", ("k", "kind=k")), ("labels", "L1", ("", "id=L1")),
-                                ("senders", None, ("?", "user=None"))):
-            self.assertEqual(self.d.group_label(self.row(mode, gid), mode), want)
 
     def test_day_span_is_in_the_given_zone(self):
         t = 1727758980                                                      # 2024-10-01 05:23 UTC

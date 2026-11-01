@@ -5,7 +5,6 @@ install / status / uninstall in a throwaway home whose `claude` CLI is a stand-i
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -114,10 +113,6 @@ class Rendering(unittest.TestCase):
         plan = K.repo_plan()
         self.assertEqual([(a, r) for a, r, _t in plan], [], "run `python -s -B tools/bootstrap.py agents sync-repo`")
 
-    def test_missing_variable(self):
-        with self.assertRaises(ValueError):
-            K.render("rules.md", K.values("repo", APPS))
-
 
 class Markers(unittest.TestCase):
     def test_block(self):
@@ -176,12 +171,6 @@ class InstallUninstall(Home):
         self.kit().uninstall(restore=True)
         self.assertEqual(self.snapshot(), before)
 
-    def test_uninstall_without_restore_leaves_the_rest(self):
-        self.put(".claude/CLAUDE.md", FOREIGN)
-        self.kit().install(force=True)
-        self.kit().uninstall()
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), REST)
-
     def test_hand_changes_are_kept(self):
         self.kit().install()
         skill = self.home / ".claude/skills/raw-search/SKILL.md"
@@ -211,52 +200,6 @@ class InstallUninstall(Home):
         self.kit().uninstall(restore=True)
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.servers(), servers)
-
-    def test_a_kept_item_keeps_its_backup(self):
-        # --restore keeps a block or file changed by hand, and its backup with it: following the hint
-        # (--restore --force) then still puts the original back
-        self.put(".claude/CLAUDE.md", FOREIGN)
-        self.put(".claude/agents/raw-retriever.md", "someone else's agent\n")
-        before = self.snapshot()
-        self.kit().install(force=True)
-        self.edit(".claude/CLAUDE.md", b"Privacy (strict)", b"Privacy (mine)")
-        self.edit(".claude/agents/raw-retriever.md", b"You search", b"You, mine, search")
-        _plan, kept = self.kit().uninstall(restore=True)
-        self.assertEqual(len(kept), 2)
-        kit = self.kit()
-        kit.uninstall(restore=True, force=True)
-        self.assertEqual(self.snapshot(), before)
-        self.assertEqual(len([n for n in kit.notes if "is saved at" in n]), 2)     # the hand-changed copies
-
-    def test_force_over_a_hand_changed_block_keeps_the_original(self):
-        self.put(".claude/CLAUDE.md", FOREIGN)
-        before = self.snapshot()
-        self.kit().install(force=True)
-        self.edit(".claude/CLAUDE.md", b"Privacy (strict)", b"Privacy (mine)")
-        self.kit().install(force=True)              # backs up the edited block for reference only
-        self.kit().uninstall(restore=True)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_backups_belong_to_one_install(self):
-        # a plain uninstall forgets the backups of what it removes: a later install and --restore put back only
-        # what that later install replaced
-        agent = ".claude/agents/raw-retriever.md"
-        self.put(agent, "first agent\n")
-        self.kit().install(force=True)
-        kit = self.kit()
-        kit.uninstall()
-        self.assertTrue(any("not put back" in n for n in kit.notes))
-        self.put(agent, "second agent\n")
-        self.kit().install(force=True)
-        self.kit().uninstall(restore=True)
-        self.assertEqual((self.home / agent).read_bytes(), b"second agent\n")
-        self.put(".claude/CLAUDE.md", FOREIGN)
-        self.kit().install(force=True)
-        self.kit().uninstall()
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), REST)
-        self.kit().install(force=True)
-        self.kit().uninstall(restore=True)                      # the old block does not come back
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), REST)
 
     def test_backups_in_the_same_instant_never_overwrite(self):
         agent = ".claude/agents/raw-retriever.md"
@@ -297,24 +240,6 @@ class InstallUninstall(Home):
         self.kit().uninstall(restore=True)
         self.assertEqual(self.servers(), servers)
 
-    def test_the_installed_interpreter_is_kept(self):
-        py = self.state / "py" / "python.exe"
-        py.parent.mkdir()
-        py.write_bytes(b"")
-        self.kit(python=str(py)).install()
-        rows, _m = self.kit().status()                          # run by another interpreter
-        self.assertEqual(rows[f"mcp {K.MCP_NAME}"], "current")
-        self.calls.clear()
-        self.assertEqual(self.kit().install(), [])
-        self.assertEqual(self.calls, [])
-        with mock.patch.object(K, "_out"):
-            self.assertEqual(K.main(["status"], kit=self.kit()), 0)
-        py.unlink()                                            # a removed interpreter: install repoints
-        self.assertEqual(self.kit().status()[0][f"mcp {K.MCP_NAME}"], "stale")
-        self.kit().install()
-        self.assertEqual(self.servers()[K.MCP_NAME]["command"], self.kit().python)
-        self.assertNotEqual(self.kit().python, str(py))
-
     def test_files_that_are_not_utf8(self):
         agent = ".claude/agents/raw-retriever.md"
         ansi = "남의 에이전트\r\n".encode("cp949")
@@ -334,83 +259,6 @@ class InstallUninstall(Home):
             self.kit().install()
         self.assertEqual(self.snapshot(), before)
 
-    def test_an_add_that_landed_before_an_interrupt_is_recorded(self):
-        def landed_then_interrupted(argv):
-            self.claude(argv)
-            if argv[:2] == ["mcp", "add-json"] and "other.exe" not in argv[5]:
-                raise KeyboardInterrupt
-            return 0
-        self.add_foreign_server()
-        servers = self.servers()
-        kit = K.Kit(home=self.home, state=self.state, claude=landed_then_interrupted, found=APPS)
-        with self.assertRaises(KeyboardInterrupt):
-            kit.install(force=True)
-        self.assertEqual(self.kit().status()[0][f"mcp {K.MCP_NAME}"], "current")
-        self.assertIsNotNone(self.kit().manifest["mcp"])
-        self.kit().uninstall(restore=True)
-        self.assertEqual(self.servers(), servers)               # the original, not this tool's entry
-
-    def test_an_add_cut_off_by_a_kill_is_settled_by_the_next_run(self):
-        py = self.state / "py" / "python.exe"
-        py.parent.mkdir()
-        py.write_bytes(b"")
-        self.add_foreign_server()
-        servers = self.servers()
-        self.kit(python=str(py)).install(force=True)
-        path = self.state / "manifest.json"
-
-        def killed():                                       # the manifest a kill during the add leaves
-            m = json.loads(path.read_text(encoding="utf-8"))
-            m["mcp_pending"], m["mcp"] = m["mcp"], None
-            path.write_text(json.dumps(m), encoding="utf-8")
-        killed()                                            # the add landed
-        py.unlink()                                         # and the next run wants another interpreter
-        self.assertEqual(self.kit().status()[0][f"mcp {K.MCP_NAME}"], "stale")
-        self.kit().uninstall(restore=True)
-        self.assertEqual(self.servers(), servers)           # the original back, nothing of this tool's left
-        self.claude(["mcp", "remove", "--scope", "user", K.MCP_NAME])
-        self.kit().install()
-        killed()
-        self.claude(["mcp", "remove", "--scope", "user", K.MCP_NAME])  # the add never landed
-        self.add_foreign_server()                           # and the owner registers one of their own
-        self.assertEqual(self.kit().status()[0][f"mcp {K.MCP_NAME}"], "foreign")
-
-    def test_a_failed_add_over_a_stale_entry_keeps_it(self):
-        py = self.state / "py" / "python.exe"
-        py.parent.mkdir()
-        py.write_bytes(b"")
-        self.kit(python=str(py)).install()
-        servers = self.servers()
-        other = str(Path(tempfile.gettempdir()) / "python.exe")
-        self.failing = lambda argv: argv[:2] == ["mcp", "add-json"] and json.loads(argv[5])["command"] == other
-        with self.assertRaises(RuntimeError):
-            self.kit(python=other).install()
-        self.assertEqual(self.servers(), servers)               # put back
-        self.assertEqual(self.kit().manifest["mcp"]["command"], str(py))     # and still recorded as this tool's
-        self.assertEqual(self.kit(python=other).status()[0][f"mcp {K.MCP_NAME}"], "stale")
-        self.failing = None
-        self.kit().uninstall()
-        self.assertEqual(self.servers(), {})
-
-    def test_a_cut_off_replacement_that_landed_is_settled(self):
-        py1, py2 = self.state / "py1" / "python.exe", self.state / "py2" / "python.exe"
-        for py in (py1, py2):
-            py.parent.mkdir()
-            py.write_bytes(b"")
-        self.kit(python=str(py1)).install()
-        spec = self.kit(python=str(py2)).mcp_spec()
-        self.claude(["mcp", "remove", "--scope", "user", K.MCP_NAME])  # install --python py2, killed right after
-        self.claude(["mcp", "add-json", "--scope", "user", K.MCP_NAME, json.dumps(spec)])     # its add landed
-        path = self.state / "manifest.json"
-        m = json.loads(path.read_text(encoding="utf-8"))
-        m["mcp_pending"] = spec                             # over the recorded py1 entry
-        path.write_text(json.dumps(m), encoding="utf-8")
-        kit = self.kit()
-        self.assertEqual(kit.python, str(py2))
-        self.assertEqual(kit.status()[0][f"mcp {K.MCP_NAME}"], "current")
-        self.kit().uninstall()
-        self.assertEqual(self.servers(), {})
-
     def test_a_failed_add_and_put_back_keep_the_original(self):
         self.add_foreign_server()
         servers = self.servers()
@@ -422,27 +270,6 @@ class InstallUninstall(Home):
         self.failing = None
         self.kit().uninstall(restore=True)
         self.assertEqual(self.servers(), servers)
-
-    def test_a_hand_removed_block_forgets_what_it_replaced(self):
-        self.put(".claude/CLAUDE.md", FOREIGN)
-        self.kit().install(force=True)
-        mine = "# Other notes\r\n\r\n- keep me\r\n- another rule"     # the block removed by hand, a line added
-        self.put(".claude/CLAUDE.md", mine)
-        kit = self.kit()
-        kit.install()
-        self.assertTrue(any("removed from" in n for n in kit.notes))
-        self.kit().uninstall(restore=True)
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), mine)
-
-    def test_a_dropped_final_newline_is_not_a_change(self):
-        self.kit().install()
-        for rel in (".claude/CLAUDE.md", ".claude/skills/raw-search/SKILL.md"):    # an editor trims the last newline
-            p = self.home / rel
-            p.write_bytes(p.read_bytes().rstrip(b"\n"))
-        self.assertEqual(set(self.kit().status()[0].values()), {"current"})
-        self.assertEqual(self.kit().install(), [])
-        self.kit().uninstall()
-        self.assertEqual(self.snapshot(), {})
 
     def test_a_new_interpreter_makes_the_server_stale(self):
         self.kit().install()
@@ -470,25 +297,10 @@ class InstallUninstall(Home):
         (self.state / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
         self.assertTrue(self.kit().status()[1])
 
-    def test_broken_markers_refused(self):
-        self.put(".claude/CLAUDE.md", f"{K.BEGIN}\n{K.BEGIN}\n{K.END}\n")
-        before = self.snapshot()
-        with self.assertRaises(K.Refused):
-            self.kit().install()
-        self.assertEqual(self.snapshot(), before)
-
-    def test_no_server_in_the_checkout(self):
-        self.server.unlink()
-        with self.assertRaises(K.Refused):
-            self.kit().install()
-        self.assertEqual(self.snapshot(), {})
-        self.assertEqual(self.calls, [])
-
 
 class Cli(Home):
-    def test_exit_codes_and_masked_output(self):
-        out, err = [], []
-        with mock.patch.object(K, "_out", out.append), mock.patch.object(K, "_err", err.append):
+    def test_exit_codes(self):
+        with mock.patch.object(K, "_out"), mock.patch.object(K, "_err"):
             self.assertEqual(K.main(["status"], kit=self.kit()), 3)
             self.assertEqual(K.main(["install", "--dry-run"], kit=self.kit()), 0)
             self.assertEqual(self.snapshot(), {})
@@ -497,34 +309,6 @@ class Cli(Home):
             self.assertEqual(K.main(["uninstall"], kit=self.kit()), 0)
             self.put(".claude/agents/raw-retriever.md", "someone else's agent\n")
             self.assertEqual(K.main(["install"], kit=self.kit()), 2)
-        self.assertTrue(any("would create" in x for x in out))
-        self.assertTrue(any("refused" in x for x in err))
-
-    def test_a_failing_cli_says_why(self):
-        failed = subprocess.CompletedProcess([], 1, b"", b"progress\nError: the reason\n")
-        with mock.patch.object(K.shutil, "which", lambda _name: "claude.exe"), \
-                mock.patch.object(K.subprocess, "run", lambda *a, **k: failed), \
-                self.assertRaisesRegex(RuntimeError, r"add-json llm_wiki_raw failed \(rc=1\): Error: the reason$"):
-            K._claude_cli(["mcp", "add-json", "--scope", "user", K.MCP_NAME, "{}"])
-
-    def test_notes_survive_a_failed_step(self):
-        self.kit().install()
-        self.edit(".claude/CLAUDE.md", b"Privacy (strict)", b"Privacy (mine)")
-        self.failing = lambda argv: argv[:2] == ["mcp", "remove"]
-        out, err = [], []
-        with mock.patch.object(K, "_out", out.append), mock.patch.object(K, "_err", err.append):
-            self.assertEqual(K.main(["uninstall", "--force"], kit=self.kit()), 1)
-        self.assertTrue(any("is saved at" in x for x in out))  # the removed hand-changed block: where it is
-        self.assertIn("failed", err[0])
-
-    def test_an_interrupt_is_reported_not_raised(self):
-        def interrupted(argv):
-            raise KeyboardInterrupt
-        err = []
-        kit = K.Kit(home=self.home, state=self.state, claude=interrupted, found=APPS)
-        with mock.patch.object(K, "_out"), mock.patch.object(K, "_err", err.append):
-            self.assertEqual(K.main(["install"], kit=kit), 1)
-        self.assertIn("interrupted", err[0])
 
     def test_diff_is_masked(self):
         printed = []

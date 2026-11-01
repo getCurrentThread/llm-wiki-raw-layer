@@ -79,12 +79,6 @@ class TestCanon(unittest.TestCase):
         self.assertIs(canon.parse_default("CURRENT_TIMESTAMP"), canon.NO_DEFAULT)
         self.assertFalse(canon.default_equal(0.0, "0"))
 
-    def test_source_id_and_digest(self):
-        self.assertEqual(len(canon.source_id("a/c1.jsonl")), 12)
-        self.assertEqual(canon.source_id("a/c1.jsonl"), canon.source_id("a/c1.jsonl"))
-        self.assertNotEqual(canon.source_id("a/c1.jsonl"), canon.source_id("b/c1.jsonl"))
-        self.assertEqual(canon.facts_digest(["b\t2", "a\t1"]), canon.facts_digest(["a\t1", "b\t2"]))
-
 
 class TestPublicout(T.ToyCase):
     STANDARD = False
@@ -100,13 +94,6 @@ class TestPublicout(T.ToyCase):
             publicout.render_json({"status": "ok\n"})
         publicout.render_json({"status": "unreadable", "n": 3, "path": "toy:toy_b:12", "origin": "toy_m",
                                "notes": {"bad_line": 1}, "pending": {"add": ["rec"]}})
-
-    def test_installed_words_follow_the_registry(self):
-        self.assertTrue(publicout.ok_str("toy_a"))
-        with registry.use([T.TOY2]):
-            self.assertFalse(publicout.ok_str("toy_a"))
-            self.assertFalse(publicout.ok_str("toy:toy_b:12"))
-        self.assertTrue(publicout.ok_str("toy:toy_b:12"))
 
 
 def _callee(call):

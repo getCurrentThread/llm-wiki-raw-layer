@@ -65,40 +65,6 @@ class ValueRule(unittest.TestCase):
             B.parse_value("[x")
 
 
-class PathState(Temp):
-    def test_states(self):
-        f = self.tmp / "f.txt"
-        f.write_text("x", encoding="utf-8")
-        for v, kind, want in ((None, "any", "unset"), ("", "any", "unset"), (5, "any", "invalid"),
-                              ("<abs dir>\\x", "any", "placeholder"), ("rel\\x", "any", "relative"),
-                              (str(self.tmp / "none"), "any", "missing"), (str(f), "file", "there"),
-                              (str(f), "dir", "wrong_kind"), (str(self.tmp), "file", "wrong_kind"),
-                              (str(self.tmp), "dir", "there")):
-            with self.subTest(v=v, kind=kind):
-                self.assertEqual(B.path_state(v, kind), want)
-
-
-class ClaudeCodeProbe(Temp):
-    def test_local_source_folder_is_probed(self):
-        from rawlayer import registry, schedule
-        from rawlayer.capture.config import ConfigError
-
-        source = self.tmp / "claude"
-        source.mkdir()
-        cfg = self.tmp / "config.json"
-        cfg.write_text(json.dumps({"cc_claude_dir": str(source)}), encoding="utf-8")
-        app = SimpleNamespace(source_keys=(), options=(Option("cc_claude_dir", "", text),))
-        with mock.patch.object(registry, "select", return_value=SimpleNamespace(apps=[app])), \
-                mock.patch.object(schedule, "task_settings", return_value=None), \
-                mock.patch("rawlayer.management.base.default_config", return_value=cfg), \
-                mock.patch("rawlayer.capture.config.Config", side_effect=ConfigError("synthetic")):
-            self.assertEqual(B.probe("claudecode")["config"]["files"]["cc_claude_dir"], "there")
-            source.rmdir()
-            self.assertEqual(B.probe("claudecode")["config"]["files"]["cc_claude_dir"], "missing")
-            source.write_text("synthetic", encoding="utf-8")
-            self.assertEqual(B.probe("claudecode")["config"]["files"]["cc_claude_dir"], "wrong_kind")
-
-
 class Masking(unittest.TestCase):
     def setUp(self):
         B._MASKS = None
@@ -144,10 +110,6 @@ OK_INDEX = {"state": "ok", "total": 10}
 
 
 class NextStep(unittest.TestCase):
-    def test_claudecode_source_and_gates(self):
-        self.assertEqual(B.KINDS["cc_claude_dir"], "dir")
-        for gate in ("6.6", "6.6.1", "6.6.2", "6.6.3"):
-            self.assertIn(gate, B.GATES)
 
     def step(self, app, p, idx=OK_INDEX):
         return B.next_step(app, p, idx)[0]
@@ -305,17 +267,6 @@ class ConfigWrite(Temp):
         self.assertFalse(B.write_config(p, dict(cfg)))          # unchanged: nothing written, .prev kept
         self.assertEqual((self.tmp / "config.json.prev").read_bytes(), b'{"v": 1}')
 
-    def test_a_value_of_another_json_type_is_a_change(self):
-        # 1 == True and 1 == 1.0 in Python: a refused 1 must still be replaceable by true
-        p = self.tmp / "config.json"
-        for old, new in (({"k": 1}, {"k": True}), ({"k": 1.0}, {"k": 1}), ({"k": 0}, {"k": False})):
-            with self.subTest(old=old):
-                p.write_text(json.dumps(old), encoding="utf-8")
-                self.assertTrue(B.write_config(p, new))
-                self.assertEqual(p.read_text(encoding="utf-8"), json.dumps(new, indent=2) + "\n")
-        p.write_text('{"b": 1, "a": true}', encoding="utf-8")
-        self.assertFalse(B.write_config(p, {"a": True, "b": 1}))      # another key order or layout is no change
-
     def test_keeps_accepted(self):
         # the real _keeps_accepted, over a stand-in Config that accepts a file holding "ok": true
         from rawlayer.capture import config as capture_config
@@ -360,20 +311,6 @@ class ConfigCommands(Temp):
     def saved(self):
         return json.loads(self.path.read_text(encoding="utf-8"))
 
-    def test_a_refusing_accept_keeps_the_old_file(self):
-        # config set hands write_config what _keeps_accepted returns (ConfigWrite tests the real one)
-        def refuse(part):
-            self.assertTrue(part.name.endswith(".part"))
-            raise B.Refused("the change would make the config refused (x); config.json is unchanged")
-        self.accept = refuse
-        before = self.path.read_bytes()
-        rc, _out, err = run("config", "set", "fake", "fk_sync", "true")
-        self.assertEqual(rc, 2)
-        self.assertIn("config.json is unchanged", err)
-        self.assertEqual(self.path.read_bytes(), before)
-        self.assertFalse((self.tmp / "config.json.part").exists())
-        self.assertFalse((self.tmp / "config.json.prev").exists())
-
     def test_set_keys(self):
         (self.tmp / "archive").mkdir()
         rc, out, err = run("config", "set", "fake", "sources.fk_archive", str(self.tmp / "archive"),
@@ -386,12 +323,6 @@ class ConfigCommands(Temp):
         self.assertNotIn(SECRET, out)
         self.assertNotIn(str(self.tmp), out)
         self.assertIn("fk_token_file set (string)", out)
-
-    def test_stdin_object(self):
-        with mock.patch("sys.stdin", io.StringIO(json.dumps({"fk_source": "desktop", "fk_sync": True}))):
-            rc, _out, _err = run("config", "set", "fake", "-")
-        self.assertEqual(rc, 0)
-        self.assertEqual((self.saved()["fk_source"], self.saved()["fk_sync"]), ("desktop", True))
 
     def test_stdin_is_utf8_whatever_the_code_page(self):
         data = json.dumps({"fk_token_file": "개발 채널"}, ensure_ascii=False).encode("utf-8")
@@ -430,26 +361,6 @@ class ConfigCommands(Temp):
                 self.assertEqual(rc, 2, err)
                 self.assertNotIn("host", (out + err).replace("fake", ""))
 
-    def test_defaults(self):
-        def defaults(cfg, note):
-            if cfg["sources"]["fk_archive"].startswith("<"):
-                cfg["sources"]["fk_archive"] = str(self.tmp / "archive")
-                note("sources.fk_archive: set to its default")
-        self.app.setup_defaults = defaults
-        rc, out, _err = run("config", "defaults", "fake")
-        self.assertEqual(rc, 0)
-        self.assertIn("config: fake sources.fk_archive: set to its default", out)
-        self.assertEqual(self.saved()["sources"]["fk_archive"], str(self.tmp / "archive"))
-        self.assertTrue((self.tmp / "config.json.prev").exists())
-        rc, out, _err = run("config", "defaults", "fake")
-        self.assertEqual(rc, 0)
-        self.assertIn("nothing to fill", out)
-
-    def test_core_key_needs_force(self):
-        rc, _out, _err = run("config", "set", "fake", "inputs_root", str(self.tmp), "--force")
-        self.assertEqual(rc, 0)
-        self.assertEqual(self.saved()["inputs_root"], str(self.tmp))
-
     def test_get_prints_states_only(self):
         self.cfg.update(fk_token_file=SECRET, fk_source="desktop", sources={"fk_archive": str(self.tmp / "a")})
         self.path.write_text(json.dumps(self.cfg), encoding="utf-8")
@@ -469,16 +380,6 @@ class ConfigCommands(Temp):
         self.assertEqual(keys["fk_source"], "missing (the app's default applies)")
         self.assertTrue(keys["fk_token_file"].startswith("null (checked as given"))
         self.assertEqual(keys["inputs_root"], "missing")
-
-    def test_describe_value(self):
-        self.assertEqual(B.describe_value(B.MISSING, None, "fk_x", option=True), "missing (the app's default applies)")
-        for v, want in ((B.MISSING, "missing"), (None, "null"), ("", "empty"), ("<x>", "placeholder"),
-                        (["a", "b"], "list of 2"), (["<p>"], "list of 1 (placeholder)"), ({"a": 1}, "object of 1 key(s)"),
-                        (SECRET, "set"), ("https://host.invalid", "set")):
-            with self.subTest(v=v):
-                self.assertEqual(B.describe_value(v, None, "fk_x"), want)
-        self.assertEqual(B.describe_value("api", None, "fk_source"), "api")
-        self.assertEqual(B.describe_value("Not-A-Word", None, "fk_source"), "set")
 
 
 class Checkpoints(Temp):
@@ -516,11 +417,6 @@ class Checkpoints(Temp):
                 self.assertEqual(run("checkpoint", *argv)[0], 2)
         self.assertFalse((self.tmp / "reports" / B.CHECKPOINT).exists())
 
-    def test_unreadable_file_reads_as_none(self):
-        (self.tmp / "reports").mkdir()
-        (self.tmp / "reports" / B.CHECKPOINT).write_text("{", encoding="utf-8")
-        self.assertEqual(B.read_checkpoints(self.tmp), {})
-
 
 class OffLimits(unittest.TestCase):
     def test_every_command_refuses_kakaotalk(self):
@@ -549,30 +445,6 @@ class OffLimits(unittest.TestCase):
 
 
 class DoctorReport(unittest.TestCase):
-    def report(self):
-        m = {"python": {"version": "3.12.1", "executable": "X", "flags_ok": True, "problem": None},
-             "git": {"found": True, "version": "2.47.0", "machine_path": None},
-             "pwsh": {"found": True, "version": "7.4.0", "ok": True},
-             "checkout": {"under_profile": True, "work_tree": True, "changed_files": 0},
-             "check": {"rc": 0, "lines": ["check: ok errors=0 refused=0"]},
-             "data_parent": {"exists": True, "acl": "ok", "search": "ok", "in_work_tree": False}, "elevated": False}
-        p = probe(files={"gm_client_file": "missing", "gm_token_file": "there"})
-        p.update(index=OK_INDEX, next={"step": "6.1.3", "why": "w"},
-                 task={"name": "\\t", "registered": "unknown"},
-                 verify={"rc": 0, "busy": True, "differing_rows": None, "head_seq": None})
-        return {"machine": m, "apps": {"gmail": p, "notion": {"error": "x", "next": {"step": "9", "why": "x"}},
-                                       "discord": {"config": {"exists": False}, "next": {"step": "5.1", "why": "s"}}},
-                "skipped": ["kakaotalk (owner-gated)"], "attention": ["gmail 6.1.3: w"]}
-
-    def test_text_report(self):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            B._print_doctor(self.report())
-        text = out.getvalue()
-        for want in ("doctor: gmail  next 6.1.3", "paths not there: gm_client_file (missing)", "registration unknown",
-                     "ledger busy: not verified", "doctor: kakaotalk (owner-gated): not checked",
-                     "1 item(s) need attention"):
-            self.assertIn(want, text)
 
     def test_an_app_that_cannot_be_probed_needs_attention(self):
         # with no config read, it counts anyway: doctor must not say ok

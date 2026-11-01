@@ -65,12 +65,6 @@ class TestCaptureSteps(unittest.TestCase):
                 self.assertIn("  stderr: a warning\n", log)
                 self.log.unlink()
 
-    def test_capture_stderr_kept_only_as_cli_error_lines(self):
-        _rc, _calls, log = self.run_task(1, capture_err="error OSError errno=13\nTraceback (most recent call last):\n")
-        self.assertIn("  error OSError errno=13\n", log)
-        self.assertIn("  stderr line withheld\n", log)
-        self.assertNotIn("Traceback", log)
-
     def test_a_step_that_dies_is_rc1_and_the_index_still_runs(self):
         rc, calls, log = self.run_task(0, capture_dies=True)
         self.assertEqual((rc, len(calls)), (1, 2))

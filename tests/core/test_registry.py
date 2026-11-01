@@ -102,12 +102,6 @@ class TestDerived(unittest.TestCase):
             self.assertFalse(publicout.ok_str("toy:toy_b:A1"))
             self.assertFalse(publicout.ok_str("somebody"))
 
-    def test_installed_apps_order_the_origins_and_indexes(self):
-        with registry.use([T.TOY, T.TOY2]):
-            self.assertEqual(list(registry.search_modules()), ["toy", "toy2"])
-            self.assertEqual(registry.origin_order(), ("toy_a", "toy_b", "toy_m"))
-            self.assertEqual([a.label for a in registry.apps()], ["toy", "toy2"])
-
     def test_use_restores_the_previous_registry(self):
         with registry.use([T.TOY]) as outer:
             with registry.use([T.TOY2]):

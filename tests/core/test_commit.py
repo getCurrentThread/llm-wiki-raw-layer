@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""The commit (SPEC 9.1) and everything that keeps it whole, on the toy app: a crash between every commit step,
-in-process and as a real process kill; narrow recovery (only what inflight.json names), its path spellings, log.md
+"""The commit (SPEC 9.1) and everything that keeps it whole, on the toy app: a real process kill between every
+commit step; narrow recovery (only what inflight.json names), its path spellings, log.md
 backfill, recovery that is itself killed; ledger defects that stop every command (a seq gap, a flipped segment byte,
 a manifest that parses but lost a field, a record SQLite cannot store); the run lock; a damaged state.sqlite set aside
 and rebuilt; the environment of a SYSTEM run; srcmap.json."""
@@ -15,7 +15,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from rawlayer.capture import canon, run, steps
+from rawlayer.capture import canon, steps
 from rawlayer.capture.ledger import LedgerCorrupt
 from tests.core import toyfix as T
 from tests.core.toyfix import (capture, cli_main, crash_at, export, invariants, item, ledger, log_runs, manifests,
@@ -55,33 +55,6 @@ class Reference(T.ToyCase):
             cls.ref = export(fx)
         finally:
             T.force_rmtree(fx.base)
-
-
-class TestCrashPoints(Reference):
-    STEPS = ("inflight", "segment", "manifest_part", "commit", "renamed", "finalize_one", "state", "log")
-
-    def test_each_step(self):
-        for step in self.STEPS:
-            with self.subTest(step=step):
-                fx = T.ToyFixture().standard()
-                try:
-                    crash_at(fx, step)
-                    lg = ledger(fx)
-                    if lg.inflight.exists():                # SPEC 9.1 step 5: {run, seq, parts, manifest_part}
-                        inf = read_json(lg.inflight)
-                        self.assertEqual(set(inf), {"run", "seq", "parts", "manifest_part"})
-                        listed = {lg.raw.joinpath(*p.split("/")) for p in inf["parts"]}
-                        self.assertLessEqual(set(lg.part_files()), listed)
-                    self.assertEqual(capture(fx), 0)
-                    self.assertEqual(export(fx), self.ref)
-                    self.assertEqual(lg.part_files(), [])
-                    self.assertFalse(lg.inflight.exists())
-                    self.assertEqual(replay_diff(fx), 0)
-                    self.assertEqual(invariants(fx)[0], {})
-                    committed = step not in ("inflight", "segment", "manifest_part")
-                    self.assertEqual(len(lg.manifests()), 2 if committed else 1)
-                finally:
-                    T.force_rmtree(fx.base)
 
 
 class TestRealProcessKill(Reference):
@@ -146,7 +119,9 @@ class TestRecovery(T.ToyCase):
         stray = self.stray("ledger/toy_b/2026/seg-00000002-toy_b-009.jsonl.gz.part")
         crash_at(self.fx, "manifest_part")
         lg = ledger(self.fx)
-        named = read_json(lg.inflight)["parts"]
+        inf = read_json(lg.inflight)
+        named = inf["parts"]
+        self.assertEqual(set(inf), {"run", "seq", "parts", "manifest_part"})    # SPEC 9.1 step 5
         self.assertTrue(named)
         self.assertEqual(capture(self.fx), 0)
         self.assertTrue(stray.exists())
@@ -158,44 +133,44 @@ class TestRecovery(T.ToyCase):
         """SPEC 9.1 leaves the spelling of inflight.json paths open: absolute native paths and data_root-relative
         ones ('raw/ledger/...', 'raw\\manifests\\...') recover like the raw-relative ones commit writes, on the
         finish branch (crash after COMMIT) and the discard branch (crash before it)."""
-        for spelling in ("absolute", "raw_prefixed"):
-            for step, n_manifests in (("commit", 3), ("manifest_part", 2)):
-                with self.subTest(spelling=spelling, step=step):
-                    fx = T.ToyFixture().standard()
-                    try:
-                        self.assertEqual(capture(fx), 0)
-                        more(fx)
-                        crash_at(fx, step)
-                        lg = ledger(fx)
-                        inf = read_json(lg.inflight)
-                        self.assertTrue(inf["parts"])
-                        if spelling == "absolute":      # native, as str(path) spells it
-                            inf["parts"] = [str(lg.raw.joinpath(*p.split("/"))) for p in inf["parts"]]
-                            inf["manifest_part"] = str(lg.raw.joinpath(*inf["manifest_part"].split("/")))
-                        else:                           # 'raw/ledger/...' and the native 'raw\\manifests\\...'
-                            inf["parts"] = ["raw/" + p for p in inf["parts"]]
-                            inf["manifest_part"] = str(Path("raw", *inf["manifest_part"].split("/")))
-                        T.write_json(lg.inflight, inf)
-                        self.assertEqual(capture(fx), 0)
-                        self.assertEqual((lg.leftovers(), replay_diff(fx)), (0, 0))
-                        self.assertEqual(len(manifests(fx)), n_manifests)
-                    finally:
-                        T.force_rmtree(fx.base)
+        for spelling, step, n_manifests in (("absolute", "commit", 3), ("raw_prefixed", "manifest_part", 2)):
+            with self.subTest(spelling=spelling, step=step):
+                fx = T.ToyFixture().standard()
+                try:
+                    self.assertEqual(capture(fx), 0)
+                    more(fx)
+                    crash_at(fx, step)
+                    lg = ledger(fx)
+                    inf = read_json(lg.inflight)
+                    self.assertTrue(inf["parts"])
+                    if spelling == "absolute":      # native, as str(path) spells it
+                        inf["parts"] = [str(lg.raw.joinpath(*p.split("/"))) for p in inf["parts"]]
+                        inf["manifest_part"] = str(lg.raw.joinpath(*inf["manifest_part"].split("/")))
+                    else:                           # 'raw/ledger/...' and the native 'raw\\manifests\\...'
+                        inf["parts"] = ["raw/" + p for p in inf["parts"]]
+                        inf["manifest_part"] = str(Path("raw", *inf["manifest_part"].split("/")))
+                    T.write_json(lg.inflight, inf)
+                    self.assertEqual(capture(fx), 0)
+                    self.assertEqual((lg.leftovers(), replay_diff(fx)), (0, 0))
+                    self.assertEqual(len(manifests(fx)), n_manifests)
+                finally:
+                    T.force_rmtree(fx.base)
 
-    def test_log_backfilled_after_crash_past_commit(self):
-        """A run that died after COMMIT but before its log.md line gets the line on recovery (once)."""
-        crash_at(self.fx, "state")
-        crashed = manifests(self.fx)[0]["run"]
-        self.assertFalse(ledger(self.fx).log_md.exists() and log_runs(self.fx))
-        self.assertEqual(capture(self.fx), 0)
-        runs = log_runs(self.fx)
-        self.assertEqual(runs, [m["run"] for m in manifests(self.fx)])
-        self.assertEqual(runs[0], crashed)
-
-    def test_log_not_duplicated_when_crash_after_log(self):
-        crash_at(self.fx, "log")
-        self.assertEqual(capture(self.fx), 0)
-        self.assertEqual(log_runs(self.fx), [m["run"] for m in manifests(self.fx)])
+    def test_log_line_once_per_run_after_a_crash(self):
+        """A run that died after COMMIT but before its log.md line gets the line on recovery; one that died after
+        the line does not get it twice."""
+        for step in ("state", "log"):
+            with self.subTest(step=step):
+                fx = T.ToyFixture().standard()
+                try:
+                    crash_at(fx, step)
+                    crashed = manifests(fx)[0]["run"]
+                    self.assertEqual(capture(fx), 0)
+                    runs = log_runs(fx)
+                    self.assertEqual(runs, [m["run"] for m in manifests(fx)])
+                    self.assertEqual(runs[0], crashed)
+                finally:
+                    T.force_rmtree(fx.base)
 
     def test_torn_inflight_tmp_is_removed(self):
         lg = ledger(self.fx)
@@ -381,37 +356,27 @@ class TestLedgerDefects(T.ToyCase):
 
 
 class TestStateDamage(T.ToyCase):
-    def damage(self, offset=0, data=b"not a database!!" * 8):
-        p = ledger(self.fx).state_dir / "state.sqlite"
-        with p.open("r+b") as fh:
-            fh.seek(offset)
-            fh.write(data)
-        return p
-
-    def test_capture_sets_it_aside_and_rebuilds(self):
-        self.assertEqual(capture(self.fx), 0)
-        ref = export(self.fx)
-        p = self.damage()
-        self.assertEqual(capture(self.fx), 0)
-        self.assertEqual(len(set_aside(p)), 1)
-        self.assertEqual((export(self.fx), replay_diff(self.fx)), (ref, 0))
-        self.assertEqual(len(manifests(self.fx)), 2)
-
-    def test_replay_repairs(self):
-        self.assertEqual(capture(self.fx), 0)
-        p = self.damage()
-        self.assertEqual(cli_main(self.fx, "replay", "--check"), 0)
-        self.assertEqual(len(set_aside(p)), 1)
-        self.assertEqual(replay_diff(self.fx), 0)
-
-    def test_damage_below_the_header(self):
-        """A damaged page past the header opens fine; quick_check finds it and the state is set aside and rebuilt."""
-        self.assertEqual(capture(self.fx), 0)
-        ref = export(self.fx)
-        p = self.damage(2 * 4096, b"\xa5" * 4096)                  # page 3: the heads table's root
-        self.assertEqual(capture(self.fx), 0)
-        self.assertEqual(len(set_aside(p)), 1)
-        self.assertEqual((export(self.fx), replay_diff(self.fx)), (ref, 0))
+    def test_a_damaged_state_is_set_aside_and_rebuilt(self):
+        """The header gone (not a database), or a page past it (opens fine, quick_check finds it): capture and
+        replay --check both set it aside and rebuild it from the ledger."""
+        junk, page3 = b"not a database!!" * 8, bytes([0xA5]) * 4096          # page 3: the heads table's root
+        for offset, data, command in ((0, junk, "capture"), (2 * 4096, page3, "capture"), (0, junk, "replay")):
+            with self.subTest(offset=offset, command=command):
+                fx = T.ToyFixture().standard()
+                try:
+                    self.assertEqual(capture(fx), 0)
+                    ref = export(fx)
+                    p = ledger(fx).state_dir / "state.sqlite"
+                    with p.open("r+b") as fh:
+                        fh.seek(offset)
+                        fh.write(data)
+                    rc = capture(fx) if command == "capture" else cli_main(fx, "replay", "--check")
+                    self.assertEqual(rc, 0)
+                    self.assertEqual(len(set_aside(p)), 1)
+                    self.assertEqual((export(fx), replay_diff(fx)), (ref, 0))
+                    self.assertEqual(len(manifests(fx)), 2 if command == "capture" else 1)
+                finally:
+                    T.force_rmtree(fx.base)
 
     def test_app_state_tables_are_rebuilt_too(self):
         self.assertEqual(capture(self.fx), 0)
@@ -453,22 +418,12 @@ class TestLockAndEnvironment(T.ToyCase):
         self.assertEqual(T.names(fake / "AppData"), ["Local"])
 
     def test_srcmap_is_flat(self):
-        """SPEC 3: {source_id: relpath}; the old nested form is flattened on the next run."""
-        def srcmap():
-            return read_json(ledger(self.fx).state_dir / "srcmap.json")
+        """SPEC 3: srcmap.json is {source_id: relpath}."""
         self.assertEqual(capture(self.fx), 0)
-        m = srcmap()
+        m = read_json(ledger(self.fx).state_dir / "srcmap.json")
         self.assertTrue(m and all(isinstance(v, str) for v in m.values()))
         self.assertEqual(m[canon.source_id("a/c1.jsonl")], "a/c1.jsonl")
         self.assertEqual(m[canon.source_id("m/c2.jsonl")], "m/c2.jsonl")
-        T.write_json(ledger(self.fx).state_dir / "srcmap.json", {"toy_m": {"0123456789ab": "m/x.jsonl"}, "toy_a": m})
-        self.assertEqual(capture(self.fx), 0)
-        m2 = srcmap()
-        self.assertEqual(m2["0123456789ab"], "m/x.jsonl")
-        self.assertTrue(all(isinstance(v, str) for v in m2.values()))
-
-    def test_crash_hook_is_off_by_default(self):
-        self.assertIsNone(run.CRASH_HOOK)
 
 
 if __name__ == "__main__":

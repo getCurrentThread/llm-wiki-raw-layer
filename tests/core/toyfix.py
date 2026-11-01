@@ -8,8 +8,6 @@ import contextlib
 import io
 import json
 import os
-import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -17,10 +15,11 @@ import unittest
 from pathlib import Path
 
 from rawlayer import registry
-from rawlayer.capture import paths, run, state, steps
+from rawlayer.capture import paths, run, steps
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
-from tests.core import ledgercheck
+from tests.core.appfix import (by_key, export, force_rmtree, invariants, manifests,  # noqa: F401
+                              preserved_env, records, replay_diff)
 
 REPO = Path(__file__).resolve().parent.parent.parent       # the project directory, found as conf.PROJECT_DIR is
 TOY = "tests.core.toyapp"
@@ -39,20 +38,6 @@ CHILD_SETUP = ("import os, sys\n"
                f"paths.DATA_PARENT = Path({str(TEST_PARENT)!r})\n"
                f"_apps = registry.use([{TOY!r}])\n"     # held: a collected use() would put the old apps back
                "_apps.__enter__()\n")
-
-
-def _force(func, path, _exc):
-    try:
-        Path(path).chmod(stat.S_IWRITE | stat.S_IREAD)
-        func(path)
-    except OSError:
-        pass
-
-
-def force_rmtree(path):
-    """rmtree that also removes the read-only segment files capture leaves."""
-    if Path(path).exists():
-        shutil.rmtree(path, onexc=_force)
 
 
 def names(folder):
@@ -168,19 +153,6 @@ class ToyFixture:
         return self
 
 
-@contextlib.contextmanager
-def preserved_env():
-    """capture.run points TMP/TEMP and tempfile.tempdir at raw/.work/<run>; put them back afterwards."""
-    env = dict(os.environ)
-    td = tempfile.tempdir
-    try:
-        yield
-    finally:
-        os.environ.clear()
-        os.environ.update(env)
-        tempfile.tempdir = td
-
-
 def capture(fx, origins=ORIGINS, input_set="live"):
     """One capture run (precheck skipped). Returns its exit code."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()):
@@ -196,47 +168,6 @@ def cli_main(fx, *argv):
 
 def ledger(fx):
     return Ledger(fx.cfg().raw)
-
-
-def manifests(fx):
-    lg = ledger(fx)
-    return [lg.read_manifest(p) for _s, _r, p in lg.manifests()]
-
-
-def records(fx):
-    lg = ledger(fx)
-    out = []
-    for _s, _r, p in lg.manifests():
-        out.extend(lg.iter_records(lg.read_manifest(p)))
-    return out
-
-
-def by_key(recs):
-    out = {}
-    for r in recs:
-        out.setdefault(r["key"], []).append(r)
-    return out
-
-
-def export(fx):
-    return list(steps.export_lines(ledger(fx)))
-
-
-def invariants(fx):
-    """({problem category: count}, {containers_checked, containers_skipped}) (tests/core/ledgercheck.py)."""
-    return ledgercheck.check(fx.cfg().raw)
-
-
-def replay_diff(fx):
-    lg = ledger(fx)
-    tmp = fx.base / "replay.sqlite"
-    state.rebuild(lg, tmp).close()
-    con = state.open_state(lg.state_dir / "state.sqlite")
-    try:
-        return sum(state.compare(con, tmp).values())
-    finally:
-        con.close()
-        tmp.unlink()
 
 
 def log_runs(fx):

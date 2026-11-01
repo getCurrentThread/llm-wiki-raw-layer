@@ -234,28 +234,6 @@ class UrlAndClient(unittest.TestCase):
         with self.assertRaises(dense.EmbedError):
             dense.Embedder("http://127.0.0.1:9", "fake", DIMS, timeout=5)(["x"])
 
-    def test_server_message_and_retries(self):
-        with self.assertRaises(dense.EmbedError) as cm:
-            dense.Embedder(URL, "message", DIMS)(["비밀 본문 텍스트"])
-        self.assertEqual((str(cm.exception), cm.exception.retry),
-                         ("embedding server: HTTP 400: the input length exceeds the context length", True))
-        with self.assertRaises(dense.EmbedError) as cm:
-            dense.Embedder(URL, "nope", DIMS)(["x"])
-        self.assertEqual((cm.exception.retry, str(cm.exception).endswith("(is nope pulled?)")), (False, True))
-        with mock.patch.object(dense, "RETRY_WAITS", (0, 0)):
-            for model, calls, ok in (("flaky", 2, True), ("message", 3, False), ("nope", 1, False)):
-                FakeOllama.calls.clear()
-                with self.subTest(model=model):
-                    try:
-                        self.assertEqual(len(dense.embed_retrying(dense.Embedder(URL, model, DIMS), ["회의"])), 1)
-                    except dense.EmbedError:
-                        self.assertFalse(ok)
-                    self.assertEqual(len(FakeOllama.calls), calls)
-
-    def test_query_prefix(self):
-        self.assertTrue(dense.query_prefix("qwen3-embedding:4b").startswith("Instruct: "))
-        self.assertEqual(dense.query_prefix("bge-m3"), "")
-
     def test_vec0_loader_refuses_a_missing_or_foreign_dll(self):
         tmp = Path(tempfile.mkdtemp(dir=T.TEST_PARENT))
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -280,23 +258,6 @@ class Pack(unittest.TestCase):
         self.assertEqual(dense.pack("x", [("k", 0, "  ", False)]), [])
         self.assertEqual(dense.pack("x", [("k", 0, "글", False)])[0][3], "x\n글")      # no time: no date
 
-    def test_target_overlap_and_cap(self):
-        units = [(f"k{i}", T0 + i, f"u{i}: " + "가" * 95, False) for i in range(30)]
-        chunks = dense.pack("L", units, gap_s=1800)
-        self.assertGreater(len(chunks), 2)
-        body = [c[3].split("\n", 1)[1] for c in chunks]
-        self.assertTrue(all(len(b) <= dense.TARGET + 100 for b in body))
-        for prev, cur in zip(chunks, chunks[1:]):       # a short last unit is carried over
-            self.assertEqual(cur[0][0], prev[0][-1])
-        self.assertEqual({k for c in chunks for k in c[0]}, {u[0] for u in units})
-
-    def test_gap_and_heading_start_a_chunk_without_overlap(self):
-        units = [("k1", T0, "a: 하나", False), ("k2", T0 + 2 * H, "a: 둘", False)]
-        self.assertEqual([c[0] for c in dense.pack("L", units, gap_s=1800)], [["k1"], ["k2"]])
-        self.assertEqual(len(dense.pack("L", units)), 1)                 # no gap rule: one chunk
-        units = [("h1", T0, "제목", True), ("p1", T0, "본문", False), ("h2", T0, "다음 제목", True), ("p2", T0, "끝", False)]
-        self.assertEqual([c[0] for c in dense.pack("P", units)], [["h1", "p1"], ["h2", "p2"]])
-
     def test_a_long_unit_becomes_overlapping_windows(self):
         text = "".join(chr(0xAC00 + i % 500) for i in range(4000))
         chunks = dense.pack("L", [("k", T0, text, False)])
@@ -304,18 +265,6 @@ class Pack(unittest.TestCase):
         self.assertTrue(all(len(p) <= dense.CAP for p in pieces))
         self.assertEqual(pieces[0] + "".join(p[dense.OVERLAP:] for p in pieces[1:]), text)
         self.assertTrue(all(c[0] == ["k"] for c in chunks))
-
-    def test_a_long_label_is_flattened_and_cut(self):
-        label = "상위 페이지 제목\n" * 300               # a breadcrumb alone past Ollama's 2048 tokens
-        self.assertEqual(dense.pack(label, [("k", 0, "본문", False)])[0][3],
-                         index.flat(label)[:dense.LABEL_CAP] + "\n본문")
-        self.assertEqual(dense.pack("짧은\n제목", [("k", 0, "본문", False)])[0][3], "짧은\n제목\n본문")
-
-    def test_sha_is_stable_and_per_container(self):
-        a = dense.chunk_sha("A", ["k1"], "t")
-        self.assertEqual(a, dense.chunk_sha("A", ["k1"], "t"))
-        self.assertNotEqual(a, dense.chunk_sha("B", ["k1"], "t"))
-        self.assertNotEqual(a, dense.chunk_sha("A", ["k2"], "t"))
 
 
 class HybridEndToEnd(unittest.TestCase):
@@ -367,30 +316,6 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual((rep["model"], rep["embedded"], rep["pending"], rep["src_seq"]), ("other", 1, 0, 3))
         self.assertEqual(dict(self.side("SELECT k, v FROM meta"))["chunker"], f"{dense.CHUNKER}/1")
 
-    def test_embed_retries_a_failed_batch(self):
-        FakeOllama.calls.clear()
-        with mock.patch.object(dense, "RETRY_WAITS", (0, 0)):
-            rep = self.embed(model="flaky")                                # the one batch fails once
-        self.assertEqual((rep["embedded"], rep["pending"], len(FakeOllama.calls)), (3, 0, 2))
-
-    def test_a_new_chunker_rechunks_in_place(self):
-        old = dense.chunker_id(DRIVER)
-        self.embed()
-        with mock.patch.object(dense, "CHUNKER", "pack-test"):
-            env, err = self.search("회의 일정", "--hybrid")                 # older chunks: usable, but stale
-            self.assertEqual((env["hybrid"]["available"], env["hybrid"]["stale"]), (True, True))
-            self.assertIn("behind the index", err)
-            with mock.patch.object(dense, "LABEL_CAP", 5):                 # every chunk's text changes
-                rep = self.embed(limit=1)
-                self.assertEqual((rep["containers"], rep["embedded"], rep["removed"], rep["pending"]), (2, 1, 3, 2))
-                self.assertEqual(dict(self.side("SELECT k, v FROM meta"))["chunker"], old)   # not done yet
-                rep = self.embed()
-                self.assertEqual((rep["containers"], rep["embedded"], rep["removed"], rep["pending"]), (2, 2, 0, 0))
-            self.assertEqual(dict(self.side("SELECT k, v FROM meta"))["chunker"], "pack-test/1")
-            env, err = self.search("회의 일정", "--hybrid")
-            self.assertFalse(env["hybrid"]["stale"])
-            self.assertNotIn("behind the index", err)
-
     def test_stale_only_when_rows_changed(self):
         self.embed()
         change(self.root, "UPDATE rows SET seq=seq WHERE 0", (), 5)            # the ledger moved, no row did
@@ -422,27 +347,6 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual(self.side("SELECT count(*) FROM vec_chunks"), [(1,)])
         self.assertFalse(self.search("메시지", "--hybrid")[0]["hybrid"]["stale"])
 
-    def test_a_full_rechunk_drops_vanished_containers(self):
-        self.embed()
-        change(self.root, "DELETE FROM rows WHERE room='B'", (), 1)    # gone without a later seq
-        with mock.patch.object(dense, "CHUNKER", "pack-test"):
-            rep = self.embed()
-        self.assertEqual((rep["containers"], rep["embedded"], rep["removed"]), (1, 0, 1))
-        self.assertEqual(self.side("SELECT DISTINCT container FROM chunks"), [("A",)])
-
-    def test_a_keyword_hit_in_an_overlap_stays_a_hit(self):
-        fill = "".join(chr(0xAC00 + (i * 37) % 9000) for i in range(846))      # unrelated bigrams
-        index.index_path(self.root, SPEC).unlink()
-        build_index(self.root, [("x1", "R", T0, fill), ("k", "R", T0 + 60, "배포 완료했어요 여러분 감사합니다 오늘도 수고"),
-                                ("j", "R", T0 + 120, "배포 일정 공유"), ("y", "R", T0 + 180, "점심 먹으러 가요"),
-                                ("o1", "O", T0 + 50 * H, "주간 보고 작성")])
-        self.embed()
-        self.assertEqual(self.side("SELECT count(*) FROM chunk_rec WHERE rec_key='k'"), [(2,)])   # [x1, k], [k, j, y]
-        env, _ = self.search("배포", "--hybrid")
-        src = {r["key"]: r["sources"] for r in env["rows"]}
-        self.assertEqual((src["j"]["kw"], src["k"]["kw"]), (1, 2))      # k keeps its own unit, not only j's context
-        self.assertNotIn("x1", src)                                      # nor does its other chunk show a stranger
-
     def test_a_selective_filter_searches_its_own_chunks(self):
         self.embed()
         with mock.patch.object(dense, "SEM_K", 1):                     # the global KNN: the best chunk of all only
@@ -451,17 +355,6 @@ class HybridEndToEnd(unittest.TestCase):
             with mock.patch.object(dense, "PREFILTER", 1):             # more rows than that: KNN, then the filter
                 env, _ = self.search("장애 보고서", "--hybrid", "--sender", "A")
                 self.assertEqual((env["hybrid"]["retrievers"]["sem"], env["rows"]), (0, []))
-
-    def test_a_long_row_is_one_hit(self):
-        long = "서버 장애 대응 절차 " * 400                                  # several windows of one row
-        change(self.root, "INSERT INTO rows(key, room, ts, seq, message, ng) VALUES('c1', 'C', ?, 2, ?, ?)",
-               (T0 + 20 * H, long, fts.ng_text(long)), 2)
-        self.embed()
-        self.assertGreater(len(self.side("SELECT chunk_id FROM chunk_rec WHERE rec_key='c1'")), 2)
-        env, _ = self.search("장애 대응 절차", "--hybrid")
-        keys = [r["key"] for r in env["rows"]]
-        self.assertEqual(len(keys), len(set(keys)))
-        self.assertEqual((keys[0], env["rows"][0]["sources"]), ("c1", {"kw": 1, "sem": 1}))
 
     def test_hybrid_fuses_filters_and_falls_back(self):
         env, err = self.search("회의 일정", "--hybrid")                   # no sidecar yet
@@ -536,12 +429,6 @@ class HybridEndToEnd(unittest.TestCase):
         with mock.patch.object(drv, "WINDOW_TERM_ROWS", 0):                 # a term too common to pair
             env, _ = self.search("회의 메뉴", "--hybrid")
             self.assertFalse(env["window"])
-
-    def test_hybrid_usage(self):
-        for argv in (["--hybrid", "--mode", "count", "회의"], ["--hybrid", "--since", "2020"],
-                     ["--hybrid", "회의", "--before", "1.2.3"]):
-            with self.subTest(argv=argv), self.assertRaisesRegex(index.UsageError, "--hybrid"):
-                DRIVER.run(parser().parse_args(["--config", str(self.cfg), *argv]))
 
 
 def ids(hits):

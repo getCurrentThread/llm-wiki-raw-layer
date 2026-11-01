@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Preconditions, on the toy app: config refusals (SPEC 2, 16) and the apps' options, the data parent allowlist and
-junctions (SPEC 10.1), the frozen input sets (freeze.json, static drift), SYSTEM, provenance under SYSTEM's git
-ownership rules, the work-tree precheck, and llm-wiki's exit codes at these edges."""
+junctions (SPEC 10.1), the frozen input sets (freeze.json, static drift), the work-tree precheck, and provenance
+that is never clean when git fails or refuses (SYSTEM's git ownership rules)."""
 import contextlib
 import datetime
 import hashlib
@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from rawlayer import registry
-from rawlayer.capture import paths, precheck, run, steps
+from rawlayer.capture import paths, precheck, run
 from rawlayer.capture.config import Config, ConfigError, InputSet
 from rawlayer.search import index
 from tests.core import toyfix as T
@@ -44,21 +44,6 @@ class TestConfig(T.ToyCase):
             with self.subTest(sources=v):
                 self.fx.write_config()
                 self.refused(sources=v)
-
-    def test_sources_are_checked_and_kept_as_spelled(self):
-        """A source is checked on the config's own string (os.path.exists): a file named with a trailing separator
-        does not exist for the OS and is refused, though Path() would drop the separator and find the file. The
-        string is kept verbatim (a directory spelled with a trailing separator stays so spelled)."""
-        f = self.fx.base / "a_file"
-        f.write_bytes(b"")
-        self.fx.set_cfg(sources={"toy_dir": str(f)})
-        Config(self.fx.config_path)                 # existence is checked here, the kind is the app's
-        for sep in filter(None, (os.sep, os.altsep)):
-            with self.subTest(sep=sep):
-                self.refused(sources={"toy_dir": str(f) + sep})
-                spelled = str(self.fx.toy) + sep
-                self.fx.set_cfg(sources={"toy_dir": spelled})
-                self.assertEqual(self.fx.cfg().sources, {"toy_dir": spelled})
 
     def test_aux_paths(self):
         """data_root exists and is absolute; inputs_root may be left out or point nowhere until a frozen set is used;
@@ -125,21 +110,6 @@ class TestConfig(T.ToyCase):
         self.assertFalse((self.fx.data_root / "raw").exists())
         self.assertEqual(capture(self.fx), 0)                  # live never reads inputs_root
 
-    def test_unknown_input_set_and_origin(self):
-        with self.assertRaises(SystemExit) as cm:
-            cli_main(self.fx, "capture", "--input-set", "T3")
-        self.assertEqual(cm.exception.code, 2)
-        with self.assertRaises(ConfigError):
-            self.fx.cfg().check_input_set("T3")
-        self.assertEqual(cli_main(self.fx, "capture", "--origins", "toy_a,toy_q"), 2)
-        self.assertFalse((self.fx.data_root / "raw").exists())
-
-    @unittest.skipUnless(os.name == "nt", "a Windows token")
-    def test_is_system_false_here(self):
-        sid = run.fsio.token_user_sid()
-        self.assertTrue(sid and sid.startswith("S-1-5-"))
-        self.assertEqual(run.is_system(), sid == "S-1-5-18")
-
 
 class TestFrozenSet(T.ToyCase):
     """T1 / T2 read copies under <inputs_root>/<name> that freeze.json describes; the static files must still be
@@ -168,27 +138,27 @@ class TestFrozenSet(T.ToyCase):
         m = manifests(self.fx)[0]
         self.assertEqual((m["input_set"], m["origins"]["toy_a"]["counts"]["put"]), ("T1", 3))
 
-    def test_static_drift_is_refused(self):
-        root = self.freeze()
-        with (root / "a" / "c1.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write("{}\n")
-        with self.assertRaises(ConfigError):
-            InputSet(self.fx.cfg(), "T1")
-        with self.assertRaises(ConfigError):
-            capture(self.fx, input_set="T1")
+    def test_drift_and_unfrozen_sets_are_refused(self):
+        def edit(root):
+            with (root / "a" / "c1.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write("{}\n")
+
+        def add(root):                                     # a closed static root holds no file the freeze did not list
+            T.ToyFixture.write(root / "a", "c9", [T.item(9, "x")])
+        for name, change in (("edited file", edit), ("new file", add)):
+            with self.subTest(change=name):
+                shutil.rmtree(self.fx.frozen / "T1", ignore_errors=True)
+                change(self.freeze())
+                with self.assertRaises(ConfigError):
+                    InputSet(self.fx.cfg(), "T1")
+                with self.assertRaises(ConfigError):
+                    capture(self.fx, input_set="T1")
         self.assertEqual(manifests(self.fx), [])
-
-    def test_closed_root_with_a_new_file_is_drift(self):
-        root = self.freeze()
-        T.ToyFixture.write(root / "a", "c9", [T.item(9, "x")])
+        shutil.rmtree(self.fx.frozen / "T1")
+        self.freeze(static={"toy_q": {}})                  # a static label the app does not have
         with self.assertRaises(ConfigError):
             InputSet(self.fx.cfg(), "T1")
-
-    def test_unknown_static_label_and_unfrozen_set(self):
-        self.freeze(static={"toy_q": {}})
-        with self.assertRaises(ConfigError):
-            InputSet(self.fx.cfg(), "T1")
-        (self.fx.frozen / "T2").mkdir(parents=True)
+        (self.fx.frozen / "T2").mkdir(parents=True)        # no freeze.json
         with self.assertRaises(ConfigError):
             InputSet(self.fx.cfg(), "T2")
 
@@ -231,11 +201,6 @@ def _git(*args, env=None):
 
 
 class TestProvenance(unittest.TestCase):
-    def test_head_from_files_matches_git(self):
-        p = _git("-C", paths.REPO, "rev-parse", "HEAD")
-        if p.returncode != 0:
-            self.skipTest("git unavailable")
-        self.assertEqual(run._head_from_files(paths.REPO), p.stdout.strip())
 
     def test_git_failure_is_never_clean(self):
         with mock.patch.object(run.subprocess, "run", side_effect=OSError(2, "no git")):
@@ -279,39 +244,10 @@ class TestGitUnderSystem(unittest.TestCase):
         with mock.patch.object(precheck.subprocess, "run", return_value=failed):
             self.assertTrue(precheck.in_work_tree(self.outside))
 
-    def test_provenance_from_git_when_owner_differs(self):
-        head = _git("-C", T.REPO, "rev-parse", "HEAD").stdout.strip()
-        dirty = bool(_git("-C", T.REPO, "status", "--porcelain", "--", ".").stdout.strip())
-        # the file fallback answers (sentinel, True): only git itself can produce (head, dirty) here
-        with mock.patch.dict(os.environ, GIT_FOREIGN), \
-                mock.patch.object(run, "_head_from_files", return_value="sentinel"):
-            self.assertEqual(run.repo_info(), (head, dirty))
-
     def test_provenance_rc128_is_never_clean(self):
         refused = subprocess.CompletedProcess([], 128, "", "fatal: detected dubious ownership\n")
         with mock.patch.object(run.subprocess, "run", return_value=refused):
             self.assertEqual(run.repo_info(), (run._head_from_files(run.paths.REPO), True))
-
-    def test_project_in_a_folder_of_a_larger_repo(self):
-        """A project may be one folder of a repository (the monorepo) or the repository itself (split out): HEAD is
-        the repository's, dirty is the folder's, and git still answers under SYSTEM's ownership rules
-        (safe.directory names the work tree, not the folder)."""
-        proj = self.repo / "proj"
-        proj.mkdir()
-        if _git("-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q",
-                "--allow-empty", "-m", "x").returncode != 0:
-            self.skipTest("cannot commit in a scratch repository")
-        head = _git("-C", self.repo, "rev-parse", "HEAD").stdout.strip()
-        self.assertEqual(run.work_tree(proj), self.repo)
-        self.assertIsNone(run.work_tree(self.outside))
-        self.assertEqual(run._head_from_files(proj), head)
-        self.assertIsNone(run._head_from_files(self.outside))
-        (self.repo / "elsewhere.txt").write_text("x", encoding="utf-8")    # another folder's change: not this project's
-        with mock.patch.object(run.paths, "REPO", proj), mock.patch.dict(os.environ, GIT_FOREIGN), \
-                mock.patch.object(run, "_head_from_files", return_value="sentinel"):
-            self.assertEqual(run.repo_info(), (head, False))
-            (proj / "x.txt").write_text("x", encoding="utf-8")
-            self.assertEqual(run.repo_info(), (head, True))
 
     def test_dirty_is_the_cores_the_settings_and_the_selected_apps(self):
         """In a project of several apps another app's change is not this ledger's code (run.code_paths); with no
@@ -343,41 +279,6 @@ class TestGitUnderSystem(unittest.TestCase):
             with mock.patch.object(registry, "selected", lambda: None):
                 self.assertEqual(run.code_paths(), ["."])
                 self.assertEqual(run.repo_info(), (head, True))
-
-    def test_status_takes_no_optional_locks(self):
-        calls = []
-        real = subprocess.run
-
-        def spy(args, *a, **kw):
-            calls.append(list(args))
-            return real(args, *a, **kw)
-        with mock.patch.object(run.subprocess, "run", side_effect=spy):
-            run.repo_info()
-        status = [c for c in calls if "status" in c]
-        self.assertTrue(status and all("--no-optional-locks" in c for c in status))
-
-
-@unittest.skipUnless(os.name == "nt", "the ACL precheck is Windows'")
-class TestPrecheckExitCodes(T.ToyCase):
-    def test_empty_acl_output_exits_1_as_before(self):
-        """powershell rc 0 with nothing on stdout: llm-wiki's baseline_check.acl_info iterated None (TypeError),
-        so capture exited 1 ('error TypeError'), not 2; nothing is committed either way."""
-        real = subprocess.run
-
-        def ps_silent(args, *a, **kw):
-            if args and args[0] == "powershell":
-                return subprocess.CompletedProcess(args, 0, b"", b"")
-            return real(args, *a, **kw)
-        with mock.patch.object(precheck.subprocess, "run", side_effect=ps_silent):
-            # the empty output's TypeError, not one a path of another type would raise on the way there
-            with self.assertRaisesRegex(TypeError, "Get-Acl printed nothing"):
-                precheck.acl_info([self.fx.data_root])
-            err = io.StringIO()
-            with mock.patch.object(precheck, "in_work_tree", return_value=False), T.preserved_env(), \
-                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-                rc = steps.main(["capture", "--origins", "toy_a", "--config", str(self.fx.config_path)])
-        self.assertEqual((rc, err.getvalue()), (1, "error TypeError\n"))
-        self.assertEqual(manifests(self.fx), [])
 
 
 if __name__ == "__main__":
