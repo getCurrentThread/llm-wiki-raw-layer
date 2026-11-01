@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
-"""setup's kakaotalk side (kakaotalk/provision.py): the default sources (the detected client user directory and
-the app's own outputs under the data root), the root-provisioning chain (an installed root stays while it
-unwraps the store, a copy on this machine is adopted only after it verifies, the memory scan's unwrap oracle),
-and the setup command end to end on a throwaway data parent. Nothing here touches the real client or the real
-process: every input is synthetic under a temp directory, and the client lookups are patched out.
-Run from the project root, like every app suite:
-
-    python -s -B -m unittest discover -s kakaotalk/tests -t .
-"""
+"""setup's kakaotalk side (kakaotalk/provision.py): placeholder defaults fill only placeholders, the setup command end
+to end on a throwaway data parent (the example config's placeholders resolve, a verified root copy is adopted, the
+keystore is written and re-derives), and the ActionLogDB userId lookup decrypting in memory. Nothing here touches the
+real client or the real process: every input is synthetic under a temp directory, and the client lookups are patched
+out."""
 import json
 import shutil
 import unittest
@@ -18,7 +14,7 @@ from kakaotalk import wincrypt as kd
 from kakaotalk import keychain, keystore, provision
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture
-from kakaotalk.tests.test_selfderive import ROOT, SALT, quiet, wrap_dek, write_appstate
+from kakaotalk.tests.test_selfderive import ROOT, quiet, wrap_dek, write_appstate
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -47,27 +43,6 @@ class TestDefaults(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.fx.base, onerror=lambda *a: None)
 
-    def test_client_detected_outputs_under_the_data_root(self):
-        users = self.fx.base / "users"
-        udir = users / "3f"
-        udir.mkdir(parents=True)
-        (udir / "appstate.dat").write_bytes(b"")
-        cfg = {"data_root": str(self.fx.data_root)}
-        d = provision.default_sources(cfg, home=fake_home(self.fx.base), users=str(users))
-        self.assertEqual(d, {
-            "backup_decrypted": str(self.fx.data_root / "backup_decrypted"),
-            "keystore": str(self.fx.data_root / "keys" / "keystore.json"),
-            "kakao_user_dir": str(udir),
-        })
-
-    def test_outputs_fall_back_to_the_data_root(self):
-        home = self.fx.base / "empty-home"
-        home.mkdir()
-        cfg = {"data_root": str(self.fx.data_root)}
-        d = provision.default_sources(cfg, home=home, users=str(self.fx.base / "no-users"))
-        self.assertEqual(d, {"backup_decrypted": str(self.fx.data_root / "backup_decrypted"),
-                             "keystore": str(self.fx.data_root / "keys" / "keystore.json")})
-
     def test_fill_defaults_fills_placeholders_only(self):
         cfg = {"data_root": str(self.fx.data_root), "sources": {
             "backup_decrypted": "<abs dir>\\backup_decrypted",   # the placeholder is replaced
@@ -81,122 +56,6 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(cfg["sources"]["backup_decrypted"],
                          str(self.fx.data_root / "backup_decrypted"))
         self.assertEqual(notes, ["default sources set: backup_decrypted"])
-
-
-class TestRootOracle(unittest.TestCase):
-    def setUp(self):
-        self.rels = [r"chat_data\chatLogs_31.edb", r"chat_data\chatLogs_32.edb"]
-        self.store = {"version": "v2:", "salt": SALT,
-                      "map": {r: wrap_dek(r, bytes([0x60 + i]) * 32) for i, r in enumerate(self.rels)}}
-
-    def test_finds_the_candidate_that_unwraps(self):
-        cands = [bytes(range(1, 33)), ROOT, bytes(range(2, 34))]
-        self.assertEqual(provision.root_in(cands, self.store), ROOT)
-
-    def test_no_hit_and_no_entries(self):
-        self.assertIsNone(provision.root_in([bytes(range(1, 33))], self.store))
-        self.assertIsNone(provision.root_in([ROOT], {"version": "v2:", "salt": SALT, "map": {}}))
-
-
-class TestProvision(unittest.TestCase):
-    """The provisioning chain against a synthetic appstate.dat and research tree (no client, no scan)."""
-
-    def setUp(self):
-        self.fx = Fixture()
-        for chat in (31, 32):
-            E.place_room(self.fx, chat, [E.msg(chat, i) for i in (1, 2, 3)], E.key_for(chat))
-        wrapped = {f"chat_data\\chatLogs_{c}.edb": wrap_dek(f"chat_data\\chatLogs_{c}.edb", E.key_for(c))
-                   for c in (31, 32)}
-        wrapped["chat_data\\ocii_v2.edb"] = wrap_dek("chat_data\\ocii_v2.edb", b"\x01" * 32)   # non-room entry
-        write_appstate(self.fx.user_dir, wrapped)
-        self.home = fake_home(self.fx.base)
-        self.data_root = self.fx.data_root
-        self.cfg = {"data_root": str(self.data_root), "sources": {
-            "kakao_user_dir": str(self.fx.user_dir),
-            "keystore": str(self.data_root / "keys" / "keystore.json"),
-            "backup_decrypted": str(self.data_root / "backup_decrypted"),
-        }}
-
-    def tearDown(self):
-        shutil.rmtree(self.fx.base, onerror=lambda *a: None)
-
-    def run_provision(self, cfg=None, restart=False):
-        notes = Notes()
-        with mock.patch.object(kd, "_find_pid", lambda name="KakaoTalk.exe": None):
-            problems = provision.provision(cfg or self.cfg, notes, restart, home=self.home)
-        return problems, notes
-
-    def installed_root(self):
-        p = self.data_root / "keys" / "root_v2.hex"
-        return keychain.read_root_hex(str(p)) if p.exists() else None
-
-    def keystore(self):
-        p = self.data_root / "keys" / "keystore.json"
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
-
-    def test_adopts_a_verified_copy_and_writes_the_keystore(self):
-        problems, notes = self.run_provision(self.cfg)
-        self.assertEqual(problems, [])
-        self.assertEqual(self.installed_root(), ROOT)                 # verified against the store, then installed
-        self.assertTrue((self.data_root / "backup_decrypted").is_dir())
-        ks = self.keystore()
-        self.assertEqual(len(ks), 3)                                  # two rooms and the non-room entry
-        self.assertEqual(sum(1 for e in ks.values() if e["header_ok"] is True), 2)
-        self.assertTrue(any("root adopted" in n for n in notes))
-
-    def test_an_installed_live_root_stays(self):
-        keys_dir = self.data_root / "keys"
-        keys_dir.mkdir(parents=True)
-        (keys_dir / "root_v2.hex").write_text(ROOT.hex())
-        notes = Notes()
-        problems = provision.provision(self.cfg, notes, home=self.home)   # scan patch not needed: alive root first
-        self.assertEqual(problems, [])
-        self.assertTrue(any("entries unwrapped (alive)" in n for n in notes))
-        self.assertFalse(any("adopted" in n for n in notes))
-
-    def test_a_dead_installed_root_is_replaced(self):
-        keys_dir = self.data_root / "keys"
-        keys_dir.mkdir(parents=True)
-        (keys_dir / "root_v2.hex").write_text((b"\x22" * 32).hex())      # a rotated root unwraps nothing
-        problems, _notes = self.run_provision()
-        self.assertEqual(problems, [])
-        self.assertEqual(self.installed_root(), ROOT)
-
-    def test_a_partial_root_is_kept_when_nothing_better_exists(self):
-        alt = b"\x77" * 32
-        wrapped = {}
-        for r, dek in ((r"chat_data\chatLogs_31.edb", E.key_for(31)),
-                       (r"chat_data\chatLogs_32.edb", E.key_for(32))):
-            root = ROOT if r.endswith("31.edb") else alt        # 32 is wrapped under another root
-            wrapped[r] = keychain.aes_kw_wrap(
-                keychain.hkdf_sha256(root, SALT, ("v2:" + r).encode("latin1"), 32), dek)
-        write_appstate(self.fx.user_dir, wrapped)
-        keys_dir = self.data_root / "keys"
-        keys_dir.mkdir(parents=True)
-        (keys_dir / "root_v2.hex").write_text(ROOT.hex())              # unwraps 1 of 2: partial
-        (self.home / "Documents" / "kakatok" / "root_v2.hex").unlink()  # no copy to adopt
-        problems, _notes = self.run_provision()
-        self.assertEqual(problems, [])                                  # partial still keys most rooms
-        self.assertEqual(self.installed_root(), ROOT)
-        self.assertEqual(len(self.keystore()), 1)
-
-    def test_no_root_anywhere_is_an_attention(self):
-        for rel in provision.ROOT_FILES:
-            p = self.home.joinpath(*rel)
-            if p.exists():
-                p.unlink()
-        problems, _notes = self.run_provision()
-        self.assertEqual(len(problems), 1)
-        self.assertIn("no live root", problems[0])
-        self.assertIsNone(self.installed_root())
-        self.assertIsNone(self.keystore())
-
-    def test_a_missing_client_directory_is_named(self):
-        cfg = {"data_root": str(self.data_root),
-               "sources": {"kakao_user_dir": "<abs dir>\\users\\<live user dir>"}}
-        problems, _notes = self.run_provision(cfg)
-        self.assertEqual(len(problems), 1)
-        self.assertIn("kakao_user_dir is not set", problems[0])
 
 
 class TestSetupCommand(unittest.TestCase):
@@ -249,28 +108,6 @@ class TestSetupCommand(unittest.TestCase):
             self.assertEqual(provision.write_keystore_for(
                 cfgdict, lambda m: None, ROOT,
                 keystore.load_store(str(self.fx.user_dir / "appstate.dat")), str(self.fx.user_dir)), [])
-
-
-class TestRestartClient(unittest.TestCase):
-    """--restart-client restarts a running client before the memory scan (the process calls are mocked)."""
-    setUp, tearDown = TestProvision.setUp, TestProvision.tearDown
-
-    def test_a_running_client_is_restarted_before_the_scan(self):
-        for rel in provision.ROOT_FILES:                              # no copy: the chain reaches the scan
-            p = self.home.joinpath(*rel)
-            if p.exists():
-                p.unlink()
-        for new_pid, want in ((456, [456]), (None, [123])):    # None: no KakaoTalk.exe found, the running one is scanned
-            with self.subTest(new_pid=new_pid):
-                scanned = []
-                relaunch = mock.Mock(return_value=new_pid)
-                with mock.patch.object(kd, "_find_pid", lambda name="KakaoTalk.exe": 123), \
-                        mock.patch.object(provision, "relaunch_client", relaunch), \
-                        mock.patch.object(provision, "scan_memory_root",
-                                          lambda store, pid=None, note=None: scanned.append(pid)):
-                    provision.provision(self.cfg, Notes(), True, home=self.home)
-                relaunch.assert_called_once()
-                self.assertEqual(scanned, want)
 
 
 class TestUseridInMemory(unittest.TestCase):

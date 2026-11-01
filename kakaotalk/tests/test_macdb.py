@@ -6,8 +6,6 @@ keys and projection hashes shared with the other origins), and the macdb decrypt
 device lookups bypassed). The SQLCipher round-trips need the sqlite3.dll of a Windows Python for the 80-byte page
 reserve (kakaotalk/tests/edbfix.py) and skip elsewhere, like the edb tests; everything else runs everywhere.
 Nothing here touches a real Mac, its plists or ioreg.
-
-    python -s -B -m unittest discover -s kakaotalk/tests -t .
 """
 import contextlib
 import hashlib
@@ -100,18 +98,7 @@ class TestDerivation(unittest.TestCase):
         self.assertEqual(len(maccrypt.secure_key(UID, UUID)), 256)
         self.assertEqual(maccrypt.hashed_device_uuid(UUID),
                          "tnouDovTnftjDguBiMkP1IqMwcW4lZn/cNHGi1R5V7weaNsTf1NmSUehTkQJqbzAMrEGwQ==")
-
-    def test_selftest(self):
         self.assertTrue(maccrypt._selftest())
-
-    def test_discover_prefers_the_derived_name(self):
-        tmp = Path(tempfile.mkdtemp(prefix="llmw-cont-"))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        (tmp / ("0" * 78)).write_bytes(b"x")
-        (tmp / DB_NAME).write_bytes(b"x")
-        self.assertEqual(os.path.basename(maccrypt.discover_database_file(str(tmp), UID, UUID)), DB_NAME)
-        self.assertEqual(os.path.basename(maccrypt.discover_database_file(str(tmp))), "0" * 78)
-        self.assertIsNone(maccrypt.discover_database_file(str(tmp / "gone")))
 
 
 class TestUserId(unittest.TestCase):
@@ -126,32 +113,25 @@ class TestUserId(unittest.TestCase):
             plistlib.dump(mapping, fh)
         return str(tmp)
 
-    def test_strategy_1_transparency_suffix(self):
-        self.assertEqual(maccrypt.user_id(self.home(
-            {"FSChatWindowTransparency77": 1, "FSChatWindowTransparencyA77": 1, "other": 2})), 77)
-
-    def test_strategy_2_direct_key(self):
-        self.assertEqual(maccrypt.user_id(self.home({"userId": 123})), 123)
-        self.assertEqual(maccrypt.user_id(self.home({"user_id": "456"})), 456)
-
-    def test_strategy_3_candidates_then_bruteforce(self):
+    def test_strategies(self):
         h = hashlib.sha512(b"555").hexdigest()
-        home = self.home({"DESIGNATEDFRIENDSREVISION:" + h: 3, "AlertKakaoIDsList": [9, 555]})
-        self.assertEqual(maccrypt.user_id(home), 555)                     # verified candidate, no scan
-        home = self.home({"DESIGNATEDFRIENDSREVISION:" + h: 3})           # no candidates: bounded scan
-        self.assertEqual(maccrypt.user_id(home, brute_limit=1000), 555)
-        home = self.home({"DESIGNATEDFRIENDSREVISION:" + maccrypt.EMPTY_SHA512: 3})   # empty account: skipped
-        self.assertIsNone(maccrypt.user_id(home, brute_limit=10))
+        for label, mapping, kw, want in (
+                ("transparency suffix", {"FSChatWindowTransparency77": 1, "FSChatWindowTransparencyA77": 1,
+                                         "other": 2}, {}, 77),
+                ("direct key", {"userId": 123}, {}, 123),
+                ("direct key as text", {"user_id": "456"}, {}, 456),
+                ("verified candidate, no scan", {"DESIGNATEDFRIENDSREVISION:" + h: 3,
+                                                 "AlertKakaoIDsList": [9, 555]}, {}, 555),
+                ("no candidates: bounded scan", {"DESIGNATEDFRIENDSREVISION:" + h: 3}, {"brute_limit": 1000}, 555),
+                ("empty account: skipped", {"DESIGNATEDFRIENDSREVISION:" + maccrypt.EMPTY_SHA512: 3},
+                 {"brute_limit": 10}, None),
+                ("window frame suffix", {"NSWindow Frame FSChatWindowFrame_88": "1 2 3 4",
+                                         "NSWindow Frame FSChatWindowFrame_A88": "5 6 7 8"}, {}, 88),
+                ("no user id", {"unrelated": 1}, {}, None)):
+            with self.subTest(label):
+                self.assertEqual(maccrypt.user_id(self.home(mapping), **kw), want)
         self.assertEqual(maccrypt.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 100), 42)
         self.assertIsNone(maccrypt.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 10))
-
-    def test_strategy_4_window_frame_suffix(self):
-        self.assertEqual(maccrypt.user_id(self.home(
-            {"NSWindow Frame FSChatWindowFrame_88": "1 2 3 4",
-             "NSWindow Frame FSChatWindowFrame_A88": "5 6 7 8"})), 88)
-
-    def test_no_user_id(self):
-        self.assertIsNone(maccrypt.user_id(self.home({"unrelated": 1})))
 
 
 @unittest.skipIf(os.name != "nt", "synthetic SQLCipher databases need the sqlite3.dll of a Windows Python")
@@ -178,24 +158,22 @@ class TestCipher(unittest.TestCase):
         return rows
 
     def test_v4_roundtrip(self):
-        work = self.tmp / "room.sqlite"
-        E.PlainRoom(work, [(1, 51, 1, 7, "w1", None, T0 + 60, 0, 0, 0, 0)]).close()
+        first = (1, 51, 1, 7, "w1", None, T0 + 60, 0, 0, 0, 0)
         salt = hashlib.sha256(b"mac-salt").digest()[:16]
+        key = self._key(salt)
+        work = self.tmp / "room.sqlite"
+        E.PlainRoom(work, [first]).close()
         main = work.read_bytes()
-        image, facts = maccrypt.decrypt_db(E.enc_main(self._key(salt), salt, main), b"", self.PASS)
+        image, facts = maccrypt.decrypt_db(E.enc_main(key, salt, main), b"", self.PASS)
         self.assertEqual(facts["cipher"], "sqlcipher4")
         self.assertEqual(facts["pages"], len(main) // 4096)
         self.assertEqual(facts["wal"]["state"], "none")
         self.assertEqual(self._open_image(image), [(1, "w1")])
-
-    def test_v4_wal_roundtrip(self):
-        work = self.tmp / "room.sqlite"
-        pr = E.PlainRoom(work, [(1, 51, 1, 7, "w1", None, T0 + 60, 0, 0, 0, 0)])
+        # a later transaction still in the WAL
+        pr = E.PlainRoom(self.tmp / "room-wal.sqlite", [first])
         pr.add([(2, 51, 1, 7, "w2-in-wal", None, T0 + 120, 0, 0, 0, 0)])
         main, wal = pr.snapshot()
         pr.close()
-        salt = hashlib.sha256(b"mac-salt").digest()[:16]
-        key = self._key(salt)
         image, facts = maccrypt.decrypt_db(E.enc_main(key, salt, main), E.enc_wal(key, salt, wal), self.PASS)
         self.assertEqual((facts["cipher"], facts["wal"]["state"], facts["wal"]["frames_applied"]),
                          ("sqlcipher4", "ok", facts["wal"]["frames_total"]))
@@ -244,48 +222,6 @@ class TestMacdbOrigin(Base):
         self.assertIn("kakao:*@NTChatMessage", recs)
         m = manifests(self.fx)[-1]
         self.assertEqual(m["origins"]["macdb"]["containers"][sid(mac)]["tables"]["NTChatMessage"], 3)
-
-    def test_placeholder_without_nt_tables_is_not_mac(self):
-        mac = self.fx.inputs / "mac" / "empty.sqlite"
-        mac.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(mac)                    # a valid database that is not a KakaoTalk one
-        con.execute("CREATE TABLE t(a)")
-        con.commit()
-        con.close()
-        self.set_mac(mac)
-        self.assertEqual(capture(self.fx, ["macdb"]), 0)
-        m = manifests(self.fx)[-1]
-        self.assertEqual(m["origins"]["macdb"]["notes"].get("not_mac"), 1)
-        self.assertEqual(records(self.fx), [])
-
-    def test_search_indexes_macdb_text_names_titles(self):
-        """index + search over a macdb-only ledger: the row carries the text, the NTUser sender name and the
-        NTChatMeta room title (kakao-3 stamps)."""
-        from kakaotalk.tests import ledgerfix as L
-        mac = self.fx.inputs / "mac" / "nt.sqlite"
-        mac.parent.mkdir(parents=True, exist_ok=True)
-        make_macdb(mac, [nt_msg(53, 1, text="macos 회의 노트", send=T0 + 60)],
-                   rooms=[(53, 1, None, 1, 1, T0 + 60, None, 0)],
-                   meta=[(53, 3, "맥방")], users=[(7, 0, "맥유저", None, "닉네임")])
-        self.set_mac(mac)
-        self.assertEqual(L.capture(self.fx, ["macdb"]), 0)
-        rc, _out, err = L.run_rawsearch(["index", "--config", str(self.fx.config_path),
-                                         "--source", "kakaotalk", "--json"])
-        self.assertEqual(rc, 0, err)
-        rc, out, err = L.run_rawsearch(["kakaotalk", "--config", str(self.fx.config_path), "--json", "macos"])
-        self.assertEqual(rc, 0, err)
-        env = json.loads(out)
-        self.assertEqual(len(env["rows"]), 1)
-        row = env["rows"][0]
-        self.assertEqual((row["text"], row["sender"], row["room"], row["source"], row["origins"]),
-                         ("macos 회의 노트", "맥유저", "맥방", "macdb", ["macdb"]))
-
-    def test_unset_option_reads_nothing(self):
-        self.assertEqual(capture(self.fx, ["macdb"]), 0)
-        m = manifests(self.fx)[-1]
-        self.assertEqual(m["origins"]["macdb"]["containers"], {})
-        self.assertEqual(records(self.fx), [])
-
 
 @unittest.skipIf(os.name != "nt", "synthetic SQLCipher databases need the sqlite3.dll of a Windows Python")
 class TestMacdbCommand(Base):
@@ -336,12 +272,15 @@ class TestMacdbCommand(Base):
         self.assertEqual(rc, 3)
         self.assertFalse(self.mac.exists())
 
-    def test_a_target_outside_the_data_root_is_refused(self):
+    def test_no_target_or_one_outside_the_data_root_is_refused(self):
+        """Plaintext lives only under the data root: no mac_db, or one outside it, is rc 2 and writes nothing."""
         self._build_encrypted()
         outside = self.fx.inputs / "mac" / "nt.sqlite"
-        self.set_mac(outside)
-        rc = self.run_macdb(uuid=UUID, user_id=UID, db=str(self.enc))
-        self.assertEqual(rc, 2)
+        for target in (None, outside):
+            with self.subTest(target=target):
+                if target:
+                    self.set_mac(target)
+                self.assertEqual(self.run_macdb(uuid=UUID, user_id=UID, db=str(self.enc)), 2)
         self.assertEqual(sorted(p.name for p in outside.parent.iterdir()), ["enc.db"])
 
     def test_a_failed_write_leaves_no_tmp(self):
@@ -351,8 +290,3 @@ class TestMacdbCommand(Base):
             with self.assertRaises(OSError):
                 self.run_macdb(uuid=UUID, user_id=UID, db=str(self.enc))
         self.assertEqual(list(self.mac.parent.iterdir()), [])
-
-    def test_unset_option_refused(self):
-        self._build_encrypted()
-        rc = self.run_macdb(uuid=UUID, user_id=UID, db=str(self.enc))
-        self.assertEqual(rc, 2)

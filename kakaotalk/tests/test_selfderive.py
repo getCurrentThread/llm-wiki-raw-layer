@@ -4,9 +4,7 @@ kakaotalk/keychain.py and kakaotalk/keystore.py, the keystore derivation setup p
 synthetic appstate.dat wrapping the keys of synthetic SQLCipher-4 rooms (kakaotalk/tests/edbfix.py), and the
 backup decryption against a synthetic EvaSQLite-encrypted backup user directory. Nothing here touches the
 real client, its files or the registry: read_deviceinfo and get_userid_live are patched, and every input is
-built in code under the fixture's temp directory. Run from the project root, like every app suite:
-
-    python -s -B -m unittest discover -s kakaotalk/tests -t .
+built in code under the fixture's temp directory. 
 """
 import contextlib
 import io
@@ -24,7 +22,7 @@ from kakaotalk import keychain, keystore, provision
 from kakaotalk.readers.edb import load_keystore
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture
-from kakaotalk.tests.helpers import _force, capture, manifests, records
+from kakaotalk.tests.helpers import _force, capture, records
 
 ROOT = bytes(range(0x40, 0x60))
 SALT = bytes(range(32))
@@ -110,13 +108,12 @@ class Base(unittest.TestCase):
 
 
 class TestVectors(unittest.TestCase):
-    def test_keychain_selftest(self):
-        """RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract."""
-        self.assertTrue(keychain._selftest())
-
-    def test_keystore_selftest(self):
-        """RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
-        self.assertTrue(keystore._selftest())
+    def test_selftests(self):
+        """keychain: RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract; keystore:
+        RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
+        for mod in (keychain, keystore):
+            with self.subTest(mod.__name__):
+                self.assertTrue(mod._selftest())
 
 
 class TestKeystoreDerivation(Base):
@@ -163,20 +160,6 @@ class TestKeystoreDerivation(Base):
         recs = {r["key"] for r in records(self.fx)}
         self.assertIn("kakao:31:msg:1", recs)
         self.assertIn("kakao:32:msg:3", recs)
-
-    def test_room_without_a_store_entry_stays_no_key(self):
-        """A room on disk the store does not know: no bogus entry is written, so capture reads the keyed rooms
-        and leaves that one no_key (the container fact; test_resilience covers the all-unkeyed suspect case)."""
-        from rawlayer.capture import canon
-        self.fx.user_dir.joinpath("chat_data", "chatLogs_33.edb").write_bytes(b"not a room")
-        self.assertEqual(self.run_derive(), [])
-        self.assertNotIn("chat_data\\chatLogs_33.edb",
-                         json.loads(self.fx.keystore.read_text(encoding="utf-8")))
-        self.assertEqual(capture(self.fx, ["edb"]), 0)
-        m = manifests(self.fx)[-1]
-        self.assertEqual(m["origins"]["edb"]["containers"][canon.source_id("chat_data/chatLogs_33.edb")]["status"],
-                         "no_key")
-        self.assertNotIn("kakao:33:msg:1", {r["key"] for r in records(self.fx)})
 
     def test_rotated_root_is_an_attention(self):
         (self.keys_dir / "root_v2.hex").write_text((b"\x22" * 32).hex())

@@ -3,7 +3,7 @@
 (rawlayer.capture.run) on inputs synthesised in code (kakaotalk/tests/fixtures.py, kakaotalk/tests/edbfix.py), so
 the index sees exactly the record shapes capture writes. Every name, title and text below is invented.
 
-Helpers: tests/core/appfix.py (capture, run_rawsearch, clone_data_root, force_rmtree, kst, LedgerSeq).
+Helpers: tests/core/appfix.py (capture, run_rawsearch, clone_data_root, force_rmtree, kst).
 Inputs: Msg, KakaoSources (writers for the backup and edb inputs) and KakaoScenario (three capture rounds).
 """
 import json
@@ -16,12 +16,9 @@ from tests.core import appfix
 KAKAO_ORIGINS = ["backup_decrypted", "edb"]
 
 kst = appfix.kst
-preserved_env = appfix.preserved_env
 capture = appfix.capture
 run_rawsearch = appfix.run_rawsearch
 force_rmtree = appfix.force_rmtree
-LedgerSeq = appfix.LedgerSeq
-_force = appfix._force
 
 
 def clone_data_root(src_data_root):

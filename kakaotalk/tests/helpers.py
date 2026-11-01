@@ -5,13 +5,10 @@ comparison)."""
 from tests.core import appfix
 
 STATIC = ["backup_decrypted"]
-KAKAO = STATIC + ["edb"]
 
-preserved_env = appfix.preserved_env
 records = appfix.records
 by_key = appfix.by_key
 manifests = appfix.manifests
-export = appfix.export
 invariants = appfix.invariants
 replay_diff = appfix.replay_diff
 _force = appfix._force

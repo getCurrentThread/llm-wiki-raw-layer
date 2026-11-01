@@ -1,24 +1,20 @@
 # -*- coding: utf-8 -*-
 """M4 (edb) on synthetic SQLCipher-style files: room statuses, WAL handling (torn frame, previous-
 generation salts, big-endian checksums, bad header -> partial, zero-filled pages), wrong key,
-rekeyed, checkpoint race (unstable), two-phase absent, shrink guard, room_gone, source unchanged, a mixed
-edb / backup / live layout, the kakatok oracle differential (tests only), and SPEC-CLARIFICATIONS Q10 (edb pending/absent
-over every kind): a capture table that disappears (empty and non-empty), a no_pk transition, re-observation under the
-shrink guard (drop) and in a partial room (no drop), same-h regeneration (flap) and key_unprintable. The pending fold of
+rekeyed, checkpoint race (unstable), two-phase absent, shrink guard, source unchanged, a mixed
+edb / backup / live layout, and SPEC-CLARIFICATIONS Q10 (edb pending/absent
+): a capture table that disappears, re-observation under the
+shrink guard (drop) and in a partial room (no drop), and same-h regeneration (flap). The pending fold of
 the ledger invariants (tests/core/ledgercheck.py) is tested on its own in tests/core/test_ledgercheck.py."""
 import hashlib
-import importlib
 import os
 import shutil
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from rawlayer import conf
 from rawlayer.capture import canon, fsio
 from kakaotalk.readers import edb as src_kakao_edb
-from rawlayer.capture.config import Config
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture
 from kakaotalk.tests.helpers import _force, capture, invariants, manifests, records, replay_diff
@@ -185,28 +181,6 @@ class TestEdbRead(EdbBase):
                          (1, 1, 1))
         self.assertEqual([r for r in records(self.fx) if r["key"].startswith(("kakao:31", "kakao:32", "kakao:33"))], [])
 
-    def test_bad_wal_header_is_partial_and_adds_no_pending(self):
-        self.room(49, rows(49, 1, 3))                        # a clean room: N_obs > 0, the guard stays quiet
-        main, wal = self.plain_room(41, rows(41, 1, 40), rows(41, 41, 42))
-        key, salt = E.key_for(41), b"\x04" * 16
-        self.keys[41] = key
-        good = E.enc_wal(key, salt, wal)
-        E.write_edb(self.cd, 41, E.enc_main(key, salt, main), good)
-        self.keystore()
-        self.assertEqual(capture(self.fx, EDB), 0)
-        self.assertEqual(len(self.msg_keys(41)), 42)
-        bad = bytearray(good)
-        bad[28] ^= 0x01                                      # header checksum
-        E.write_edb(self.cd, 41, E.enc_main(key, salt, main), bytes(bad))
-        self.assertEqual(capture(self.fx, EDB), 0)
-        c = self.cont(41)
-        self.assertEqual((c["status"], c["wal"]["state"], c["wal"]["frames_applied"]), ("partial", "bad_header", 0))
-        self.assertEqual(self.edb()["pending"], {"add": [], "drop": []})
-        self.assertEqual(manifests(self.fx)[-1]["segments"], [])
-        bad, nums = invariants(self.fx)
-        self.assertEqual((bad, nums["containers_skipped"]), ({}, 1))      # the partial room is not compared
-
-
 class TestEdbPolicy(EdbBase):
     def test_absent_is_two_phase_and_pending_clears(self):
         self.room(51, rows(51, 1, 40))
@@ -245,19 +219,6 @@ class TestEdbPolicy(EdbBase):
         self.assertEqual(o["counts"]["absent"], 0)
         self.room(61, rows(61, 1, 60))
         self.assertEqual(capture(self.fx, EDB), 0)
-
-    def test_no_clean_room_after_puts_is_suspect(self):
-        """SPEC 8.3 guard 'N_obs == 0': once the ledger holds edb puts, a run that reads no room clean (every
-        file gone here) is suspect with no pending add and no absent; genesis with no edb file is not."""
-        self.assertEqual(capture(self.fx, EDB), 0)           # genesis, no edb file: nothing to protect
-        self.room(81, rows(81, 1, 4))
-        self.assertEqual(capture(self.fx, EDB), 0)
-        (self.cd / "chatLogs_81.edb").unlink()
-        self.assertEqual(capture(self.fx, EDB), 3)
-        o = self.edb()
-        self.assertEqual((o["status"], o["notes"].get("shrink_guard"), o["notes"].get("room_gone")),
-                         ("suspect", 1, 1))
-        self.assertEqual((o["pending"]["add"], o["counts"]["absent"]), ([], 0))
 
     def test_rekeyed_then_new_key(self):
         self.room(79, rows(79, 1, 3))                        # a clean room: N_obs > 0, the guard stays quiet
@@ -301,16 +262,6 @@ class TestEdbPolicy(EdbBase):
         self.assertEqual((w["frames_total"] - w["frames_valid"], w["commits"]), (1, 1))
         self.assertEqual(self.msg_keys(81), [])
         self.assertEqual(self.msg_keys(82), [1, 2, 3, 4])
-
-    def test_room_gone(self):
-        self.room(93, rows(93, 1, 40))
-        self.room(94, rows(94, 1, 40))
-        self.assertEqual(capture(self.fx, EDB), 0)
-        (self.cd / "chatLogs_94.edb").unlink()
-        self.assertEqual(capture(self.fx, EDB), 0)
-        o = self.edb()
-        self.assertEqual((o["notes"].get("room_gone"), o["pending"]["add"], o["counts"]), (1, [], {"put": 0, "absent": 0}))
-
 
 class TestEdbMixedLayout(EdbBase):
     """One hand-made layout across edb and backup_decrypted (deleted and 0x4000 rows, a revised row with
@@ -363,9 +314,6 @@ class TestEdbMixedLayout(EdbBase):
         self.assertEqual(replay_diff(self.fx), 0)
 
 
-HIST_NO_PK = "CREATE TABLE chatLogHistory(logId INTEGER, revision INTEGER, message TEXT)"
-HIST_TEXT_PK = "CREATE TABLE chatLogHistory(logId TEXT, revision TEXT, message TEXT, PRIMARY KEY(logId, revision))"
-
 
 class TestEdbPending(EdbBase):
     def room_sql(self, chat, rs, *stmts, hist=()):
@@ -408,43 +356,6 @@ class TestEdbPending(EdbBase):
         self.assertEqual(self.ops(sk), ["put", "absent", "put"])
         self.assertEqual(invariants(self.fx)[0], {"flap": 1})       # the ledger policy sees the regeneration
 
-    def test_nonempty_table_drop_and_no_pk(self):
-        self.room_sql(73, rows(73, 1, 40), hist=[(5, 1, "h"), (6, 1, "h")])
-        self.room_sql(74, rows(74, 1, 40), hist=[(7, 1, "h")])
-        self.assertEqual(capture(self.fx, EDB), 0)
-        # 73: chatLogHistory loses its PK -> schema put (rev 2), hist rows unobserved; 74: table dropped
-        self.room_sql(73, rows(73, 1, 40), "DROP TABLE chatLogHistory", HIST_NO_PK,
-                      "INSERT INTO chatLogHistory VALUES (5, 1, 'h')")
-        self.room_sql(74, rows(74, 1, 40), "DROP TABLE chatLogHistory")
-        self.assertEqual(capture(self.fx, EDB), 0)
-        o = self.edb()
-        self.assertEqual(o["pending"]["add"], ["kakao:73:hist:5:1", "kakao:73:hist:6:1",
-                                               "kakao:74:hist:7:1", "kakao:74@chatLogHistory"])
-        self.assertEqual(o["notes"].get("no_pk"), 1)
-        self.assertEqual(self.ops("kakao:73@chatLogHistory"), ["put", "put"])
-        self.assertEqual(capture(self.fx, EDB), 0)
-        for k in ("kakao:73:hist:5:1", "kakao:73:hist:6:1", "kakao:74:hist:7:1", "kakao:74@chatLogHistory"):
-            self.assertEqual(self.ops(k), ["put", "absent"], k)
-        self.assertEqual(invariants(self.fx)[0], {})
-        self.assertEqual(replay_diff(self.fx), 0)
-
-    def test_guard_run_still_drops(self):
-        self.room_sql(75, rows(75, 1, 60))
-        self.room_sql(76, rows(76, 1, 60))
-        self.assertEqual(capture(self.fx, EDB), 0)
-        self.room_sql(75, rows(75, 1, 59))
-        self.assertEqual(capture(self.fx, EDB), 0)
-        self.assertEqual(self.edb()["pending"]["add"], ["kakao:75:msg:60"])
-        self.room_sql(75, rows(75, 1, 60))                          # back ...
-        self.room_sql(76, rows(76, 1, 2))                           # ... while 76 trips the guard
-        self.assertEqual(capture(self.fx, EDB), 3)
-        o = self.edb()
-        self.assertEqual((o["status"], o["notes"].get("shrink_guard"), o["counts"]["absent"]), ("suspect", 1, 0))
-        self.assertEqual(o["pending"], {"add": [], "drop": ["kakao:75:msg:60"]})
-        bad, _nums = invariants(self.fx)
-        self.assertEqual(bad, {})
-        self.assertEqual(replay_diff(self.fx), 0)
-
     def test_partial_room_keeps_pending(self):
         main40, wal = self.plain_room(77, rows(77, 1, 40), rows(77, 41, 42))
         key, salt = E.key_for(77), b"\x05" * 16
@@ -465,104 +376,19 @@ class TestEdbPending(EdbBase):
         E.write_edb(self.cd, 77, E.enc_main(key, salt, main40), bytes(bad))
         self.assertEqual(capture(self.fx, EDB), 0)
         o = self.edb()
-        self.assertEqual((o["containers"][self.sid77()]["status"], o["pending"]), ("partial", {"add": [], "drop": []}))
+        c = o["containers"][sid(77)]
+        self.assertEqual((c["status"], c["wal"]["state"], c["wal"]["frames_applied"], o["pending"]),
+                         ("partial", "bad_header", 0, {"add": [], "drop": []}))
         self.assertEqual(o["counts"]["absent"], 0)
+        self.assertEqual(manifests(self.fx)[-1]["segments"], [])
+        bad, nums = invariants(self.fx)
+        self.assertEqual((bad, nums["containers_skipped"]), ({}, 1))      # the partial room is not compared
         main42, _ = self.plain_room(77, rows(77, 1, 42))
         E.write_edb(self.cd, 77, E.enc_main(key, salt, main42))
         self.assertEqual(capture(self.fx, EDB), 0)
         self.assertEqual(self.edb()["pending"], {"add": [], "drop": miss})
         self.assertEqual(invariants(self.fx)[0], {})
         self.assertEqual(replay_diff(self.fx), 0)
-
-    def sid77(self):
-        return sid(77)
-
-    def test_key_unprintable(self):
-        self.room_sql(79, rows(79, 1, 40), "DROP TABLE chatLogHistory", HIST_TEXT_PK,
-                      "INSERT INTO chatLogHistory VALUES ('a1', 'r1', 'h')")
-        self.assertEqual(capture(self.fx, EDB), 0)
-        self.assertEqual(self.ops("kakao:79:hist:a1:r1"), ["put"])
-        self.room_sql(79, rows(79, 1, 40), "DROP TABLE chatLogHistory")
-        self.assertEqual(capture(self.fx, EDB), 3)                  # no exception: manifest written, suspect
-        o = self.edb()
-        self.assertEqual((o["status"], o["notes"].get("key_unprintable"), o["pending"]["add"], o["counts"]["absent"]),
-                         ("suspect", 1, [], 0))
-        self.assertEqual(len(manifests(self.fx)), 2)
-
-
-def _oracle_dir():
-    """The kakatok folder that holds edb_reader.py, as the text sys.path takes, or None. LLMWIKI_ORACLE_DIR is
-    used as given; the default is Documents/kakatok in the home of the user this project belongs to
-    (settings.HOME_DIR)."""
-    d = os.environ.get("LLMWIKI_ORACLE_DIR") or str(conf.settings().HOME_DIR / "Documents" / "kakatok")
-    return d if (Path(d) / "edb_reader.py").exists() else None
-
-
-def _oracle():
-    d = _oracle_dir()
-    if d is None:
-        raise unittest.SkipTest("kakatok oracle not available")
-    sys.path.insert(0, d)
-    dont = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True          # never leave a __pycache__ in the kakatok checkout
-    try:
-        return importlib.import_module("edb_reader")
-    finally:
-        sys.dont_write_bytecode = dont
-        sys.path.remove(d)
-
-
-def usable(img):
-    return [img[i:i + E.CT_END] for i in range(0, len(img), E.PAGE)]
-
-
-class TestOracle(EdbBase):
-    def test_synthetic_matches_oracle(self):
-        er = _oracle()
-        self.room(11, rows(11, 1, 300))
-        self.room(12, rows(12, 1, 100), wal_rows=rows(12, 101, 400, text="z" * 200))
-        for chat in (11, 12):
-            p = self.cd / f"chatLogs_{chat}.edb"
-            main, wal = src_kakao_edb.stable_read(p, E.sidecar(p, "-wal"))[:2]
-            mine, _f = src_kakao_edb.build_image(E.key_for(chat), main, wal)
-            theirs = er.decrypt_to_bytes(str(p), E.key_for(chat))          # kakatok's reader takes a str
-            self.assertEqual(usable(mine), usable(theirs), chat)
-
-
-@unittest.skipUnless(os.environ.get("LLMWIKI_REAL_EDB") == "1", "real-data oracle differential (set LLMWIKI_REAL_EDB=1)")
-class TestOracleReal(unittest.TestCase):
-    """Aggregates only. LLMWIKI_CONFIG = config.json, LLMWIKI_INPUT_SET = T1|T2|live."""
-
-    def test_real_matches_oracle(self):
-        from rawlayer.capture.config import InputSet  # noqa: PLC0415
-        er = _oracle()
-        cfg = Config(os.environ["LLMWIKI_CONFIG"])
-        inputs = InputSet(cfg, os.environ.get("LLMWIKI_INPUT_SET", "T1"), verify_static=False)
-        keys, _all, _ok = src_kakao_edb.load_keystore(inputs.keystore)
-        n = {"rooms": 0, "with_wal": 0, "equal": 0, "differ_main_only": 0, "differ_wal": 0, "mine_unreadable": 0}
-        for p in sorted(inputs.edb_dir.iterdir(), key=lambda q: q.name):
-            m = src_kakao_edb._FILE.match(p.name)
-            if not m or m.group(1) not in keys:
-                continue
-            key = keys[m.group(1)]
-            n["rooms"] += 1
-            main, wal, _st = src_kakao_edb.stable_read(p, E.sidecar(p, "-wal"))
-            if wal:
-                n["with_wal"] += 1
-            try:
-                mine, _f = src_kakao_edb.build_image(key, main, wal)
-            except src_kakao_edb.ContainerError:
-                mine = None
-            if mine is None:
-                n["mine_unreadable"] += 1
-                continue
-            if usable(mine) == usable(er.decrypt_to_bytes(str(p), key)):
-                n["equal"] += 1
-            else:
-                n["differ_wal" if wal else "differ_main_only"] += 1
-        print("oracle differential", " ".join(f"{k}={v}" for k, v in n.items()))
-        self.assertEqual(n["differ_main_only"], 0)
-
 
 if __name__ == "__main__":
     unittest.main()

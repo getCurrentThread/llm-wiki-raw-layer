@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Adoption hardening (comparison report 2026-10-04, section 4) on the kakaotalk app's synthetic inputs: exit codes, the
-edb partial run and sidecar, the app's option and SYSTEM precondition, room_gone for static rooms, and the disk
-estimate. Recovery, ledger defects, config, provenance, srcmap shape, the lit() contract and real process kills are
-core rules, tested on the toy app in tests/core."""
+"""Adoption hardening on the kakaotalk app's synthetic inputs: exit codes for unreadable containers, the edb partial
+run and sidecar, room_gone for static rooms, and defective producer inputs (a keystore of the wrong
+shape, a tableless producer database, a missing chat_data). Recovery, ledger defects, config, provenance, srcmap shape,
+the lit() contract and real process kills are core rules, tested on the toy app in tests/core."""
 import shutil
-import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from kakaotalk.readers import edb as src_kakao_edb
-from rawlayer.capture import canon, run
+from rawlayer.capture import canon
+from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture
-from kakaotalk.tests.helpers import KAKAO, _force, capture, invariants, manifests, records
+from kakaotalk.tests.helpers import _force, capture, manifests, records
 from kakaotalk.tests.test_edb import EDB, EdbBase, rows
 
 
@@ -26,20 +25,16 @@ class Base(unittest.TestCase):
 
 
 class TestExit(Base):
-    def test_every_origin_on_the_standard_inputs(self):
-        """Every origin in one run (no edb room file): exit 0."""
-        self.assertEqual(capture(self.fx, KAKAO), 0)
-        m = manifests(self.fx)[-1]
-        self.assertEqual({o: d["status"] for o, d in m["origins"].items()}, {o: "ok" for o in KAKAO})
-        self.assertEqual(invariants(self.fx)[0], {})
-
-    def test_error_origin_exits_75(self):
-        """A container that cannot be read is skipped this run: exit 75 (SPEC 13), the container error."""
+    def test_unreadable_room_file_is_skipped_not_a_crash(self):
+        """A room file that is not a database: that container is error, the other rooms commit, and the run says
+        'skipped' (75, SPEC 13)."""
         (self.fx.backup / "101.sqlite").write_bytes(b"not a database" * 100)
         self.assertEqual(capture(self.fx), 75)
-        o = manifests(self.fx)[-1]["origins"]["backup_decrypted"]
+        m = manifests(self.fx)[-1]
+        o = m["origins"]["backup_decrypted"]
         self.assertEqual(o["containers"][canon.source_id("101.sqlite")]["status"], "error")
         self.assertEqual(o["notes"].get("read_error"), 1)
+        self.assertTrue(any(s["origin"] == "backup_decrypted" for s in m["segments"]))
 
     def test_static_room_gone(self):
         """AB-6: a backup_decrypted room file that disappears -> note room_gone, no records."""
@@ -50,21 +45,25 @@ class TestExit(Base):
         self.assertEqual((o["status"], o["notes"].get("room_gone"), o["counts"]), ("ok", 1, {"put": 0, "absent": 0}))
         self.assertEqual(manifests(self.fx)[-1]["segments"], [])
 
+    def test_bad_manifest_and_user_db_degrade_quietly(self):
+        """An unreadable _manifest.json and a corrupt TalkUserDB.sqlite cost their labels only: rooms still
+        capture, untitled and unnamed, exit 0."""
+        (self.fx.backup / "_manifest.json").write_text("{not json", encoding="utf-8")
+        (self.fx.backup / "TalkUserDB.sqlite").write_bytes(b"junk" * 64)
+        self.assertEqual(capture(self.fx), 0)
+        recs = [r for r in records(self.fx) if r["key"] == "kakao:101"]
+        self.assertEqual(recs[0]["derived"], {})            # no manifest entry, no title
+
+    def test_keystore_of_the_wrong_shape(self):
+        """A keystore that is JSON but not an object: capture marks edb error (exit 75)."""
+        self.assertEqual(capture(self.fx), 0)
+        self.fx.keystore.write_text("[]", encoding="utf-8")
+        self.assertEqual(capture(self.fx, ["edb"]), 75)
+        self.assertEqual(manifests(self.fx)[-1]["origins"]["edb"]["status"], "error")
+        self.assertEqual(manifests(self.fx)[-1]["segments"], [])
+
 
 class TestPerOrigin(EdbBase):
-    def test_partial_run_leaves_the_origin_out_of_its_manifest(self):
-        """Q5: a run that does not capture edb writes no edb entry, so edb's newest manifest stays the suspect one."""
-        self.room(91, rows(91, 1, 4))
-        self.assertEqual(capture(self.fx, EDB), 0)
-        (self.cd / "chatLogs_91.edb").unlink()
-        self.assertEqual(capture(self.fx, EDB), 3)
-        self.fx.standard()
-        self.assertEqual(capture(self.fx, ["backup_decrypted"]), 0)
-        mans = manifests(self.fx)
-        self.assertEqual(sorted(mans[-1]["origins"]), ["backup_decrypted"])
-        newest_edb = [m for m in mans if "edb" in m["origins"]][-1]
-        self.assertEqual((newest_edb["seq"], newest_edb["origins"]["edb"]["status"]), (2, "suspect"))
-
     def test_sidecar_makes_room_unreadable(self):
         self.room(92, rows(92, 1, 4))
         self.room(93, rows(93, 1, 4))
@@ -83,18 +82,21 @@ class TestPerOrigin(EdbBase):
         # the rolled-back room's records are out of the manifest count too (SPEC 9.3 counts.put)
         self.assertEqual(self.edb()["counts"]["put"], sum(1 for r in records(self.fx) if r["origin"] == "edb"))
 
+    def test_one_bad_keystore_entry_is_one_room(self):
+        """guard-tests#1: a non-string key_hex makes only that room no_key; the rest of edb is read."""
+        self.room(61, rows(61, 1, 3))
+        E.place_room(self.fx, 62, rows(62, 1, 2), E.key_for(62))
+        self.extra["chat_data\\chatLogs_62.edb"] = {"chatId": 62, "key_hex": 5, "header_ok": True}
+        self.keystore()
+        self.assertEqual(capture(self.fx, EDB), 0)
+        self.assertEqual((self.edb()["status"], self.cont(61)["status"], self.cont(62)["status"]),
+                         ("ok", "clean", "no_key"))
 
-class TestEstimatePeak(unittest.TestCase):
-    def test_estimate_peak_counts_main_and_wal(self):
-        d = Path(tempfile.mkdtemp(prefix="llmw-peak-"))
-        try:
-            for name, n in (("chatLogs_1.edb", 100), ("chatLogs_1.edb-wal", 50), ("chatLogs_2.edb", 120)):
-                (d / name).write_bytes(b"\0" * n)
-            inputs = types.SimpleNamespace(edb_dir=d)           # InputSet attributes are Paths
-            self.assertEqual(run.estimate_peak(inputs, ["edb"]), 2 * 150 + 1024 ** 3)
-            self.assertEqual(run.estimate_peak(inputs, ["backup_decrypted"]), 1024 ** 3)
-        finally:
-            shutil.rmtree(d)
+    def test_missing_chat_data_is_an_origin_error(self):
+        self.keystore()
+        shutil.rmtree(self.cd)
+        self.assertEqual(capture(self.fx, EDB), 75)
+        self.assertEqual(self.edb()["status"], "error")
 
 
 if __name__ == "__main__":

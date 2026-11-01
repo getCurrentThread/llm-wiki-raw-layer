@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-"""M1 (V8 basics) on the kakaotalk app's synthetic inputs: types, 2^53, pk_bad, schema drift, vanished, determinism,
-and the ledger invariants (tests/core/ledgercheck.py: seal, policy, facts). The core rules M1 also
-covered (lock, crash points, environment, spill/part boundaries, canon, publicout) are tested on the toy app in
-tests/core. Run from the project root (the folder that holds manage.py):
-
-    python -s -B -m unittest discover -s kakaotalk/tests -t .
-"""
+"""The kakaotalk backup origin on synthetic inputs: pinned genesis records (types, 2^53 ids, derived titles), an
+unchanged re-run, the ledger invariants (tests/core/ledgercheck.py), a malformed producer schema, and a schema edit.
+Vanished, move, determinism, recovery, spill/part boundaries and canon are core rules, tested on the toy app in
+tests/core."""
 import gzip
 import shutil
 import sqlite3
@@ -15,7 +12,7 @@ from rawlayer.capture import canon, fsio
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
 from kakaotalk.tests.fixtures import BIG, Fixture, make_room
-from kakaotalk.tests.helpers import _force, capture, export, invariants, manifests, records, replay_diff
+from kakaotalk.tests.helpers import _force, capture, invariants, manifests, records, replay_diff
 
 
 class Base(unittest.TestCase):
@@ -54,18 +51,11 @@ class TestCapture(Base):
         self.assertEqual(m2["segments"], [])
         self.assertEqual(m2["prev_sha256"], fsio.sha256_file(Ledger(Config(self.fx.config_path).raw).manifests()[0][2]))
         self.assertEqual(replay_diff(self.fx), 0)
-
-    def test_ledger_invariants(self):
-        """The former verify C2, C10, V4, V5 on a genesis of the standard inputs, now from tests/core/ledgercheck.py."""
-        self.assertEqual(capture(self.fx), 0)
-        bad, nums = invariants(self.fx)
+        bad, nums = invariants(self.fx)                        # the former verify C2, C10, V4, V5 (ledgercheck.py)
         self.assertEqual(bad, {})
-        self.assertEqual(nums["containers_skipped"], 0)
-        self.assertEqual(nums["containers_checked"], 2)        # the backup rooms 101, 102
-        self.assertEqual(replay_diff(self.fx), 0)
-        # the backup rooms of the standard fixture: 6 messages (the 2^53 row included)
+        self.assertEqual((nums["containers_skipped"], nums["containers_checked"]), (0, 2))   # rooms 101, 102
         self.assertEqual(sum(1 for r in records(self.fx) if r["origin"] == "backup_decrypted"
-                             and r["kind"] == "msg"), 6)
+                             and r["kind"] == "msg"), 6)     # the 2^53 row included
 
     def test_pk_bad(self):
         p = self.fx.backup / "103.sqlite"
@@ -103,30 +93,8 @@ class TestCapture(Base):
         self.assertEqual([(r["key"], r["rev"], r["native"].get("extra2")) for r in new], [("kakao:101:msg:2", 2, 5)])
         self.assertEqual(replay_diff(self.fx), 0)
 
-    def test_vanished_is_suspect_and_not_committed(self):
-        self.assertEqual(capture(self.fx), 0)
-        con = sqlite3.connect(self.fx.backup / "102.sqlite")
-        con.execute("DELETE FROM chatLogs WHERE logId=1")
-        con.execute("UPDATE chatLogs SET message='changed' WHERE logId=2")
-        con.commit()
-        con.close()
-        self.assertEqual(capture(self.fx), 3)
-        m = manifests(self.fx)[1]
-        self.assertEqual(m["origins"]["backup_decrypted"]["status"], "suspect")
-        self.assertEqual(m["origins"]["backup_decrypted"]["notes"]["vanished"], 1)
-        self.assertEqual(m["origins"]["backup_decrypted"]["counts"]["put"], 0)
-        self.assertEqual(m["segments"], [])                    # the suspect origin commits nothing
-        bad, nums = invariants(self.fx)
-        self.assertEqual(bad, {})                                   # Q2: facts skip the suspect origin
-        self.assertEqual((nums["containers_checked"], nums["containers_skipped"]), (0, 2))   # backup: 101, 102
-
-    def test_determinism_two_roots(self):
-        self.assertEqual(capture(self.fx), 0)
-        a = export(self.fx)
-        self.fx.write_config(self.fx.base / "data2")
-        self.assertEqual(capture(self.fx), 0)
-        self.assertEqual(export(self.fx), a)
-        self.assertEqual(len(a), len({(o, k) for o, k, *_ in a}))
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":

@@ -132,11 +132,6 @@ class PlainRoom:
             self.con.executemany("INSERT INTO chatLogHistory VALUES (?,?,?)", hist)
         self.con.execute("COMMIT")
 
-    def sql(self, q, args=()):
-        self.con.execute("BEGIN")
-        self.con.execute(q, args)
-        self.con.execute("COMMIT")
-
     def checkpoint(self):
         self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 

@@ -3,8 +3,6 @@
 _attach, _collect and the state writes are mocked). A failure before the injected script's [CALLED] marker
 is a refusal (exit 2); one after it may follow a write (failed_after_write, exit 1); --dry-run never
 advances the counter; the room refusals happen before anything is attached.
-
-    python -s -B -m unittest discover -s kakaotalk/tests -t .
 """
 import os
 import unittest
@@ -55,13 +53,14 @@ class TestSend(unittest.TestCase):
         self.assertEqual((body["status"], code), ("refused", 2))
         self.assertEqual(self.writes, [{"msg_id_next": 0x1201}])      # at-most-once: persisted before the call
 
-    def test_fail_after_the_marker_is_failed_after_write(self):
-        body, code = self.run_send(["[READY]", "[CALLED]", "[FAIL] builder ret=0"])
-        self.assertEqual((body["status"], code), ("failed_after_write", 1))
-
-    def test_timeout_after_the_marker_is_failed_after_write(self):
-        body, code = self.run_send(["[READY]", "[CALLED]"])
-        self.assertEqual((body["status"], code), ("failed_after_write", 1))
+    def test_outcome_after_the_marker(self):
+        for lines, status, code in (
+                (["[READY]", "[CALLED]", "[FAIL] builder ret=0"], "failed_after_write", 1),
+                (["[READY]", "[CALLED]"], "failed_after_write", 1),                    # a timeout
+                (["[READY]", "[CALLED]", "[OK]", '[WINDOW-END] {"err": 0, "msg": ""}'], "sent", 0)):
+            with self.subTest(lines=lines):
+                body, code_got = self.run_send(lines)
+                self.assertEqual((body["status"], code_got), (status, code))
 
     def test_an_attach_or_load_error_may_follow_a_write(self):
         """script.load() runs the script up to the client's send call: a frida error there is not a refusal."""
@@ -71,10 +70,6 @@ class TestSend(unittest.TestCase):
             self.run_send([], attach_error=FetchError("frida_missing"))
         with self.assertRaises(RuntimeError):
             self.run_send([], attach_error=RuntimeError("x"), dry_run=True)
-
-    def test_ok_is_sent(self):
-        body, code = self.run_send(["[READY]", "[CALLED]", "[OK]", '[WINDOW-END] {"err": 0, "msg": ""}'])
-        self.assertEqual((body["status"], code), ("sent", 0))
 
     def test_dry_run_does_not_persist_the_counter(self):
         body, code = self.run_send(["[READY]", "[DRY] no builder call"], dry_run=True)

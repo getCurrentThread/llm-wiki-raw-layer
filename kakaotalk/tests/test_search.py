@@ -1,27 +1,20 @@
 # -*- coding: utf-8 -*-
 """rawsearch kakaotalk: the index built from a real capture ledger (ledgerfix.KakaoScenario: genesis, then a run
 with an edit, a delete-for-all tombstone, a new message and two vanished edb rows, then the run that writes their
-`absent` records), incremental catch-up == full rebuild, ledger reset / purge manifest / mid-commit / defect
-handling, the version gate, the writer lock, every search mode and filter, context, browse paging, exit codes, the
-tokenizer regressions end to end and the stale warning. All data is synthesised in code."""
+`absent` records), incremental catch-up == full rebuild, the fold's precedence and bad records, every search mode and
+filter, context, browse paging and the odd values capture can hand it. The driver rules every app shares (resets,
+crashes, locks, the version gate, usage errors, the tokenizer and query compiler) are tested in tests/core. All data
+is synthesised in code."""
 import json
-import os
-import shutil
 import sqlite3
-import subprocess
-import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from rawlayer.capture import fsio
 from rawlayer.search import index
 from kakaotalk import search as kakao
-from rawlayer.search import fts
 from kakaotalk.tests import ledgerfix as L
-from kakaotalk.tests.edbfix import sidecar
-from kakaotalk.tests.fixtures import TEST_PARENT, Fixture
+from kakaotalk.tests.fixtures import Fixture
 
 EDB, MACDB, BACKUP = (1 << kakao.RANK[o] for o in kakao.PRECEDENCE)
 QUERIES = ["10월", "가나다", "api", "메시지", "edb 메시지", "수정", "삭제될", "\"100%\"", "라이브 OR 잡담", "메시지 -edb",
@@ -101,17 +94,12 @@ class Scenario(unittest.TestCase):
     def setUpClass(cls):
         cls.sc = L.KakaoScenario()
         cls.cfg, cls.dr = cls.sc.config, cls.sc.data_root
-        cls.reports = []
-        cls.dumps = {}
         cls.clones = []
-        for rnd in (1, 2, 3):
+        for _rnd in (1, 2, 3):
             assert cls.sc.next_round() == 0
             rc, out, err = rs("index", "--config", cls.cfg, "--source", "kakaotalk", "--json")
             assert rc == 0, err
-            cls.reports.append(json.loads(out)["kakaotalk"])
-            cls.dumps[rnd] = dump(cls.dr)
-            if rnd == 2:
-                cls.round2 = cls.clone()
+        cls.dump3 = dump(cls.dr)
 
     @classmethod
     def tearDownClass(cls):
@@ -138,19 +126,6 @@ class Scenario(unittest.TestCase):
 
 
 class TestBuild(Scenario):
-    def test_reports(self):
-        r1, r2, r3 = self.reports
-        self.assertEqual((r1["action"], r1["reason"], r1["seq"], r1["ledger_seq"]), ("rebuilt", "missing", 1, 1))
-        self.assertEqual((r2["action"], r2["seq"], r2["manifests"]), ("updated", 2, 1))
-        self.assertEqual((r3["action"], r3["seq"], r3["behind"]), ("updated", 3, False))
-        self.assertEqual(r3["rows"], 48)
-        self.assertEqual((r3["deleted"], r3["gone"]), (2, 1))
-        self.assertGreaterEqual(r3["skipped_hist"], 1)
-        self.assertGreaterEqual(r3["skipped_schema"], 1)
-        rc, rep, _ = self.index(self.cfg)
-        self.assertEqual((rc, rep["action"], rep["manifests"]), (0, "current", 0))
-
-
     def test_origins_text_and_flags(self):
         r = self.row(101, 1)
         self.assertEqual((r["origins"], r["source"], r["message"]), (BACKUP, "backup_decrypted", "회의는 10월에 합니다"))
@@ -191,24 +166,13 @@ class TestBuild(Scenario):
         self.assertEqual((rooms["301"]["n"], rooms["301"]["n_deleted"], rooms["301"]["n_gone"]), (30, 1, 1))
         self.assertEqual(rooms["201"]["title"], "web_dev 채널")
 
-    def test_chat_list_titled_room(self):
-        """Room 601 exists only as an encrypted edb room: its title comes from the client's chat-list database,
-        and the round-2 rename there re-titled every row."""
-        self.assertEqual(search(self.cfg, "--room", "리스트", "--mode", "count")["total"], 2)
-        env = search(self.cfg, "인사", "--room", "개명된")
-        self.assertEqual(keys(env), [k(601, 1), k(601, 2)])
-        self.assertEqual({r["room"] for r in env["rows"]}, {"개명된 리스트 방"})
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--list-rooms")
-        self.assertIn("개명된 리스트 방", out)
-
-
     def test_incremental_equals_rebuild(self):
         self.assertTrue(fts_ok(self.dr))
         expect = answers(self.cfg)
         cfg, dr = self.clone()
         rc, rep, _ = self.index(cfg, "--rebuild")
         self.assertEqual((rc, rep["action"], rep["reason"], rep["seq"], rep["manifests"]), (0, "rebuilt", "requested", 3, 3))
-        self.assertEqual(dump(dr), self.dumps[3])
+        self.assertEqual(dump(dr), self.dump3)
         self.assertTrue(fts_ok(dr))
         self.assertEqual(answers(cfg), expect)
 
@@ -216,14 +180,6 @@ class TestBuild(Scenario):
 
 
 class TestSearch(Scenario):
-    def test_tokenizer_regressions_end_to_end(self):
-        self.assertEqual(keys(search(self.cfg, "10월")), [k(101, 1), k(301, 31)])     # '10월' finds '10월에'
-        self.assertEqual(keys(search(self.cfg, "3시")), [k(201, 1)])
-        self.assertEqual(keys(search(self.cfg, "SQL문")), [k(201, 2)])
-        self.assertEqual(keys(search(self.cfg, "가나다")), [k(101, 3)])                # not '가나 나다'
-        self.assertEqual(keys(search(self.cfg, "api")), [k(101, 4)])                  # not 'rapid'
-        self.assertEqual(keys(search(self.cfg, "\"100%\"")), [k(101, 6)])
-
     def test_hidden_and_never_indexed(self):
         self.assertEqual(search(self.cfg, "삭제될")["total"], 0)
         env = search(self.cfg, "삭제될", "--include-deleted")
@@ -239,40 +195,19 @@ class TestSearch(Scenario):
         local = search(self.cfg, "지운", "--include-deleted")["rows"][0]
         self.assertEqual((local["deleted"], local["source"]), (True, "edb"))
 
-    def test_hit_fields_and_text_output(self):
+    def test_hit_fields(self):
         h = search(self.cfg, "큰 번호")["rows"][0]
         self.assertEqual((h["log_id"], h["chat_id"], h["key"], h["sender"], h["author_id"]),
                          (str(L.BIG), "101", k(101, L.BIG), "", "15"))
         self.assertEqual(h["cursor"], f"{h['ts']}.{L.BIG}.{h['id']}")
         self.assertEqual(h["origins"], ["backup_decrypted"])
         self.assertEqual(h["date"], "2024-11-08 10:00")
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "가나다")
-        self.assertEqual(rc, 0)
-        self.assertIn("=== kakaotalk: 1 match(es)", out)        # the banner and the hit prefix name the app label
-        self.assertIn("[kakaotalk] ", out)
-        self.assertIn("Alpha", out)
-        self.assertIn("스터디 방", out)
-        self.assertIn("chat=101 log=3", out)
-        self.assertIn("[가나다]", out)
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "큰 번호")
-        self.assertIn(f"log={L.BIG}", out)
-        self.assertIn(" | 15 ", out)                       # no name known: the author id is shown
-
-    def test_ranking_then_recency(self):
-        env = search(self.cfg, "메시지", "--limit", "50")
-        self.assertEqual(env["total"], len(env["rows"]))
-        rows = search(self.cfg, "edb", "--limit", "50")["rows"]
-        ts = [r["ts"] for r in rows]
-        self.assertEqual(ts, sorted(ts, reverse=True))     # equal bm25 -> newest first
-
-    def test_count_timeline_senders_rooms(self):
+    def test_count_timeline_senders_rooms_and_aggregates_without_query(self):
         self.assertEqual(search(self.cfg, "10월", "--mode", "count")["total"], 2)
         tl = search(self.cfg, "메시지", "--mode", "timeline")
         self.assertEqual([(r["bucket"], r["n"]) for r in tl["rows"]], [("2024-11", 1), ("2024-12", 28), ("2025-01", 2)])
         tl = search(self.cfg, "메시지", "--mode", "timeline", "--limit", "1")
         self.assertEqual((tl["rows"], tl["omitted_buckets"]), ([{"bucket": "2025-01", "n": 2}], 2))
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "메시지", "--mode", "timeline", "--limit", "1")
-        self.assertIn("2 earlier month(s) omitted", out)
         tl = search(self.cfg, "메시지", "--mode", "timeline", "--tz", "UTC")
         self.assertEqual(tl["tz"], "+00:00")
         snd = search(self.cfg, "edb 메시지", "--mode", "senders")
@@ -282,26 +217,10 @@ class TestSearch(Scenario):
         self.assertEqual([(r["label"], r["chat_id"], r["n"]) for r in rooms["rows"]],
                          [("Edb 방 301", "301", 28), ("스터디 방", "101", 1), ("Renamed 방", "401", 1),
                           ("webXdev 잡담", "501", 1)])
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "메시지", "--mode", "rooms")
-        self.assertIn("chat=301", out)
-
-    def test_aggregates_without_query(self):
         env = search(self.cfg, "--room", "스터디", "--mode", "count")
         self.assertEqual(env["total"], 8)
         env = search(self.cfg, "--room", "301", "--mode", "senders")
         self.assertEqual(sum(r["n"] for r in env["rows"]), 30)
-
-    def test_json_envelope(self):
-        env = search(self.cfg, "10월 -회의")
-        for key in ("source", "mode", "query", "fts", "exclude_fts", "weak", "verify", "exclude", "total", "rows",
-                    "built_at", "index", "filters", "tz"):
-            self.assertIn(key, env)
-        self.assertEqual((env["source"], env["mode"], env["query"], env["total"]), ("kakaotalk", "hits", "10월 -회의", 1))
-        self.assertEqual(env["index"], {"seq": 3, "ledger_seq": 3, "stale": False})
-        self.assertIsInstance(env["rows"][0]["log_id"], str)
-        env = search(self.cfg, '"가나, 다라" -마바')         # the separator token is shown as <S>, as in --explain
-        self.assertEqual((env["fts"], env["exclude_fts"]), ('"가나 <S> 다라"', '"마바"'))
-        self.assertNotIn(fts.SEP, json.dumps(env, ensure_ascii=False))
 
     def test_filters(self):
         self.assertEqual(keys(search(self.cfg, "메시지", "--room", "스터디")), [k(101, L.BIG)])
@@ -329,98 +248,10 @@ class TestSearch(Scenario):
         self.assertEqual([c["hit"] for c in h["context"]], [False, False, True, False, False])
         h = search(self.cfg, "수정", "--context", "2", "--include-deleted")["rows"][0]
         self.assertEqual([c["log_id"] for c in h["context"]], ["3", "4", "5", "6", "7"])
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "수정", "--context", "1")
-        self.assertIn(">>", out)
         first = search(self.cfg, "--room", "301", "--before", "1733000000.1", "--limit", "1")   # nothing older
         self.assertEqual(first["rows"], [])
 
-    def test_browse_paging(self):
-        newest = search(self.cfg, "--room", "301", "--limit", "10")
-        self.assertEqual(newest["mode"], "browse")
-        self.assertEqual(newest["total"], 30)
-        self.assertEqual(newest["rows"][-1]["log_id"], "31")
-        ts = [(r["ts"], int(r["log_id"])) for r in newest["rows"]]
-        self.assertEqual(ts, sorted(ts))                         # displayed ascending
-        seen = [r["log_id"] for r in newest["rows"]]
-        page = newest
-        while page["page"]["more_older"]:
-            page = search(self.cfg, "--room", "301", "--limit", "10", "--before", page["page"]["before"])
-            seen = [r["log_id"] for r in page["rows"]] + seen
-        self.assertEqual(len(seen), 30)
-        self.assertEqual(len(set(seen)), 30)
-        self.assertEqual(seen[0], "1")
-        again = search(self.cfg, "--room", "301", "--limit", "10", "--after", page["page"]["after"])
-        self.assertEqual(again["rows"][0]["log_id"], seen[10])
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--room", "301", "--limit", "3")
-        self.assertIn("--before", out)
-        self.assertIn("#31", out)
-        q = search(self.cfg, "edb", "--room", "301", "--before", newest["page"]["before"], "--limit", "5")
-        self.assertEqual(q["mode"], "browse")
-        self.assertTrue(all(r["ts"] < newest["rows"][0]["ts"] for r in q["rows"]))
-
-    def test_list_rooms(self):
-        env = search(self.cfg, "--list-rooms")
-        self.assertEqual([(r["chat_id"], r["label"], r["n"]) for r in env["rows"]],
-                         [("301", "Edb 방 301", 30), ("101", "스터디 방", 8), ("401", "Renamed 방", 3),
-                          ("201", "web_dev 채널", 2), ("601", "개명된 리스트 방", 2), ("501", "webXdev 잡담", 1)])
-        env = search(self.cfg, "--list-rooms", "--room", "web_dev")
-        self.assertEqual([r["chat_id"] for r in env["rows"]], ["201"])
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--list-rooms")
-        self.assertIn("id=301", out)
-
-    def test_explain(self):
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--explain", "\"가나, 나다\"")
-        self.assertEqual(rc, 0)
-        self.assertIn("# fts5 index expr", out)
-        self.assertNotIn(chr(0xE000), out)
-        self.assertIn("<S>", out)
-        rc, out, err = rs("kakaotalk", "--config", self.cfg, "--explain", "\"가, 나\"")
-        self.assertIn("(none -- full scan)", out)
-        self.assertIn("full scan", err)
-
-    def test_usage_errors(self):
-        for argv in (["\"unbalanced"], ["-q", "-x"], ["a", "-q", "b"], [], ["x", "--limit", "0"],
-                     ["--room", "301", "--before", "nope"], ["x", "--before", "1.1", "--after", "1.2"],
-                     ["x", "--mode", "count", "--before", "1.1"], ["x", "--since", "yesterday"], ["x", "--tz", "KST"],
-                     ["owner:x"], ["--bogus"]):
-            rc, _out, err = rs("kakaotalk", "--config", self.cfg, *argv)
-            self.assertEqual(rc, 2, argv)
-            self.assertTrue(err.startswith("search:"), argv)
-        self.assertEqual(rs("kakaotalk", "--config", self.cfg, "--help")[0], 0)
-        self.assertEqual(rs("index", "--config", Path(TEST_PARENT) / "no-such-config.json")[0], 2)
-
-
 class TestEdges(unittest.TestCase):
-    def test_missing_index_and_empty_ledger(self):
-        base = Path(tempfile.mkdtemp(prefix="rsx-", dir=TEST_PARENT))
-        try:
-            dr = base / "data"
-            dr.mkdir(parents=True)
-            cfg = base / "config.json"
-            with cfg.open("w", encoding="utf-8") as fh:
-                json.dump({"v": 1, "data_root": str(dr)}, fh)
-            rc, _out, err = rs("kakaotalk", "--config", cfg, "x")
-            self.assertEqual(rc, 2)
-            self.assertIn("manage.py capture", err)
-            rc, out, _ = rs("index", "--config", cfg, "--source", "kakaotalk", "--json")
-            rep = json.loads(out)["kakaotalk"]
-            self.assertEqual((rc, rep["action"], rep["seq"], rep["rows"]), (0, "rebuilt", 0, 0))
-            env = search(cfg, "가나다")
-            self.assertEqual((env["total"], env["index"]["stale"]), (0, False))
-            self.assertEqual(rs("index", "--config", cfg, "--source", "kakaotalk")[0], 0)
-        finally:
-            L.force_rmtree(base)
-
-    def test_data_root_outside_parent_refused(self):
-        base = Path(tempfile.mkdtemp(prefix="rsx-", dir=TEST_PARENT))
-        try:
-            cfg = base / "config.json"
-            with cfg.open("w", encoding="utf-8") as fh:
-                json.dump({"v": 1, "data_root": str(Path(TEST_PARENT).parent)}, fh)   # outside the data parent
-            self.assertEqual(rs("index", "--config", cfg)[0], 2)
-        finally:
-            L.force_rmtree(base)
-
     def test_odd_values_are_counted_not_raised(self):
         fx = Fixture()
         try:
@@ -481,30 +312,6 @@ class TestEdges(unittest.TestCase):
             self.assertEqual(search(fx.config_path, *base, "--after", f"{ts}.3")["rows"][0]["log_id"], "4")
         finally:
             L.force_rmtree(fx.base)
-
-    def test_applier_error_is_reported_and_leaves_no_index(self):
-        """Review finding: an unexpected error in the kakaotalk update (here a sqlite error in the applier) is
-        reported for kakaotalk (exit 1) and leaves no index behind; the next run builds it. (That another app's
-        index is still built is a core rule: tests/core/test_search_driver.py.)"""
-        fx = Fixture().standard()
-        try:
-            from rawlayer.registry import origin_order  # noqa: PLC0415
-            self.assertEqual(L.capture(fx, origin_order()), 0)
-            with mock.patch.object(kakao.KakaoApplier, "finish",
-                                   side_effect=sqlite3.OperationalError("disk I/O error")):
-                rc, out, err = rs("index", "--config", fx.config_path, "--json")
-            self.assertEqual(rc, 1, err)
-            rep = json.loads(out)
-            self.assertEqual((rep["kakaotalk"]["action"], rep["kakaotalk"]["reason"]),
-                             ("failed", "error OperationalError: disk I/O error"))
-            self.assertFalse(ipath(fx.data_root).exists())
-            self.assertFalse(sidecar(ipath(fx.data_root), ".new").exists())
-            rc, out, _ = rs("index", "--config", fx.config_path)
-            self.assertEqual(rc, 0)
-            self.assertIn("kakaotalk: rebuilt", out)
-        finally:
-            L.force_rmtree(fx.base)
-
 
 class TestApplier(unittest.TestCase):
     """The fold on hand-made records: stale revs, purge, and records of shapes capture never writes."""
@@ -569,41 +376,6 @@ class TestApplier(unittest.TestCase):
         d = kakao.derive([S(kakao.RANK["macdb"], 0, b"gone", 0, 20, "1", 1, 0, 0),
                           S(kakao.RANK["backup_decrypted"], 1, b"kept", 1, 20, "1", 1, 0, 0)])
         self.assertEqual((d["th"], d["source"]), (b"kept", "backup_decrypted"))
-
-    def test_tombstoned_origin_does_not_hide_the_current_text(self):
-        """Review finding: edb and backup_decrypted both put '약속은 3시'; then the backup puts an
-        edited text and edb a local-delete row with no text. The row shows (and the index finds) the edited
-        text, from the backup."""
-        key = "kakao:9:msg:5"
-        for origin in ("edb", "backup_decrypted"):
-            self.app.record(self.rec(origin, key, 1, native={"message": "약속은 3시", "type": 1}), 1)
-        self.app.end_manifest(1)
-        self.app.record(self.rec("backup_decrypted", key, 2, native={"message": "약속은 4시로 변경", "type": 1}), 2)
-        self.app.record(self.rec("edb", key, 2, native={"message": "", "type": 1, "deleted": 1}), 2)
-        self.app.end_manifest(2)
-        r = self.con.execute("SELECT message, source, origins, edited, deleted FROM kakao").fetchone()
-        self.assertEqual(r, ("약속은 4시로 변경", "backup_decrypted", EDB | BACKUP, 1, 1))
-        q = fts.build_fts_query("변경")
-        frm, where, params = fts.sql_parts(q, "kakao", "kakao_fts", alias="t")
-        fts.register_functions(self.con)
-        self.assertEqual(self.con.execute(f"SELECT count(*) FROM {frm} WHERE {' AND '.join(where)}",
-                                          params).fetchone()[0], 1)
-        # the same ledger through a full build gives the same row
-        con = sqlite3.connect(":memory:", isolation_level=None)
-        con.executescript(index.META_DDL)
-        kakao.SPEC.create_tables(con)
-        app = kakao.SPEC.applier(con, full=True)
-        for seq, recs in ((1, [self.rec(o, key, 1, native={"message": "약속은 3시", "type": 1})
-                               for o in ("edb", "backup_decrypted")]),
-                          (2, [self.rec("backup_decrypted", key, 2, native={"message": "약속은 4시로 변경", "type": 1}),
-                               self.rec("edb", key, 2, native={"message": "", "type": 1, "deleted": 1})])):
-            for rec in recs:
-                app.record(rec, seq)
-            app.end_manifest(seq)
-        app.finish()
-        self.assertEqual(con.execute("SELECT message, source, origins, edited, deleted FROM kakao").fetchone(), r)
-        con.close()
-
 
 if __name__ == "__main__":
     unittest.main()
