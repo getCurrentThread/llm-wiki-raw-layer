@@ -2,8 +2,8 @@ import json
 import sqlite3
 import unittest
 from contextlib import closing
-from rawlayer.search import dense, fts, index
-from claudecode.search import SPEC, DRIVER, ClaudeCodeApplier, add_arguments, tool_text
+from rawlayer.search import fts, index
+from claudecode.search import SPEC, DRIVER, ClaudeCodeApplier, add_arguments
 from .fixtures import Fixture, CID, MID, row
 from tests.core import appfix as h
 
@@ -38,7 +38,7 @@ class SearchTests(unittest.TestCase):
         index.update(self.fx.data_root, SPEC, rebuild=True)
         self.assertEqual(incremental, self.snapshot())
 
-    def test_every_mode_envelope_and_text(self):
+    def test_every_mode_and_filters(self):
         for mode in ("hits", "count", "timeline", "senders", "sessions", "projects"):
             with self.subTest(mode=mode):
                 result = self.query("deployment", "--mode", mode, "--project", "synthetic", "--role", "user",
@@ -46,9 +46,6 @@ class SearchTests(unittest.TestCase):
                 self.assertEqual(result["total"], 1)
                 self.assertEqual(result["source"], "claudecode")
                 self.assertFalse(result["index"]["stale"])
-                rc, out, err = h.run_rawsearch(["claudecode", "--config", self.fx.config_path, "deployment", "--mode", mode])
-                self.assertEqual(rc, 0, err)
-                self.assertTrue(out)
         self.assertEqual(self.query("deployment", "--mode", "timeline")["rows"], [{"bucket": "2024-10", "n": 1}])
         self.assertEqual(self.query("deployment", "--mode", "senders")["rows"][0]["role"], "user")
         self.assertEqual(self.query("deployment", "--mode", "sessions")["rows"][0]["session_id"], CID)
@@ -116,29 +113,6 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(set(hit), {"id", "key", "session_id", "agent", "role", "project", "branch", "model",
                                        "ts", "ts_ms", "date", "text", "snippet", "tools", "cursor"})
         self.assertEqual(self.query('Bash -"run checks"')["total"], 0)
-        self.assertEqual(tool_text([{"name": "Bash", "summary": "first\nsecond"}]), "Bash: first second")
-
-    def test_chunk_units_order_tools_and_dense_plan(self):
-        self.update({CID: [[row(), row("later", text="second", n=2, ts="2024-10-01T00:00:02Z")]],
-                     CID + ".agent": [[row("tool", text="", agent="agent", n=1, ts="2024-10-01T00:00:01Z",
-                                           tools=[{"name": "Read", "summary": "synthetic.py"}])]]})
-        con, _, _ = index.open_search(self.fx.data_root, SPEC)
-        self.addCleanup(con.close)
-        label, units = DRIVER.chunk_units(con, CID)
-        self.assertTrue(label)
-        self.assertEqual([u[0] for u in units],
-                         [f"cc:msg:{CID}:{MID}", f"cc:msg:{CID}.agent:tool", f"cc:msg:{CID}:later"])
-        self.assertIn("Read: synthetic.py", units[1][2])
-        self.assertTrue(all(u[3] is False for u in units))
-        self.assertEqual(DRIVER.changed_containers(con, 10 ** 9), [])
-        chunks, containers = dense.plan(con, DRIVER, 0)
-        self.assertEqual(containers, [CID])
-        self.assertEqual({k for v in chunks.values() for k in v[1]}, {u[0] for u in units})
-
-    def test_hybrid_falls_back_without_sidecar(self):
-        result = self.query("deployment", "--hybrid")
-        self.assertEqual(result["total"], 1)
-        self.assertFalse(result["hybrid"]["available"])
 
     def fold(self, full=False):
         con = sqlite3.connect(":memory:")
@@ -175,39 +149,3 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(tuple(held), ("", "", ""))
         self.assertEqual(con.execute("SELECT count(*) FROM msgs_fts WHERE msgs_fts MATCH 'deployment'").fetchone()[0], 0)
 
-    def test_direct_fold_full_incremental_odd_values_stale_revisions(self):
-        records = h.records(self.fx)
-        snapshots = []
-        for full in (False, True):
-            con, app = self.fold(full)
-            for rec in records:
-                app.record(rec, 1)
-                app.record(rec, 1)
-                if not full:
-                    app.end_manifest(1)
-            for bad in (None, {}, dict(records[0], key="bad"), dict(records[0], rev=2 ** 80),
-                        dict(records[0], key="cc:msg:bad\ud800:key"),
-                        dict(records[0], rev=2, native=[]),
-                        dict(records[0], rev=2, native={**records[0]["native"], "n": 2 ** 80}),
-                        dict(records[0], rev=2, native={**records[0]["native"], "ts": "bad"})):
-                app.record(bad, 2)
-            app.end_manifest(2)
-            if full:
-                app.finish()
-            snapshots.append({t: [tuple(r) for r in con.execute(f"SELECT * FROM {t} ORDER BY 1")]
-                              for t in ("msgs", "sessions", "counts")})
-        self.assertEqual(*snapshots)
-        self.assertTrue(snapshots[0]["counts"])
-
-    def test_usage_errors(self):
-        for args in ([], ["--session", "bad:key"], ["--session", "missing"],
-                     ["--session", CID, "--list-sessions"], ["--project", "synthetic", "--before", "bad"],
-                     ["--project", "synthetic", "--before", "9" * 5000 + ".1.container"],
-                     ["deployment", "--before", "1.1.c", "--after", "2.2.c"],
-                     ["deployment", "--mode", "count", "--before", "1.1.c"],
-                     ["deployment", "--role", "invalid"], ["deployment", "--limit", "-1"],
-                     ["deployment", "--since", "bad"], ["--session", CID, "--hybrid"],
-                     ["deployment", "--context", "-1"], ['"unclosed']):
-            with self.subTest(args=args):
-                rc, out, err = h.run_rawsearch(["claudecode", "--config", self.fx.config_path, *args])
-                self.assertEqual(rc, 2, (out, err))

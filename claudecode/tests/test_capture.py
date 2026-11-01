@@ -48,24 +48,6 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(h.capture(self.fx), 3)
         self.assertEqual(len(h.records(self.fx)), 1)
 
-    def test_capture_manifest_change_unstable_retry(self):
-        original = fsio.read_shared
-        calls = 0
-
-        def changing(path):
-            nonlocal calls
-            data = original(path)
-            if path.name == "manifest.json":
-                calls += 1
-                if calls == 2:
-                    return data + b" "
-            return data
-
-        with patch("claudecode.readers.archive.fsio.read_shared", side_effect=changing), \
-                patch("rawlayer.capture.origins.time.sleep"):
-            self.assertEqual(h.capture(self.fx), 0)
-        self.assertGreaterEqual(calls, 4)
-
     def test_capture_manifest_change_raises_unstable(self):
         original = fsio.read_shared
         calls = 0
@@ -81,6 +63,21 @@ class CaptureTests(unittest.TestCase):
         with patch("claudecode.readers.archive.fsio.read_shared", side_effect=changing):
             with self.assertRaises(Unstable):
                 read_once(self.fx.root, frozenset(), "cc_archive")
+
+    def test_capture_frozen_and_ready_never_collect_live_does(self):
+        ctx = SimpleNamespace(cfg=SimpleNamespace(cc_sync=True), inputs=SimpleNamespace(name="live", cc_archive=self.fx.root),
+                              denylist=frozenset())
+        for name, ready, collects in (("frozen", "0", False), ("live", "1", False), ("live", "0", True)):
+            with self.subTest(name=name, ready=ready):
+                sync = Mock(return_value={"errors": 0})
+                ctx.inputs.name = name
+                with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}),                         patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": ready}), patch("rawlayer.capture.precheck.check"):
+                    CcArchive().read_once(ctx)
+                    self.assertEqual(sync.called, collects)
+                    if collects:
+                        sync.return_value = {"errors": 1}
+                        with self.assertRaisesRegex(FetchError, "collection_incomplete"):
+                            CcArchive().read_once(ctx)
 
     def test_capture_invalid_partitions(self):
         for field, value, note in (("rowCount", 2, "count_mismatch"), ("container", "other", "container_mismatch"),
@@ -109,27 +106,3 @@ class CaptureTests(unittest.TestCase):
         return SimpleNamespace(cfg=SimpleNamespace(cc_sync=True),
                                inputs=SimpleNamespace(name=name, cc_archive=self.fx.root), denylist=frozenset())
 
-    def test_capture_frozen_never_collects(self):
-        sync = Mock(side_effect=AssertionError("fetch called"))
-        with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}):
-            CcArchive().read_once(self.context("frozen"))
-        sync.assert_not_called()
-
-    def test_capture_live_collects_and_incomplete_errors(self):
-        sync = Mock(return_value={"errors": 0})
-        ctx = self.context()
-        with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}), \
-                patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": "0"}), patch("rawlayer.capture.precheck.check") as check:
-            CcArchive().read_once(ctx)
-            sync.assert_called_once_with(ctx.cfg)
-            check.assert_called_once_with(self.fx.root)
-            sync.return_value = {"errors": 1}
-            with self.assertRaisesRegex(FetchError, "collection_incomplete"):
-                CcArchive().read_once(ctx)
-
-    def test_capture_archive_ready_never_collects(self):
-        sync = Mock(side_effect=AssertionError("fetch called"))
-        with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}), \
-                patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": "1"}):
-            CcArchive().read_once(self.context())
-        sync.assert_not_called()

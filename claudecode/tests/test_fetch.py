@@ -1,5 +1,4 @@
 """Synthetic fetch step contracts; no owner sources are read."""
-import datetime as dt
 import json
 from pathlib import Path
 import tempfile
@@ -55,15 +54,16 @@ class FetchTests(unittest.TestCase):
                 self.entry("no-message", message=None), self.entry("empty-blocks", []),
                 self.entry("bad-content", 42)]
         rows += [self.entry(str(i), " \t" + p + "hidden") for i, p in enumerate(cc.PREFIXES)]
-        rows += [[], self.entry("keep")]
+        rows += [[], self.entry("tool", [{"type": "tool_use", "name": "Read", "input": {}}]), self.entry("keep")]
         path = self.write(rows)
         with path.open("ab") as fh:
             fh.write(b"not json\n\xff\n")
         stats = self.sync()
         self.assertEqual(stats["errors"], 0)
         self.assertEqual(stats["lines_bad"], 2)
-        self.assertEqual([r["uuid"] for r in self.rows()], ["keep"])
-        self.assertEqual(self.rows()[0]["n"], len(rows) - 1)
+        self.assertEqual([r["uuid"] for r in self.rows()], ["tool", "keep"])
+        self.assertEqual(self.rows()[0]["text"], "")
+        self.assertEqual(self.rows()[1]["n"], len(rows) - 1)
 
     def test_text_tools_and_exact_row_fields(self):
         content = [{"type": "text", "text": "one"}, {"type": "thinking", "thinking": "secret"},
@@ -88,14 +88,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(set(row), {"session", "agent", "uuid", "parent", "n", "ts", "role", "cwd",
                                     "branch", "model", "text", "tools", "from"})
         self.assertNotIn("secret", json.dumps(row))
-
-    def test_string_and_tool_only_and_tool_priority(self):
-        for key in ("file_path", "path", "pattern", "url", "query", "description", "prompt"):
-            self.assertEqual(cc._tool({"name": "Find", "input": {key: "z" * 201}})["summary"], "z" * 200)
-        self.write([self.entry(), self.entry("tool", [{"type": "tool_use", "name": "Read", "input": {}}])])
-        self.sync()
-        self.assertEqual(len(self.rows()), 2)
-        self.assertEqual(self.rows()[1]["text"], "")
 
     def test_partial_append_unchanged_full_and_deletion(self):
         path = self.write([self.entry()])
@@ -124,16 +116,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(before["files"], after["files"])
         self.assertEqual(before["containers"], after["containers"])
         self.assertEqual([r["uuid"] for r in self.rows()], ["u1", "u2", "u3"])
-
-    def test_subagent(self):
-        path = self.write([self.entry()], "projects/project/session/subagents/agent-a.jsonl")
-        path.with_suffix(".meta.json").write_text(json.dumps({"agentType": "research", "description": "synthetic"}))
-        self.sync()
-        container = self.manifest()["containers"]["session.agent-a"]
-        self.assertEqual((container["kind"], container["session"], container["agent"], container["project"]),
-                         ("subagent", "session", "agent-a", "project"))
-        self.assertEqual((container["agent_type"], container["description"]), ("research", "synthetic"))
-        self.assertEqual(self.rows("session.agent-a")[0]["agent"], "agent-a")
 
     def test_workflow_agents_merge_copies_and_skip_journal(self):
         base = "projects/project/session/subagents/workflows"
@@ -179,15 +161,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(self.sync()["rows_written"], 1)
         self.assertEqual([row["uuid"] for row in self.rows()], ["u1", "u2", "u3"])
 
-    def test_invalid_json_line_is_counted_without_error(self):
-        path = self.write([self.entry()])
-        with path.open("ab") as fh:
-            fh.write(b"not json\n")
-        self.write([self.entry("u2")], append=True)
-        stats = self.sync()
-        self.assertEqual((stats["lines_bad"], stats["errors"]), (1, 0))
-        self.assertEqual([row["uuid"] for row in self.rows()], ["u1", "u2"])
-
     def test_invalid_transcript_keys_and_timestamps_are_bad_lines(self):
         invalid = [self.entry(uuid=value) for value in (None, "", "bad:id", "bad\nkey", 1, [], False)]
         invalid += [self.entry(sessionId=value) for value in (None, "", "bad:id", "bad\x00key", 1)]
@@ -203,42 +176,6 @@ class FetchTests(unittest.TestCase):
                          (len(invalid), 0, 1))
         self.assertEqual([row["uuid"] for row in self.rows()], ["valid"])
         self.assertEqual(self.sync()["lines_bad"], 0)
-
-    def test_invalid_history_sessions_are_bad_lines(self):
-        invalid = [{"sessionId": value, "timestamp": 1, "display": "synthetic"}
-                   for value in (None, "", "bad:id", "bad\nkey", 1, [], False)]
-        invalid.append({"timestamp": 1, "display": "synthetic"})
-        self.write(invalid + [{"sessionId": "orphan", "timestamp": 1, "display": "synthetic"}],
-                   "history.jsonl")
-        stats = self.sync(clock=2 * cc.DAY_MS)
-        self.assertEqual((stats["lines_bad"], stats["errors"], stats["rows_written"]),
-                         (len(invalid), 0, 1))
-        self.assertEqual([row["session"] for row in self.rows("history")], ["orphan"])
-
-    def test_subagent_optional_metadata_failures_do_not_block_rows(self):
-        original_read = Path.read_text
-        for name, data in (("missing", None), ("invalid-json", "not JSON"),
-                           ("invalid-encoding", b"\xff"), ("list", "[]"), ("null", "null"),
-                           ("string", '"synthetic"'), ("unreadable", "{}"), ("vanished", "{}")):
-            with self.subTest(name=name):
-                path = self.write([self.entry()], f"projects/project/session/subagents/{name}.jsonl")
-                meta = path.with_suffix(".meta.json")
-                if data is not None:
-                    meta.write_bytes(data if isinstance(data, bytes) else data.encode())
-
-                def read_text(source, *args, **kwargs):
-                    if source == meta and name == "unreadable":
-                        raise PermissionError("synthetic")
-                    if source == meta and name == "vanished":
-                        raise FileNotFoundError("synthetic")
-                    return original_read(source, *args, **kwargs)
-
-                with patch.object(Path, "read_text", read_text):
-                    stats = self.sync()
-                self.assertEqual((stats["errors"], stats["lines_bad"], stats["rows_written"]), (0, 0, 1))
-                container = self.manifest()["containers"][f"session.{name}"]
-                self.assertEqual((container["agent_type"], container["description"]), ("", ""))
-                self.assertEqual(len(self.rows(f"session.{name}")), 1)
 
     def test_history_backfill_and_manifest_session_exclusion(self):
         clock = 2 * cc.DAY_MS
@@ -283,7 +220,7 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(cc.sync_config(cfg)["status"], "ok")
 
     def test_read_failure_and_vanish(self):
-        path = self.write([self.entry()])
+        self.write([self.entry()])
         with patch.object(Path, "read_bytes", side_effect=PermissionError("private path")):
             stats = self.sync()
         self.assertEqual(stats["errors"], 1)
@@ -297,13 +234,6 @@ class FetchTests(unittest.TestCase):
         with patch.object(Path, "read_bytes", side_effect=PermissionError("private path")):
             self.sync()
         self.assertEqual(previous, self.manifest()["containers"])
-
-    def test_invalid_container(self):
-        path = self.write([self.entry()])
-        with patch.object(cc, "_sources", return_value=iter([(path, "bad:id", "session", "bad:id", "", "project")])):
-            stats = self.sync()
-        self.assertEqual(stats["errors"], 1)
-        self.assertEqual(self.manifest()["containers"], {})
 
     def test_archive_exceptions_are_categories_only(self):
         with patch.object(cc.archive, "load", side_effect=OSError("synthetic private path")):

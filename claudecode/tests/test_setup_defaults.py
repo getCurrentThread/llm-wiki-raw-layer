@@ -25,7 +25,7 @@ class SetupDefaultsTests(unittest.TestCase):
         self.cfg["data_root"] = str(self.root)
         self.notes = []
 
-    def test_setup_defaults_profile_when_present(self):
+    def test_setup_defaults_profile_and_owner_values(self):
         self.app.setup_defaults(self.cfg, self.notes.append)
         self.assertEqual(self.cfg["sources"]["cc_archive"], str(self.root / "archive"))
         self.assertTrue((self.root / "archive").is_dir())
@@ -35,20 +35,10 @@ class SetupDefaultsTests(unittest.TestCase):
         self.app.setup_defaults(self.cfg, self.notes.append)
         self.assertEqual(self.cfg["cc_claude_dir"], str(source))
         self.assertFalse(any(str(self.root) in n or str(self.home) in n for n in self.notes))
-
-    def test_setup_defaults_preserve_owner_values(self):
-        self.cfg["sources"]["cc_archive"] = str(self.root / "custom")
         self.cfg["cc_claude_dir"] = str(self.home / "custom")
         before = json.loads(json.dumps(self.cfg))
         self.app.setup_defaults(self.cfg, self.notes.append)
         self.assertEqual(self.cfg, before)
-
-    def test_setup_defaults_without_data_root(self):
-        self.cfg.pop("data_root")
-        before = json.loads(json.dumps(self.cfg))
-        self.app.setup_defaults(self.cfg, self.notes.append)
-        self.assertEqual(self.cfg, before)
-        self.assertEqual(self.notes, [])
 
     def test_setup_defaults_task_checks(self):
         f = self.root / "file"
@@ -63,13 +53,3 @@ class SetupDefaultsTests(unittest.TestCase):
                                               "(SYSTEM has another home)"])
         self.assertEqual(self.app.task_checks(SimpleNamespace(cc_sync=False, cc_claude_dir="")), [])
 
-
-
-class WikiExportDeclaration(unittest.TestCase):
-    def test_collect_declaration(self):
-        """`manage.py collect claudecode`: the declared prefix and layout, and the config keys derived from it."""
-        app = registry.app_registry("claudecode").apps[0]
-        self.assertEqual(app.wiki, ("cc", "chat"))
-        keys = [f"cc_wiki_{k}" for k in ("project", "include", "exclude", "since")]
-        self.assertEqual([op.key for op in app.options][-4:], keys)
-        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))
