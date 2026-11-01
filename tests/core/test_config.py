@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from rawlayer import registry
-from rawlayer.capture import cli, paths, precheck, run
+from rawlayer.capture import paths, precheck, run, steps
 from rawlayer.capture.config import Config, ConfigError, InputSet
 from rawlayer.search import index
 from tests.core import toyfix as T
@@ -375,7 +375,7 @@ class TestPrecheckExitCodes(T.ToyCase):
             err = io.StringIO()
             with mock.patch.object(precheck, "in_work_tree", return_value=False), T.preserved_env(), \
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-                rc = cli.main(["capture", "--origins", "toy_a", "--config", str(self.fx.config_path)])
+                rc = steps.main(["capture", "--origins", "toy_a", "--config", str(self.fx.config_path)])
         self.assertEqual((rc, err.getvalue()), (1, "error TypeError\n"))
         self.assertEqual(manifests(self.fx), [])
 

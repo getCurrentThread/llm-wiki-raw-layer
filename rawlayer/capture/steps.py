@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""python -s -B manage.py <command> <app> --config <path> [--input-set live|T1|T2] [--origins a,b] (SPEC 13).
+"""The capture-side steps, run in-process by `manage.py capture` (capture) and `manage.py check` (replay --check,
+export-state); not a command surface of their own:
+  <step> --config <path> [--input-set live|T1|T2] [--origins a,b]   (SPEC 13)
 
-command = capture | replay [--check] | export-state --out <path under raw/.verify>. --origins defaults to every
+step = capture | replay [--check] | export-state --out <path under raw/.verify>. --origins defaults to every
 origin of the app. A data root whose ledger belongs to another app is refused (ledger.foreign_origins). Exit codes:
 0 ok, 3 suspect, 75 busy or skipped, 2 refused, 1 error."""
 import argparse

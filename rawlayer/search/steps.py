@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""The internal index/search CLI -- capture's index step runs `index`, and the search command runs `search`,
-both in-process (rawlayer.management.commands.capture, rawlayer.management.commands.search); it is not a manage.py command surface.
+"""The index and search steps, run in-process: `manage.py capture` runs `index` as its index step and `manage.py search`
+runs `search` (rawlayer.management.commands.capture, rawlayer.management.commands.search); not a command surface.
 
   index <app>     --config CFG [--rebuild] [--status] [--json]
                   bring <data_root>/index/<app>.sqlite up to the committed ledger (incremental; a full rebuild

@@ -94,7 +94,7 @@ class InputSet:
     inputs.resolve() names its attributes."""
 
     def __init__(self, cfg: Config, name: str, verify_static=True):
-        cfg.check_input_set(name)              # a backstop: cli.main and run.capture check before they write
+        cfg.check_input_set(name)              # a backstop: steps.main and run.capture check before they write
         self.name = name
         self.freeze = None
         self.snapshot_s = None

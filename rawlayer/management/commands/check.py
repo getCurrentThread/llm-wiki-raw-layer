@@ -151,15 +151,15 @@ class Check:
         """The folded state against the ledger: replay --check folded in (the old replay command), a full replay
         with rebuild=True, and export-state's record dump to `export` (the old export-state command). A busy
         ledger (a capture is running) is a note, not a problem: there is nothing to verify against yet."""
-        from ...capture import cli, run  # noqa: PLC0415
+        from ...capture import run, steps  # noqa: PLC0415
         argv = ["replay"] + ([] if rebuild else ["--check"]) + ["--config", str(path)]
-        rc = cli.main(argv)
+        rc = steps.main(argv)
         if rc == run.EXIT_BUSY:
             self.note("ledger busy (a capture holds it); the folded state was not verified")
         elif rc != 0:
             self.errors += 1
         if export:
-            rc = cli.main(["export-state", "--out", str(export), "--config", str(path)])
+            rc = steps.main(["export-state", "--out", str(export), "--config", str(path)])
             if rc != 0:
                 self.errors += 1
 

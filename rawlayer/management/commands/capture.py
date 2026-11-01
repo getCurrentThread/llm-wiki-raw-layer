@@ -13,7 +13,7 @@ task and a manual run: capture, then index.
 
 Both steps run in this process (the dispatcher has already selected the app). Every step is logged as
 "<UTC> step=<name> rc=<rc> seconds=<n>" in <data_root>/reports/task.log. Capture's stdout is publicout-validated
-(SPEC 11) and appended as is; its stderr is kept only when it is cli's own "error <Type> [errno=N]" line. The
+(SPEC 11) and appended as is; its stderr is kept only when it is the capture step's own "error <Type> [errno=N]" line. The
 index prints counts; its stdout and the last lines of its stderr are appended, each line cut at 300 characters.
 The log rolls over at 4 MiB. Exit code = capture's (Task Scheduler's "last run result"; the task's own time
 limit bounds a step that hangs)."""
@@ -44,12 +44,12 @@ def _lines(name, out, err):
 
 
 def one(name, argv):
-    """A single step: the capture or index cli as the wrapper commands once presented them."""
+    """A single step of the pipeline, in this process: capture (rawlayer.capture.steps) or index (rawlayer.search.steps)."""
     if name == "capture":
-        from ...capture import cli  # noqa: PLC0415
-        return cli.main(["capture"] + argv)
-    from ...search import cli  # noqa: PLC0415
-    return cli.main(["index"] + argv)
+        from ...capture import steps  # noqa: PLC0415
+        return steps.main(["capture"] + argv)
+    from ...search import steps  # noqa: PLC0415
+    return steps.main(["index"] + argv)
 
 
 def step(log, name, argv):

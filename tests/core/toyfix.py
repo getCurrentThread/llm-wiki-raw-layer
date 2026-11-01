@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 from rawlayer import registry
-from rawlayer.capture import cli, paths, run, state
+from rawlayer.capture import paths, run, state, steps
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
 from tests.core import ledgercheck
@@ -191,7 +191,7 @@ def cli_main(fx, *argv):
     """The internal capture CLI in-process (its replay/export-state actions included), with --config; returns the
     exit code. A path in argv is passed as its text, as a command line passes it."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        return cli.main([os.fspath(a) for a in argv] + ["--config", os.fspath(fx.config_path)])
+        return steps.main([os.fspath(a) for a in argv] + ["--config", os.fspath(fx.config_path)])
 
 
 def ledger(fx):
@@ -219,7 +219,7 @@ def by_key(recs):
 
 
 def export(fx):
-    return list(cli.export_lines(ledger(fx)))
+    return list(steps.export_lines(ledger(fx)))
 
 
 def invariants(fx):
@@ -281,10 +281,10 @@ def child_capture(fx, before=""):
 
 def run_search(*argv):
     """The internal index/search CLI in-process -> (exit code, stdout, stderr). A path in argv is its text."""
-    from rawlayer.search import cli as search_cli  # noqa: PLC0415
+    from rawlayer.search import steps as search_steps  # noqa: PLC0415
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        rc = search_cli.main([os.fspath(a) for a in argv])
+        rc = search_steps.main([os.fspath(a) for a in argv])
     return rc, out.getvalue(), err.getvalue()
 
 

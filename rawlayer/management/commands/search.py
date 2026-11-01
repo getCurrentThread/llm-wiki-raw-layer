@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from ...search import cli
+from ...search import steps
 from ..base import BaseCommand
 
 
@@ -10,4 +10,4 @@ class Command(BaseCommand):
     config = True
 
     def run(self, app, argv):
-        return cli.main(["search", app] + argv)
+        return steps.main(["search", app] + argv)

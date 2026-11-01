@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from rawlayer import registry
-from rawlayer.capture import cli, run, state
+from rawlayer.capture import run, state, steps
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
 from tests.core import ledgercheck
@@ -76,7 +76,7 @@ def manifests(fx):
 
 
 def export(fx):
-    return list(cli.export_lines(Ledger(Config(fx.config_path).raw)))
+    return list(steps.export_lines(Ledger(Config(fx.config_path).raw)))
 
 
 def invariants(fx):
@@ -98,16 +98,16 @@ def replay_diff(fx):
 
 
 def run_rawsearch(argv):
-    """rawlayer.search.cli.main in-process -> (exit code, stdout, stderr). argv is `index ...` or `<label> ...`
+    """rawlayer.search.steps.main in-process -> (exit code, stdout, stderr). argv is `index ...` or `<label> ...`
     (the search subcommand of manage.py: `search <label> ...`); a path argument may be a Path (a command line is
     text: it is passed as str)."""
-    from rawlayer.search import cli  # noqa: PLC0415
+    from rawlayer.search import steps as search_steps  # noqa: PLC0415
     argv = [os.fspath(a) for a in argv]
     if argv and argv[0] not in ("index", "search") and not argv[0].startswith("-"):
         argv = ["search"] + argv
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        rc = cli.main(argv)
+        rc = search_steps.main(argv)
     return rc, out.getvalue(), err.getvalue()
 
 

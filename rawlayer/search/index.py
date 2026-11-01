@@ -4,7 +4,7 @@ incremental catch-up), version gate, locking, time and rendering helpers.
 
 Each app with a search.py (<label>/search.py) owns one index file <data_root>/index/<name>.sqlite and plugs
 into this module with a SourceIndex subclass (module attribute SPEC) plus `add_arguments(parser)` and
-`run(args) -> exit code` for its search subcommand (cli.py wires them up).
+`run(args) -> exit code` for its search subcommand (steps.py wires them up).
 
 THE INDEX IS A PURE FUNCTION OF THE LEDGER
 ------------------------------------------

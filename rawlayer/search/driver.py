@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The query half of an app's search.py. An app's search module subclasses SearchDriver for its row model and
-delegates the module-level run()/add_arguments() the CLI calls (rawlayer/search/cli.py) to the subclass
+delegates the module-level run()/add_arguments() the search step calls (rawlayer/search/steps.py) to the subclass
 instance; the fold/index half stays where it was, in the module's SourceIndex subclass (index.py):
 
   class KakaoSearch(SearchDriver):
