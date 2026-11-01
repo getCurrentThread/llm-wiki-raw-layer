@@ -176,7 +176,7 @@ def main(app, sync_config, argv=None):
             # Disable automatic API sync for this child: the archive was just completed.
             env = dict(os.environ, RAWLAYER_ARCHIVE_READY="1")
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run([sys.executable, "-s", "-B", str(root / "manage.py"), "collect", app,
+            result = subprocess.run([sys.executable, "-s", "-B", str(root / "manage.py"), "capture", app,
                                      "--config", str(cfg.path)], env=env)
             return result.returncode or (75 if report.get("errors", 0) else 0)
         return 0 if report.get("errors", 0) == 0 else 75

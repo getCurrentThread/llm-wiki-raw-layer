@@ -98,7 +98,7 @@ package:
 The toolkit is self-contained: the rest of the app — readers, capture, search — reaches it only through the
 entry points above, so work outside these four modules never touches key material.
 
-Setup turns that into capture inputs (see "First-run setup" below); after it, `collect` reads the `.edb` rooms
+Setup turns that into capture inputs (see "First-run setup" below); after it, `capture` reads the `.edb` rooms
 and the decrypted backups exactly as before — the ledger contract is unchanged; only the producers of the
 keystore and `backup_decrypted` moved into this repo.
 
@@ -185,7 +185,7 @@ Two pieces put a Mac into the ledger:
 
 A minimal macOS deployment: the same config with the PC-only sources pointing at placeholder files
 (an empty file is a valid empty SQLite database for the origins you do not capture), `"mac_db"` set to the
-decrypted database path, then `manage.py setup kakaotalk` and `manage.py collect kakaotalk --origins macdb`.
+decrypted database path, then `manage.py setup kakaotalk` and `manage.py capture kakaotalk --origins macdb`.
 
 ## Commands
 
@@ -193,7 +193,7 @@ All examples run from `<PROJECT>`. `--config <cfg>` is optional and overrides th
 
 ```
 python -s -B manage.py setup kakaotalk [--from <cfg>|-] [--force] [--provision] [--scan] [--root <hex file>] [--restart-client]
-python -s -B manage.py collect kakaotalk [--config <cfg>] [--input-set live|T1|T2] [--origins a,b,...] [--rebuild-index]
+python -s -B manage.py capture kakaotalk [--config <cfg>] [--input-set live|T1|T2] [--origins a,b,...] [--rebuild-index]
 python -s -B manage.py search kakaotalk [QUERY] [--config <cfg>] [options]
 python -s -B manage.py check kakaotalk [--config <cfg>] [--export-state <DATA_ROOT>/raw/.verify/<file>] [--rebuild-state]
 python -s -B manage.py test kakaotalk
@@ -249,14 +249,14 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
 
 ## Search
 
-### index (collect's index step)
+### index (capture's index step)
 
-`collect`'s index step brings `<DATA_ROOT>\index\kakaotalk.sqlite` up to the committed ledger (the search reads only
+`capture`'s index step brings `<DATA_ROOT>\index\kakaotalk.sqlite` up to the committed ledger (the search reads only
 `data_root` from the config):
 
 - **Incremental.** Manifests are applied in seq order, one transaction per manifest together with the
   index's watermark (head seq, plus the sha256 and run id of that manifest).
-- **Full rebuild.** It runs on `collect --rebuild-index`, when the index is missing, unreadable or stamped with another
+- **Full rebuild.** It runs on `capture --rebuild-index`, when the index is missing, unreadable or stamped with another
   schema/tokenizer/extractor version, when the watermark no longer matches the ledger (the ledger was reset),
   when a manifest is not a capture manifest, or when the catch-up is very large.
 - **Rebuild and catch-up give the same index.** Both run the same record handling in ledger order.
@@ -356,7 +356,7 @@ the same case folding the search uses, so `straße` marks `STRASSE`.
 
 `AppConfig.schedule` in `kakaotalk/apps.py` defines `\llm-wiki\kakaotalk-capture`, run as SYSTEM
 (times and limit: [../README.md](../README.md#scheduled-tasks)). The generated Arguments are
-`-s -B <PROJECT>\manage.py collect kakaotalk --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
+`-s -B <PROJECT>\manage.py capture kakaotalk --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
 
 ```
 python -s -B manage.py schedule install kakaotalk [--config <cfg>] [--python <interpreter>] [--run-now|--dry-run]
@@ -371,9 +371,9 @@ the definition without registering it. Status shows definition differences, last
 finished step lines; it returns 3 when attention is needed. A new start is ignored while one runs, and a missed
 start runs when the machine returns.
 
-`collect kakaotalk` runs the capture step (the live input set) and then the index step after every capture exit
+`capture kakaotalk` runs the capture step (the live input set) and then the index step after every capture exit
 code. Only committed manifests enter the index, so the index step is a no-op when nothing new was committed.
-Steps are logged in `<DATA_ROOT>/reports/task.log`, and collect returns capture's exit code.
+Steps are logged in `<DATA_ROOT>/reports/task.log`, and the command returns the capture step's exit code.
 
 ## Slash command and tests
 

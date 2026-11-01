@@ -2,7 +2,7 @@
 
 `gm_archive` reads a private Gmail REST API v1 archive into its own append-only ledger and
 `index/gmail.sqlite`. `gm_sync` defaults false: archive-only and frozen capture never contact an API.
-With `gm_sync: true`, live `manage.py collect gmail` refreshes the archive before capture.
+With `gm_sync: true`, live `manage.py capture gmail` refreshes the archive before capture.
 The implementation uses Python's standard library only. It never extracts credentials from a browser or mail client.
 
 ## Collection and authentication
@@ -26,7 +26,7 @@ python -s -B -m gmail.fetch --auth --config <CFG>
 python -s -B -m gmail.fetch --auth-check --config <CFG>
 python -s -B -m gmail.fetch --max-items 1000 --capture --config <CFG>
 # Repeat the preceding command until limited=false; cursor stays unset during genesis.
-python -s -B manage.py collect gmail --config <CFG>
+python -s -B manage.py capture gmail --config <CFG>
 # Set gm_sync=true in the external config if scheduled capture should sync the API.
 python -s -B manage.py schedule install gmail --config <CFG>
 ```

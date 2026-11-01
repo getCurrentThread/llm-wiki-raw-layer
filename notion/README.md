@@ -2,7 +2,7 @@
 
 `nt_archive` reads atomic archive snapshots. The app includes a token-free Notion Desktop SQLite reader and
 an official `ntn` API fetch step. Its ledger and `index/notion.sqlite` belong in its own protected data root.
-`nt_sync: true` makes live `manage.py collect notion` update the archive first; frozen inputs stay read-only.
+`nt_sync: true` makes live `manage.py capture notion` update the archive first; frozen inputs stay read-only.
 
 ## Collection and authentication
 
@@ -28,7 +28,7 @@ permission does not prevent content collection: known user labels remain and aut
 ntn login
 python -s -B -m notion.fetch --auth-check
 python -s -B -m notion.fetch --max-items 3 --capture
-python -s -B manage.py collect notion
+python -s -B manage.py capture notion
 ```
 
 `--max-items` / `nt_max_pages` bound page attempts, not the number of API requests within a page. API fetching
@@ -89,7 +89,7 @@ every following block. A newly inserted block gets its own first version.
 ```
 python -s -B manage.py setup notion
 # Fill sources.nt_archive with the absolute existing archive path in the external config.
-python -s -B manage.py collect notion
+python -s -B manage.py capture notion
 python -s -B manage.py search notion deployment --page Project --context 2 --json
 python -s -B manage.py search notion --page-text 00000000-0000-0000-0000-000000000001 --json
 python -s -B manage.py search notion --list-pages --json

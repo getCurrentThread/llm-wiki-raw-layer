@@ -44,7 +44,7 @@ skipped. Frozen `T1`/`T2` inputs read `<inputs_root>/<set>/mm/archive`; live inp
 
 `fetch.py` is a standard-library port of the mattertok archiver (REST API v4). It writes mattertok's archive
 format, so an archive mattertok wrote continues from its cursors, and it needs no other program. Archive-only
-configs stay read-only; `mm_sync: true` makes live `manage.py collect mattermost` update the archive before
+configs stay read-only; `mm_sync: true` makes live `manage.py capture mattermost` update the archive before
 capturing it. Frozen inputs never call the fetch step.
 
 - `mm_url` is the server's `https://` address; `mm_token_file` is a private file under `<DATA_PARENT>` holding a
@@ -92,7 +92,7 @@ capturing it. Frozen inputs never call the fetch step.
 python -s -B -m mattermost.fetch --login
 python -s -B -m mattermost.fetch --auth-check
 python -s -B -m mattermost.fetch --max-items 20 --capture
-python -s -B manage.py collect mattermost
+python -s -B manage.py capture mattermost
 ```
 
 The fetch step prints one JSON line of counts and categories only (`channels`, `posts_written`,
@@ -153,7 +153,7 @@ All examples run from `<PROJECT>`. `--config <cfg>` is optional and overrides th
 
 ```
 python -s -B manage.py setup mattermost [--from <cfg>|-] [--force]
-python -s -B manage.py collect mattermost [--config <cfg>] [--input-set live|T1|T2] [--origins a,b,...] [--rebuild-index]
+python -s -B manage.py capture mattermost [--config <cfg>] [--input-set live|T1|T2] [--origins a,b,...] [--rebuild-index]
 python -s -B manage.py search mattermost [QUERY] [--config <cfg>] [options]
 python -s -B manage.py check mattermost [--config <cfg>] [--export-state <DATA_ROOT>/raw/.verify/<file>] [--rebuild-state]
 python -s -B manage.py test mattermost
@@ -168,14 +168,14 @@ shared surface.
 
 ## Search
 
-### index (collect's index step)
+### index (capture's index step)
 
-`collect`'s index step brings `<DATA_ROOT>\index\mattermost.sqlite` up to the committed ledger (the search reads only
+`capture`'s index step brings `<DATA_ROOT>\index\mattermost.sqlite` up to the committed ledger (the search reads only
 `data_root` from the config):
 
 - **Incremental.** Manifests are applied in seq order, one transaction per manifest together with the
   index's watermark (head seq, plus the sha256 and run id of that manifest).
-- **Full rebuild.** It runs on `collect --rebuild-index`, when the index is missing, unreadable or stamped with another
+- **Full rebuild.** It runs on `capture --rebuild-index`, when the index is missing, unreadable or stamped with another
   schema/tokenizer/extractor version, when the watermark no longer matches the ledger (the ledger was reset),
   when a manifest is not a capture manifest, or when the catch-up is very large.
 - **Rebuild and catch-up give the same index.** Both run the same record handling in ledger order.
@@ -277,7 +277,7 @@ the same case folding the search uses, so `straße` marks `STRASSE`.
 
 `AppConfig.schedule` in `mattermost/apps.py` defines `\llm-wiki\mattermost-capture`, run as SYSTEM
 (times and limit: [../README.md](../README.md#scheduled-tasks)). The generated Arguments are
-`-s -B <PROJECT>\manage.py collect mattermost --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
+`-s -B <PROJECT>\manage.py capture mattermost --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
 
 ```
 python -s -B manage.py schedule install mattermost [--config <cfg>] [--python <interpreter>] [--run-now|--dry-run]
@@ -292,10 +292,10 @@ the definition without registering it. Status shows definition differences, last
 finished step lines; it returns 3 when attention is needed. A new start is ignored while one runs, and a missed
 start runs when the machine returns.
 
-`collect mattermost` runs the capture step (the live input set; with `mm_sync`, the fetch step first) and then the
+`capture mattermost` runs the capture step (the live input set; with `mm_sync`, the fetch step first) and then the
 index step after every capture exit code. With `mm_sync`, `task_checks` refuses a config without `mm_url` or an
 existing protected token file. Only committed manifests enter the index, so the index step is a no-op when nothing new was committed.
-Steps are logged in `<DATA_ROOT>/reports/task.log`, and collect returns capture's exit code.
+Steps are logged in `<DATA_ROOT>/reports/task.log`, and the command returns the capture step's exit code.
 
 ## Slash command and tests
 

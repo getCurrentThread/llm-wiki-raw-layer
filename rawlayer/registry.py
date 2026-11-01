@@ -71,7 +71,7 @@ class AppConfig:
         return f"<AppConfig {self.label}>"
 
     def task_checks(self, cfg):
-        """Problems (short public strings) that make `cfg` unfit for the project's scheduled task, which runs collect
+        """Problems (short public strings) that make `cfg` unfit for the project's scheduled task, which runs capture
         as SYSTEM on the live input set. `manage.py schedule install` refuses while any app reports one."""
         return []
 

@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 from tests.core import appfix
-from rawlayer import collect, schedule
+from rawlayer import schedule
+from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
 from rawlayer.search import common, textindex as ti
 from gmail.fetch import sync, sync_config
@@ -40,7 +41,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_collect_pipeline_ledger_index_search_replay(self):
         with appfix.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(collect.main(["gmail", "--config", str(self.fx.config_path)]), 0)
+            self.assertEqual(capture.main(["gmail", "--config", str(self.fx.config_path)]), 0)
         self.assertEqual(self.query("deployment")["total"], 2)
         self.assertFalse(h.invariants(self.fx)[0])
         self.assertEqual(h.replay_diff(self.fx), 0)

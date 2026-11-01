@@ -513,7 +513,7 @@ class TestEdges(unittest.TestCase):
                 json.dump({"v": 1, "data_root": str(dr)}, fh)
             rc, _out, err = rs("mattermost", "--config", cfg, "x")
             self.assertEqual(rc, 2)
-            self.assertIn("manage.py collect", err)
+            self.assertIn("manage.py capture", err)
             rc, out, _ = rs("index", "--config", cfg, "--source", "mattermost", "--json")
             rep = json.loads(out)["mattermost"]
             self.assertEqual((rc, rep["action"], rep["seq"], rep["rows"], rep["channels"]), (0, "rebuilt", 0, 0, 0))

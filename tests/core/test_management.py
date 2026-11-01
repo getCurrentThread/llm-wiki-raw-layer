@@ -72,7 +72,7 @@ class TestSelect(unittest.TestCase):
             rc, out, _err = run("check")
             self.assertEqual(rc, 1)
             self.assertIn("named: app contract broken (named: AppConfig.label must be the folder name)", out)
-            self.assertEqual(run("collect", "named")[0], 1)
+            self.assertEqual(run("capture", "named")[0], 1)
         # a package of the app's name imported from elsewhere first (an installed package, say) is not the app
         with Project({"shadowed": app_files("shadowed")}):
             fake = types.ModuleType("shadowed")
@@ -86,11 +86,11 @@ class TestSelect(unittest.TestCase):
 class TestDispatch(unittest.TestCase):
     def test_a_core_command_names_the_app(self):
         with Project({"a1": app_files("a1"), "a2": app_files("a2")}):
-            rc, _out, err = run("collect")
+            rc, _out, err = run("capture")
             self.assertEqual(rc, 2)
-            self.assertIn("name the app: manage.py collect <app>", err)
+            self.assertIn("name the app: manage.py capture <app>", err)
             self.assertIsNone(registry.selected())
-            rc, _out, err = run("collect", "nope")
+            rc, _out, err = run("capture", "nope")
             self.assertEqual(rc, 2)
             self.assertIsNone(registry.selected())
 
@@ -109,9 +109,18 @@ class TestDispatch(unittest.TestCase):
             self.assertIn("unknown command", run("nope")[2])
             self.assertEqual(run()[0], 2)
             self.assertEqual(run("--help")[0], 0)
-            for name in ("collect", "check", "schedule", "test", "setup"):
+            for name in ("capture", "check", "schedule", "test", "setup"):
                 self.assertIn(f"manage.py {name}", run("help", name)[1])
             self.assertEqual(run("help", "nope")[0], 2)
+
+    def test_collect_is_not_a_command(self):
+        """The capture command's previous name (a stale scheduled task, an old habit) is refused and writes nothing."""
+        with Project({"a1": app_files("a1")}):
+            rc, _out, err = run("collect", "a1")
+            self.assertEqual(rc, 2)
+            self.assertIn("unknown command", err)
+            self.assertIsNone(registry.selected())
+            self.assertEqual(run("help", "collect")[0], 2)
 
 
 class TestOwnership(T.ToyCase):

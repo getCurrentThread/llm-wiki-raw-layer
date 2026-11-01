@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""manage.py collect (rawlayer/collect.py), the scheduled task's body: capture, then the search indexes after every
-capture, whatever its exit code; the task log; the exit code is capture's. The steps are replaced by a stub
-(TestCollectSteps), or by the real capture and index run in-process on the toy app (TestIndexAfterSkipped: a 75
+"""manage.py capture (rawlayer/management/commands/capture.py), the scheduled task's body: capture, then the search
+indexes after every capture, whatever its exit code; the task log; the exit code is capture's. The steps are replaced by a stub
+(TestCaptureSteps), or by the real capture and index run in-process on the toy app (TestIndexAfterSkipped: a 75
 that committed)."""
 import sys
 import tempfile
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rawlayer import collect
+from rawlayer.management.commands import capture
 from rawlayer.capture import paths
 from rawlayer.search import common
 from tests.core import toyfix as T
@@ -17,7 +17,7 @@ from tests.core.toyapp import search as toy
 from tests.core.toyapp2 import search as toy2
 
 
-class TestCollectSteps(unittest.TestCase):
+class TestCaptureSteps(unittest.TestCase):
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix="llmw-task-", dir=T.TEST_PARENT))
         self.addCleanup(T.force_rmtree, self.base)
@@ -43,9 +43,9 @@ class TestCollectSteps(unittest.TestCase):
             print("a warning", file=sys.stderr)
             return index_rc
 
-        with mock.patch.object(collect, "one", side_effect=fake), \
-                mock.patch.object(collect, "log_path", return_value=self.log):
-            rc = collect.main(["toy", "--config", str(self.cfg)])
+        with mock.patch.object(capture, "one", side_effect=fake), \
+                mock.patch.object(capture, "log_path", return_value=self.log):
+            rc = capture.main(["toy", "--config", str(self.cfg)])
         return rc, calls, self.log.read_text(encoding="utf-8")
 
     def test_the_capture_step_argv(self):
@@ -88,16 +88,16 @@ class TestCollectSteps(unittest.TestCase):
 
         self.log.write_text("run\n2026-10-05T01:00:00Z step=capture rc=0 seconds=9\n"
                             "2026-10-05T01:00:09Z step=index rc=0 seconds=1\n", encoding="utf-8", newline="\n")
-        with mock.patch.object(collect, "one", side_effect=fake), \
-                mock.patch.object(collect, "log_path", return_value=self.log):
-            collect.main(["toy", "--config", str(self.cfg)])
+        with mock.patch.object(capture, "one", side_effect=fake), \
+                mock.patch.object(capture, "log_path", return_value=self.log):
+            capture.main(["toy", "--config", str(self.cfg)])
         self.assertTrue(seen[0].endswith("step=index rc=0 seconds=1\nrun\n"))
 
     def test_log_path_stays_inside_the_data_parent(self):
         with mock.patch.object(paths, "DATA_PARENT", T.TEST_PARENT):
-            self.assertEqual(collect.log_path(self.cfg), self.data_root / "reports" / "task.log")
+            self.assertEqual(capture.log_path(self.cfg), self.data_root / "reports" / "task.log")
             T.write_json(self.cfg, {"v": 1, "data_root": self.base / "typo"})
-            self.assertEqual(collect.log_path(self.cfg), T.TEST_PARENT.resolve() / "task-refused.log")
+            self.assertEqual(capture.log_path(self.cfg), T.TEST_PARENT.resolve() / "task-refused.log")
             self.assertFalse((self.base / "typo").exists())
 
 
@@ -118,9 +118,9 @@ class TestIndexAfterSkipped(T.ToyCase):
             return rc
 
         log = self.fx.data_root / "task.log"
-        with mock.patch.object(collect, "one", side_effect=fake), \
-                mock.patch.object(collect, "log_path", return_value=log):
-            return collect.main(["toy", "--config", str(self.fx.config_path)])
+        with mock.patch.object(capture, "one", side_effect=fake), \
+                mock.patch.object(capture, "log_path", return_value=log):
+            return capture.main(["toy", "--config", str(self.fx.config_path)])
 
     def heads(self):
         ledger_seq = len(common.LedgerView(self.fx.data_root).manifests())

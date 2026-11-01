@@ -25,7 +25,7 @@ scratch give the same rows. Nothing else is read: no source database, no config 
   'purge', SPEC 12, rewrites old segments) also forces a full rebuild, as does a catch-up larger than the
   source's full_rebuild_records.
 * Version gate. meta stores schema_version, tokenizer (textindex.TOKENIZER_VERSION) and extractor_version.
-  `index` rebuilds an index whose stamps differ; a search refuses it (exit 2, "run manage.py collect
+  `index` rebuilds an index whose stamps differ; a search refuses it (exit 2, "run manage.py capture
   --rebuild-index").
 * Crash safety. A full rebuild writes <name>.sqlite.new, checks it (FTS5 'integrity-check' against the content
   table, PRAGMA quick_check) and only then swaps it in with os.replace (retried, Windows). An incremental
@@ -576,7 +576,7 @@ def freshness(data_root, meta):
 def open_search(data_root, spec):
     """(read-only connection with rs_contains registered and sqlite3.Row rows, meta, freshness)."""
     path = index_path(data_root, spec)
-    hint = f"run: python -s -B manage.py collect {spec.name}"
+    hint = f"run: python -s -B manage.py capture {spec.name}"
     if not path.exists():
         raise UsageError(f"no {spec.name} index yet -- {hint}")
     con = open_ro(path)
@@ -606,7 +606,7 @@ def warn_if_stale(spec, fresh):
     seq, led = fresh["seq"], fresh["ledger_seq"]
     what = "is behind" if seq is not None and seq < led else "does not match"
     note(f"the {spec.name} index {what} the ledger (index seq {seq}, ledger seq {led}); results may miss or "
-         f"misstate the newest captures -- run: python -s -B manage.py collect {spec.name}")
+         f"misstate the newest captures -- run: python -s -B manage.py capture {spec.name}")
 
 
 def status(data_root, spec):

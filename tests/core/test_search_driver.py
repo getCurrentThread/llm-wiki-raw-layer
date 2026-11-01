@@ -331,7 +331,7 @@ class TestLedgerChanges(Scenario):
         self.assertTrue(T.suffixed(ipath(dr), "-journal").exists())
         rc, _out, err = run_search("search", "toy", "--config", cfg, "가나다")
         self.assertEqual(rc, 2)
-        self.assertIn("manage.py collect", err)
+        self.assertIn("manage.py capture", err)
         rc, rep, _ = self.index(cfg)                 # rolls the journal back, then catches up from seq 2
         self.assertEqual((rc, rep["action"], rep["seq"], rep["manifests"]), (0, "updated", 3, 1))
         self.assertFalse(T.suffixed(ipath(dr), "-journal").exists())
@@ -493,7 +493,7 @@ class TestEdges(T.ToyCase):
         cfg = self.bare_config(self.fx.data_root)
         rc, _out, err = run_search("search", "toy", "--config", cfg, "x")
         self.assertEqual(rc, 2)
-        self.assertIn("manage.py collect", err)
+        self.assertIn("manage.py capture", err)
         rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--json")
         rep = json.loads(out)["toy"]
         self.assertEqual((rc, rep["action"], rep["seq"], rep["rows"]), (0, "rebuilt", 0, 0))

@@ -4,13 +4,13 @@
 Claude Code conversations: prompts, Claude's reply text and a one-line summary of each tool call. Tool results,
 thinking and attachments are left out. The app includes a stdlib fetch step (`fetch.py`) that copies what it
 keeps from the owner's `.claude` folder into the archive. Claude Code deletes transcripts after about 30 days; the
-archive keeps them. With `cc_sync: true`, live `manage.py collect claudecode` updates the archive before capturing
+archive keeps them. With `cc_sync: true`, live `manage.py capture claudecode` updates the archive before capturing
 it. Frozen inputs never call the fetch step. Core files are unchanged.
 
 ```
 python -s -B -m claudecode.fetch --max-items 20
 python -s -B -m claudecode.fetch --capture
-python -s -B manage.py collect claudecode
+python -s -B manage.py capture claudecode
 ```
 
 ## Options

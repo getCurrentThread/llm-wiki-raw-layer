@@ -10,10 +10,10 @@ project reads is its **app**: a folder next to `manage.py` that holds `__init__.
 The framework is these files:
 
 ```
-manage.py           the single entry point: setup | collect | search | embed | check | test | schedule
+manage.py           the single entry point: setup | capture | search | embed | check | test | schedule
 CORE.md             this file
 rawlayer/           the framework: capture pipeline (rawlayer/capture), search driver (rawlayer/search), registry,
-                    collect (the scheduled task's body), schedule (registers that task), management commands
+                    schedule (registers the task), management commands (capture is the scheduled task's body)
 tests/__init__.py
 tests/core/         the framework's tests, on a toy app (tests/core/toyapp, toyapp2); they import no real app
 ```
@@ -35,8 +35,8 @@ every app on the contract below. After changing a core file, run every suite: `p
 - **The index never gets ahead of the ledger**: it reads committed manifests only, rebuilds when the ledger was
   reset or its version changed, and stops at a defect.
 - **The scheduled task is registered by the project itself**: `manage.py schedule install` builds the Task
-  Scheduler definition from the app's `AppConfig.schedule` (collect as SYSTEM, IgnoreNew, a time limit) and
-  registers it with Windows' `schtasks.exe` after the checks collect would otherwise fail on (config, data root,
+  Scheduler definition from the app's `AppConfig.schedule` (capture as SYSTEM, IgnoreNew, a time limit) and
+  registers it with Windows' `schtasks.exe` after the checks capture would otherwise fail on (config, data root,
   interpreter, the apps' `task_checks`); `status` reads it back with the last run and the step lines of
   `task.log`. The task needs no script file: it is registered, inspected, started and removed with
   `manage.py schedule`.

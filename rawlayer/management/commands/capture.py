@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""python -s -B manage.py collect <app> --config <config> -- the pipeline behind both the app's SYSTEM scheduled
+"""python -s -B manage.py capture <app> --config <config> -- the pipeline behind both the app's SYSTEM scheduled
 task and a manual run: capture, then index.
 
 1. capture (--input-set, live by default; --origins limits the run to some of the app's origins).
@@ -27,8 +27,8 @@ import time
 import traceback
 from pathlib import Path
 
-from . import conf
-from .capture.config import INPUT_SETS
+from ...capture.config import INPUT_SETS
+from ..base import BaseCommand
 
 LOG_MAX = 4 * 1024 * 1024
 _ERR = re.compile(r"^error [A-Za-z][A-Za-z0-9_]{0,60}( errno=-?[0-9]{1,10})?$")
@@ -46,9 +46,9 @@ def _lines(name, out, err):
 def one(name, argv):
     """A single step: the capture or index cli as the wrapper commands once presented them."""
     if name == "capture":
-        from .capture import cli  # noqa: PLC0415
+        from ...capture import cli  # noqa: PLC0415
         return cli.main(["capture"] + argv)
-    from .search import cli  # noqa: PLC0415
+    from ...search import cli  # noqa: PLC0415
     return cli.main(["index"] + argv)
 
 
@@ -75,9 +75,9 @@ def step(log, name, argv):
 
 def log_path(config):
     """<data_root>/reports/task.log when data_root is an existing directory inside the data parent; otherwise
-    <data parent>/task-refused.log. collect never creates data_root: a typo must reach capture, which refuses
+    <data parent>/task-refused.log. capture never creates data_root: a typo must reach capture, which refuses
     it (exit 2), instead of becoming a new empty ledger."""
-    from .capture import paths  # noqa: PLC0415
+    from ...capture import paths  # noqa: PLC0415
     try:                        # the path as given, as Config opens it: Path() would drop a trailing separator
         with open(config, encoding="utf-8") as fh:
             data_root = json.load(fh).get("data_root")
@@ -95,8 +95,8 @@ def log_path(config):
 
 def main(argv=None):
     """argv: <app> --config <config> [--input-set live|T1|T2] [--origins a,b] [--rebuild-index]
-    (manage.py collect has selected the app)."""
-    ap = argparse.ArgumentParser(prog="manage.py collect")
+    (the dispatcher has selected the app)."""
+    ap = argparse.ArgumentParser(prog="manage.py capture")
     ap.add_argument("app")
     ap.add_argument("--config", required=True)
     ap.add_argument("--input-set", default="live", choices=INPUT_SETS)
@@ -110,7 +110,7 @@ def main(argv=None):
     if path.exists() and path.stat().st_size > LOG_MAX:
         try:
             path.replace(path.with_name(path.name + ".1"))
-        except OSError:                 # another collect has it open (Windows): that run's successor rolls it
+        except OSError:                 # another capture has it open (Windows): that run's successor rolls it
             pass
     with path.open("a", encoding="utf-8", newline="\n") as log:
         log.write("run\n")
@@ -118,3 +118,13 @@ def main(argv=None):
         rc = step(log, "capture", capture_args)
         step(log, "index", index_args)  # whatever rc is
     return rc
+
+
+class Command(BaseCommand):
+    help = "the capture+index pipeline: the scheduled task's body and a manual run (logged in task.log)"
+    args = "[--input-set live|T1|T2] [--origins a,b] [--rebuild-index] [--config CFG]"
+    app = "required"
+    config = True
+
+    def run(self, app, argv):
+        return main([app] + argv)

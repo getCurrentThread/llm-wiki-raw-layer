@@ -401,7 +401,7 @@ class TestEdges(unittest.TestCase):
                 json.dump({"v": 1, "data_root": str(dr)}, fh)
             rc, _out, err = rs("kakaotalk", "--config", cfg, "x")
             self.assertEqual(rc, 2)
-            self.assertIn("manage.py collect", err)
+            self.assertIn("manage.py capture", err)
             rc, out, _ = rs("index", "--config", cfg, "--source", "kakaotalk", "--json")
             rep = json.loads(out)["kakaotalk"]
             self.assertEqual((rc, rep["action"], rep["seq"], rep["rows"]), (0, "rebuilt", 0, 0))

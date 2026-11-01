@@ -27,7 +27,7 @@ repeating them.
 - Agent shells usually keep no variables between tool calls. Send every `$name = ...` definition (the 5.3 helper,
   the 7.2 values) in the same command that uses it.
 - Run every command from `<PROJECT>`. Pass `--config <CFG>` to every command that accepts it: `check <app>`,
-  `collect`, `search`, the fetch steps, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
+  `capture`, `search`, the fetch steps, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
   and `schedule remove` take none; `setup` writes `<CFG>` itself.
 - Placeholders appear bare in some commands and already inside quotes in others (for example 5.3, 6.1.3, 6.1.4,
   6.2, 7.2, 7.3). Substitute every one before running a command:
@@ -108,14 +108,14 @@ repeating them.
     `check --rebuild-state`, `--full`, `schedule remove`, a new Google Cloud project or client, `--auth` over a
     working token. Never delete, move, rename or re-create by hand `<DATA_PARENT>` or anything in it. The commands
     this file runs rewrite their own files there, at the steps that name them and with the approval above where it
-    is listed; `collect --rebuild-index` needs none, because it rebuilds only the derived index from the ledger.
+    is listed; `capture --rebuild-index` needs none, because it rebuilds only the derived index from the ledger.
 
 ## 3. Exit codes and outputs
 
 | command | exit codes |
 |---|---|
-| `collect` / capture | 0 ok · 3 suspect (that origin, one `sources` entry such as `gm_archive`, committed nothing) · 75 busy or below the disk floor (nothing committed), or an origin or container skipped (what was read is committed) · 2 refused · 1 error |
-| `-m <app>.fetch` | 0 ok · 75 `errors` above 0, busy, a network or API failure, or another non-auth category · 2 `auth_required`, `auth_failed`, `account_changed` (the last only from a sync run, never from `--auth-check`) · 1 config or unexpected error · with `--capture`, a non-zero code of its `collect` step (the row above) is returned as is |
+| `capture` | 0 ok · 3 suspect (that origin, one `sources` entry such as `gm_archive`, committed nothing) · 75 busy or below the disk floor (nothing committed), or an origin or container skipped (what was read is committed) · 2 refused · 1 error |
+| `-m <app>.fetch` | 0 ok · 75 `errors` above 0, busy, a network or API failure, or another non-auth category · 2 `auth_required`, `auth_failed`, `account_changed` (the last only from a sync run, never from `--auth-check`) · 1 config or unexpected error · with `--capture`, a non-zero code of its `capture` step (the row above) is returned as is |
 | `-m gmail.fetch --auth` | 0 `auth_ready` · 2 every failure; `status` names the cause (7.3) |
 | `-m mattermost.fetch --login` | 0 `auth_ready` · 2 every failure; `status` names the cause (6.4) |
 | `search` | 0 (also for zero hits) · 2 usage, query or missing/outdated index · 75 retry later · 1 |
@@ -138,7 +138,7 @@ repeating them.
 - **Fetch output:** one JSON line with sorted keys, e.g.
   `{"app": "gmail", "errors": 0, "limited": false, "messages_written": 200, ...}`. Gates quote its fields in that
   form. A failure line carries the category in `status` (e.g. `"status": "auth_required"`) and has no `errors`.
-- **Scheduled task result:** the task returns collect's code, which is capture's. With a sync option on, the
+- **Scheduled task result:** the task returns the capture command's code, which is the capture step's. With a sync option on, the
   fetch runs inside capture: its failures (an expired token included) show as capture 75, and its counts
   (`errors`, `limited`, `messages_written`) are written nowhere.
 - **`schedule status` output:** `last result:` prints the code, followed by its text when the code is known.
@@ -149,11 +149,11 @@ repeating them.
     `0x80070002 (the interpreter or a file the action names was not found)`.
   - Any other code is printed without a text and is not ok.
 - **task.log:** `<DATA_ROOT>\reports\task.log`.
-  - Every run appends a block: the scheduled task, `collect`, and a fetch step with `--capture`. A block is a bare
+  - Every run appends a block: the scheduled task, `capture`, and a fetch step with `--capture`. A block is a bare
     line `run`, then `<UTC> step=capture rc=N seconds=N` with capture's indented lines, then
     `<UTC> step=index rc=N seconds=N` with the index's lines.
   - Index runs after every capture rc. A step line is written when its step ends, so while capture works the
-    newest block is the single line `run`. A run (scheduled, or a manual `collect` or `--capture`) is in progress
+    newest block is the single line `run`. A run (scheduled, or a manual `capture` or `--capture`) is in progress
     while the newest block has no `step=index` line yet; elevated status shows a scheduled one as `running now`.
     A block that never gets one was stopped (section 9).
   - The file rolls over to `task.log.1` above 4 MiB.
@@ -327,7 +327,7 @@ keys still to set.
 Gate: exit 0 with `"status": "authenticated"` (gmail, and the `api` source of discord or notion) or
 `"status": "local_ready"` (the `desktop` source or claudecode, which needs no authentication).
 
-**5.5 Bounded first collection.** Always run the fetch step before the first `collect`: capture of an empty
+**5.5 Bounded first collection.** Always run the fetch step before the first `capture`: capture of an empty
 archive exits 75.
 `python -s -B -m <app>.fetch --max-items <N> --capture --config <CFG>`
 Gates:
@@ -374,7 +374,9 @@ interpreter, data-root precheck (ACL, Windows Search, git work tree) or the app'
 Gates, each on that command's own `rc=` line:
 - install: `rc=0`, with `schedule: registered \llm-wiki\<app>-capture: ... as SYSTEM` and
   `definition read back: as registered`. If install's rc is not 0, the other two results do not count: fix it
-  (section 9) and repeat 5.8. Installing again replaces the task.
+  (section 9) and repeat 5.8. Installing again replaces the task. A task still registered with the previous command name
+  (`manage.py collect <app> --config <CFG>`) is
+  reported by status as `definition: outdated`, and by doctor as such: install it again, elevated.
 - status: `rc=0`, with `schedule: \llm-wiki\<app>-capture registered (enabled)`, `definition: current (...)` and
   `last result:` `has not run yet` or `0 (ok)`.
 - run: `rc=0`, with `schedule: started \llm-wiki\<app>-capture once`. This SYSTEM smoke run proves that SYSTEM can
@@ -631,7 +633,7 @@ password change or a Google account problem, start at step 3 without waiting for
 1. If `last result:` is `the interpreter or a file the action names was not found`, the run never started and
    task.log has no block for it: use that section 9 row. For `stopped (time limit, or by hand)`, use its row.
 2. Read the newest block with the section 3 reader. Under `step=capture`:
-   - `capture busy`: another process held the ledger lock (`collect`, a fetch step's `--capture` step, or
+   - `capture busy`: another process held the ledger lock (`capture`, a fetch step's `--capture` step, or
      `check`). The lock is released when that process ends; watch the next run. If the next run is busy too,
      report it. Never list process command lines to find the holder: they hold profile paths.
    - `capture skipped disk_floor=yes`: use the section 9 disk row.
@@ -879,7 +881,7 @@ never config values, room names or message text. Stop and report on any refusal.
    output every 60 s until it exits. Do not kill it part-way. Report the summary lines: a live root found, or `the client's memory holds no root` (then capture reads the
    `.edb` rooms as `no_key` until a root is derived).
 3. **Check.** `python -s -B manage.py check kakaotalk`: report its pass/fail lines.
-4. **Index.** `python -s -B manage.py collect kakaotalk` builds the index. Run it only when the owner asks for it
+4. **Index.** `python -s -B manage.py capture kakaotalk` builds the index. Run it only when the owner asks for it
    separately (AGENTS.md).
 5. **Schedule.** `python -s -B manage.py schedule install kakaotalk --dry-run` first, which changes nothing.
    `install` (elevated) only after the owner has seen the dry-run result and confirmed it.
@@ -1083,17 +1085,17 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | capture 2: `last result:` `2 (capture refused)`, or task.log `step=capture rc=2` with `refused: precondition or configuration` | the config or the data-root precheck failed: a missing path, a data root inside a git work tree, the ACL, Windows Search | run 5.7's dry run without elevation; its stderr names the reason. If the dry run exits 0, the cause is most likely one that only SYSTEM meets: git missing from the machine PATH (rerun the 0.1 machine-PATH git gate) |
 | capture 3: `last result:` `3 (capture suspect)`, or task.log `<source_key> status=suspect` | a known key vanished from a fully read container; nothing of that origin was committed | report it; do not force (no `--full`, no `--rebuild-state`). Ask the owner whether the archive was damaged or the account switched |
 | `search` exit 2, `give a query or ...` | aggregate modes still need a selector | add `--since 1970-01-01` or an app selector |
-| `search` exit 2, no index yet | never collected | run the fetch step (5.5) or `collect` |
-| `search` exit 2, index damaged or another version | outdated or broken index | `collect <app> --config <CFG> --rebuild-index` |
+| `search` exit 2, no index yet | never captured | run the fetch step (5.5) or `capture` |
+| `search` exit 2, index damaged or another version | outdated or broken index | `capture <app> --config <CFG> --rebuild-index` |
 | `check` exit 1, `differing_rows>0` | folded state disagrees with the ledger | report it. With the owner's approval (it rebuilds the folded state from the ledger and changes neither the ledger nor the index), run `check <app> --config <CFG> --rebuild-state`. It prints `replay check=no differing_rows=N head_seq=N`, where N is what it found before rebuilding, and exits 0. `ledger busy` instead means nothing was rebuilt: retry after the run. A `seal` line with a count above 0 also blocks it (exit 1, nothing rebuilt): stop and report. Then `check` again: `differing_rows=0`, `head_seq` unchanged. If it still differs, stop and report |
-| capture 75 on a first run | empty archive (no manifest yet) | run the fetch step before `collect` |
+| capture 75 on a first run | empty archive (no manifest yet) | run the fetch step before `capture` |
 | capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.9 step 5), check both numbers again |
-| capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`collect`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
+| capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`capture`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
 | `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires client and token files`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
 | Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch. kakaotalk's task needs the same: tell the owner (rule 2) |
 | elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task, and tell the owner that kakaotalk's task needs the same (rule 2) |
-| `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `collect` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
+| `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `capture` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
 | `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded fetch runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
 | non-elevated status exit 3, `not registered, or not readable from this prompt` | SYSTEM task not readable without elevation | elevated status (7.2) |
@@ -1168,7 +1170,7 @@ embedding model. Nothing leaves the machine: the model runs in Ollama on a loopb
 refuse any other URL and ignore proxies) and sqlite-vec stores the vectors. Without the file, `--hybrid` returns the
 plain keyword hits, with `hybrid.available: false` and the reason. The file holds vectors and record keys, no text,
 but the vectors are derived from private text: it stays in `<DATA_ROOT>\index` like the index. Run `embed` only when
-the owner asks. Like `collect --rebuild-index`, `embed --rebuild` needs no approval (rule 10): it rebuilds derived
+the owner asks. Like `capture --rebuild-index`, `embed --rebuild` needs no approval (rule 10): it rebuilds derived
 data only.
 
 **12.1 Ollama.** `winget install --id Ollama.Ollama -e`, then `ollama pull bge-m3` (the default model;
@@ -1193,7 +1195,7 @@ shows `available: True`. Look only at that field: the rows are private text.
 depends on the GPU and the model. Gate: exit 0 with `pending=0`, and `src_seq` equal
 to `seq`. An interrupted run, or one that exits 75, resumes where it stopped: run the same command again.
 
-**12.6 Keeping it current.** No scheduled task runs `embed`: run it after collects, when the owner decides. It
+**12.6 Keeping it current.** No scheduled task runs `embed`: run it after captures, when the owner decides. It
 re-chunks only the containers that changed since its last complete run. `hybrid.stale: true` in a search result
 (also a `# note:` line) means that the index holds rows changed since the embeddings were made, that the index
 was rebuilt since, or that a code update changed the chunker: a plain `embed <app>` then re-chunks every container
@@ -1270,7 +1272,7 @@ files: it measures the cost of one file. Narrow the large apps with `<p>_wiki_in
 2. Set the user environment variable `OLLAMA_CONTEXT_LENGTH` (for example 32768) and the app's context size to the
    same value. `OLLAMA_HOST` stays unset (the 12.1 gate).
 
-Gate: one source is ingested again by the local model, for example after a Notion edit is collected and exported.
+Gate: one source is ingested again by the local model, for example after a Notion edit is captured and exported.
 
 **13.8 Daily export.** This is a task under the owner's account, with no elevation. Its actions run one after
 another. List only the apps whose `<p>_wiki_project` is set: the others exit 2. kakaotalk's action carries its
@@ -1290,5 +1292,5 @@ channel, a narrower include or a purge leaves them, and so does an old month tha
 months from the oldest forward, so later files of that stream are renamed and ingested again. They are kept, because LLM
 Wiki deletes a removed source's pages. `--prune` deletes them, and with them their wiki pages: run it only on the
 owner's explicit yes, after a `--prune --dry-run` that shows the count. `--prune` refuses (exit 2, nothing deleted)
-while the index is stale or when the run produced no file: run collect first. When nothing should be exported any more
+while the index is stale or when the run produced no file: run capture first. When nothing should be exported any more
 (an include narrowed to nothing), the owner deletes the files by hand.

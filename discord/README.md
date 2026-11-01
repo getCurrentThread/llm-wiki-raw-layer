@@ -2,7 +2,7 @@
 
 `dc_archive` keeps a protected data root, append-only ledger and `index/discord.sqlite`.
 The app includes a stdlib fetch step (`fetch.py`) with API and token-free desktop-cache sources.
-Archive-only configs remain read-only; `dc_sync: true` makes live `manage.py collect discord` update the
+Archive-only configs remain read-only; `dc_sync: true` makes live `manage.py capture discord` update the
 archive before capturing it. Frozen inputs never call a fetch step. Core files are unchanged.
 
 ## Collection and authentication
@@ -16,7 +16,7 @@ When a previously unknown guild is classified later, channel metadata updates wh
 directory remains fixed, preserving immutable source paths and manifest filename order.
 
 API mode uses a supplied bot/user token (`dc_token_type: "auto"|"bot"|"user"`), in a private token file named
-by `dc_token_file` under `<DATA_PARENT>`. In manual runs (`--auth-check`, `--capture`, `manage.py collect
+by `dc_token_file` under `<DATA_PARENT>`. In manual runs (`--auth-check`, `--capture`, `manage.py capture
 discord`), `DISCORD_BOT_TOKEN` / `DISCORD_TOKEN` take precedence over the file when they are set. The SYSTEM
 scheduled task sees no user variables, so with `dc_sync` on, `task_checks` (and `schedule install`) require an
 absolute `dc_token_file` under `<DATA_PARENT>` whose folder passes the data-root precheck, the file itself, and
@@ -31,7 +31,7 @@ array. Restricted message-content responses and failed channel fetches preserve 
 ```
 python -s -B -m discord.fetch --auth-check
 python -s -B -m discord.fetch --capture
-python -s -B manage.py collect discord
+python -s -B manage.py capture discord
 ```
 
 The fetch step CLI prints counts/categories only; `--max-items N` bounds channel publication for a diagnostic
@@ -107,7 +107,7 @@ the last observation still chooses the head. This avoids source-only refresh chu
 ```
 python -s -B manage.py setup discord
 # Fill sources.dc_archive with the absolute existing archive path in the external config.
-python -s -B manage.py collect discord
+python -s -B manage.py capture discord
 python -s -B manage.py search discord deployment --guild Server --channel general --json
 python -s -B manage.py search discord --thread 1300000000000000000 --json
 python -s -B manage.py search discord --list-channels --json

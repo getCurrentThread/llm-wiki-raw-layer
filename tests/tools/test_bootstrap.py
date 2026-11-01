@@ -199,7 +199,7 @@ class NextStep(unittest.TestCase):
                                                           task_problems=["app notion: x"]), OK_INDEX, "5.6"),
             ("no task", "gmail", probe(task={"registered": False}), OK_INDEX, "5.7"),
             ("unknown, no run", "gmail", probe(task={"registered": "unknown"}, log=None), OK_INDEX, "5.7"),
-            # manual collect and --capture runs write task.log too: they prove nothing about the task
+            # manual capture and --capture runs write task.log too: they prove nothing about the task
             ("unknown, manual runs", "gmail", probe(task={"registered": "unknown"}), OK_INDEX, "5.7"),
             ("unknown, 5.10 recorded", "gmail", probe(task={"registered": "unknown"}, checkpoints={"5.10": {}}),
              OK_INDEX, "8"),
@@ -207,6 +207,7 @@ class NextStep(unittest.TestCase):
             ("definition differs", "gmail", probe(task=dict(TASK, definition="differs", differs=["start"])),
              OK_INDEX, "5.7"),
             ("another action", "gmail", probe(task=dict(TASK, definition="foreign")), OK_INDEX, "5.7"),
+            ("previous command name", "gmail", probe(task=dict(TASK, definition="outdated")), OK_INDEX, "5.7"),
             ("no run info", "gmail", probe(task={k: v for k, v in TASK.items() if k not in ("result_ok",
                                                                                           "last_result")}),
              OK_INDEX, "9"),
@@ -258,11 +259,31 @@ class NextStep(unittest.TestCase):
                 self.assertIn(f"`{g}`", section)
 
 
+class DefinitionState(unittest.TestCase):
+    """A registered task is current, differs, outdated (the capture command's previous name: install replaces it) or
+    foreign, as `schedule status` reads it."""
+
+    def test_the_previous_command_name_is_outdated_not_foreign(self):
+        from rawlayer import schedule  # noqa: PLC0415
+        s = schedule.parse({"task": "\\toy-folder\\toy-capture", "start": "01:14", "every_hours": 3, "limit_hours": 2,
+                            "description": "toy: capture every 3 h"})
+        project, cfg = schedule._project(), Path(tempfile.gettempdir()) / "toy" / "config.json"
+        xml = schedule.task_xml(s, "python.exe", project, "toy", cfg)
+        state = lambda text: B.definition_state(schedule, s, "toy", text)  # noqa: E731
+        self.assertEqual(state(xml)["definition"], "current")
+        self.assertEqual(state(xml.replace(" capture toy --config", " collect toy --config"))["definition"], "outdated")
+        self.assertEqual(state(xml.replace(" capture toy --config", " other toy --config"))["definition"], "foreign")
+        # doctor names the elevated re-register step
+        step, why = B.next_step("gmail", probe(task=dict(TASK, definition="outdated")), OK_INDEX)
+        self.assertEqual(step, "5.7")
+        self.assertIn("schedule install gmail", why)
+
+
 class IndexState(unittest.TestCase):
     def test_states(self):
         env = {"total": 4, "updated_at": "u", "index": {"seq": 2, "ledger_seq": 3, "stale": True}}
         for result, want in (((0, json.dumps(env), ""), "stale"), ((0, "{", ""), "error"), ((75, "", ""), "busy"),
-                             ((2, "", "search: no gmail index yet -- run collect"), "missing"),
+                             ((2, "", "search: no gmail index yet -- run capture"), "missing"),
                              ((2, "", "the gmail index was built by another version"), "outdated"),
                              ((2, "", "config file unreadable"), "not_configured"),
                              ((1, "", "something else"), "error")):

@@ -5,7 +5,7 @@ A command is a module rawlayer/management/commands/<name>.py defining `Command`
 (rawlayer/management/base.py); "_" in a file name is "-" on the command line. `manage.py help` lists them,
 `manage.py help <command>` shows one.
 
-A command that works on an app's data root takes the app right after its name (`manage.py collect <app> ...`); a
+A command that works on an app's data root takes the app right after its name (`manage.py capture <app> ...`); a
 project with a single app may leave it out. Such a command selects the app before it starts (one process, one app,
 one ledger: rawlayer/registry.py), and its --config defaults to <DATA_PARENT>/<app>/config.json.
 

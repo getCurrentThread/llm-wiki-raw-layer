@@ -32,7 +32,7 @@ if q == "USAGE":
 if q == "BUSY":
     sys.exit(75)
 if q == "NOINDEX" or (argv[1] == "beta" and "--mode=count" in argv):
-    print("search: no " + argv[1] + " index yet -- run collect", file=sys.stderr); sys.exit(2)
+    print("search: no " + argv[1] + " index yet -- run capture", file=sys.stderr); sys.exit(2)
 if q == "NOTE":
     print("# note: a note line", file=sys.stderr)
 index = {"seq": 2, "ledger_seq": 3 if q == "STALE" else 2, "stale": q == "STALE"}

@@ -4,7 +4,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 from tests.core import appfix
-from rawlayer import collect, schedule
+from rawlayer import schedule
+from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
 from notion import inputs
 from .fixtures import Fixture
@@ -18,7 +19,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_collect_pipeline(self):
         with appfix.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(collect.main(["notion", "--config", str(self.fx.config_path)]), 0)
+            self.assertEqual(capture.main(["notion", "--config", str(self.fx.config_path)]), 0)
         rc, out, err = h.run_rawsearch(["notion", "--config", self.fx.config_path, "deployment", "--json"])
         self.assertEqual(rc, 0, err)
 
@@ -33,7 +34,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("03:29:00", xml)
         self.assertIn("PT6H", xml)
         self.assertIn("PT1H", xml)
-        self.assertIn("collect notion", xml)
+        self.assertIn("capture notion", xml)
         self.assertIn("S-1-5-18", xml)
 
     def test_frozen_and_peak(self):

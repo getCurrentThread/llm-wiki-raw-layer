@@ -112,13 +112,13 @@ and `T2` inputs require `inputs_root`; live capture does not require it to exist
 Run from `<PROJECT>`, always as `python -s -B manage.py <command> [<app>] ...`. `help` lists commands;
 `help <command>` gives a synopsis, and a command's `--help` gives its options. `--config` is optional at this
 entry point and defaults to `<DATA_PARENT>/<app>/config.json`. Seven commands are the whole surface: the steps
-between them (capture, index, replay, export-state, the per-app input derivations) run inside `collect`, `check`
+between them (capture, index, replay, export-state, the per-app input derivations) run inside `capture`, `check`
 and `setup`, not as commands of their own.
 
 | invocation after `manage.py` | purpose and options |
 |---|---|
 | `setup <app> [--from CFG\|-] [--force] [--provision] [--scan] [--root HEXFILE] [--restart-client]` | prepare the data parent, app data root and config; `-` reads config from stdin; force replaces an existing config; the app fills its own config defaults and runs its provisioning (kakaotalk: the root key, keystore, decrypted backup, and on a Mac the client database); `--provision` reruns only that provisioning — the recovery path when a credential rotated — with `--scan` (memory fallback), `--root` (a root file to install, verified first) and `--restart-client` |
-| `collect <app> [--config CFG] [--input-set live\|T1\|T2] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
+| `capture <app> [--config CFG] [--input-set live\|T1\|T2] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
 | `search <app> [QUERY] [--config CFG] [options]` | search the app's index; query options are in the app README and `search <app> --help` |
 | `embed <app> [--config CFG] [--model M] [--dims N] [--url U] [--limit N] [--dry-run] [--rebuild]` | build or refresh the optional dense sidecar that `search --hybrid` reads; needs Ollama on a loopback address and sqlite-vec's windows-x86_64 build (llm.md 12) |
 | `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts and collisions; with an app, load its config and verify the ledger's hash chain and segments and the folded state against the ledger (the old replay --check); `--export-state` also dumps every record's (origin, key, rev, op, h) (the old export-state), `--rebuild-state` rebuilds the state from the ledger (the old replay) |
@@ -152,7 +152,7 @@ Each app's `AppConfig.schedule` in `<app>/apps.py` defines one Windows SYSTEM ta
 The action's Command is the selected Python interpreter, WorkingDirectory is `<PROJECT>`, and Arguments are:
 
 ```
--s -B <PROJECT>\manage.py collect <app> --config <cfg>
+-s -B <PROJECT>\manage.py capture <app> --config <cfg>
 ```
 
 Paths containing spaces are quoted by the generated definition. `install` checks the config, data root,
@@ -163,7 +163,7 @@ Run and remove require an app when several are discovered.
 A new start is ignored while a task runs; a missed start runs when the machine returns. Collect runs its steps
 in this one process — the capture step with the live input set, then the index step after every capture exit
 code (a failed, refused or busy capture included), because only committed manifests enter the index. Steps go to
-`<DATA_ROOT>/reports/task.log`; collect returns capture's code. `status` reports the newest run that finished a
+`<DATA_ROOT>/reports/task.log`; the command returns the capture step's code. `status` reports the newest run that finished a
 step, marks an incomplete run and returns 3 when the task, definition, last result or logged step needs
 attention.
 

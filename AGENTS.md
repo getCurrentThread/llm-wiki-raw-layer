@@ -16,7 +16,7 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
   (a bare `test` runs the same suites). Every suite builds synthetic data in temporary directories.
 - Search: `python -s -B manage.py search <app> [QUERY] --json [options]`. `search <app> --help` documents the
   modes, filters and query language; trust it over memory.
-- Do not run `collect` or rebuild an index unless the owner asks. The same holds for `embed` (llm.md 12), which
+- Do not run `capture` or rebuild an index unless the owner asks. The same holds for `embed` (llm.md 12), which
   builds the optional dense sidecar that `search --hybrid` reads.
 - `tools/wikiexport.py <app>` (llm.md 13) writes the LLM Wiki project's sources: run it only when the owner asks,
   and `--prune`, which makes LLM Wiki delete wiki pages, only on their explicit yes.

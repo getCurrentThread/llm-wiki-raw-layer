@@ -4,7 +4,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 from tests.core import appfix
-from rawlayer import collect, schedule
+from rawlayer import schedule
+from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
 from discord import inputs
 from .fixtures import Fixture
@@ -18,7 +19,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_collect_pipeline(self):
         with appfix.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(collect.main(["discord", "--config", str(self.fx.config_path)]), 0)
+            self.assertEqual(capture.main(["discord", "--config", str(self.fx.config_path)]), 0)
         rc, out, err = h.run_rawsearch(["discord", "--config", self.fx.config_path, "deployment", "--json"])
         self.assertEqual(rc, 0, err)
 
@@ -33,7 +34,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("00:14:00", xml)
         self.assertIn("PT3H", xml)
         self.assertIn("PT1H", xml)
-        self.assertIn("collect discord", xml)
+        self.assertIn("capture discord", xml)
         self.assertIn("S-1-5-18", xml)
 
     def test_frozen_and_peak(self):

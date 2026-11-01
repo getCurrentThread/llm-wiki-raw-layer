@@ -22,7 +22,7 @@ from tests.core import toyfix as T
 from tests.core.toyapp import apps as toyapps
 
 GOOD = {"task": "\\toy-folder\\toy-capture", "start": "01:14", "every_hours": 3, "limit_hours": 2,
-        "description": "toy: collect every 3 h"}
+        "description": "toy: capture every 3 h"}
 NO_RUN = "267011"                       # 0x41303: the task has not run yet
 TOYS = {"toy": T.TOY, "toy2": T.TOY2}    # the apps a Case project discovers, by package
 # the synthetic paths below (never created) are built on the temp folder: no drive, no user folder assumed
@@ -112,7 +112,7 @@ class FakeTasks:
         if verb == "/Query":
             # the command line field keeps its quotes unescaped, as schtasks prints it
             return 0, (f'"HOST","{args[2]}","N/A","Ready","Interactive/Background","2026-10-05 \uc624\ud6c4 11:14:00",'
-                       f'"{self.last_result}","N/A","{TMP / "py.exe"} -s -B "{TMP / "a b" / "manage.py"}" collect toy",'
+                       f'"{self.last_result}","N/A","{TMP / "py.exe"} -s -B "{TMP / "a b" / "manage.py"}" capture toy",'
                        f'"{TMP / "a b"}","d","Enabled","Disabled"\r\n'), ""
         if verb == "/Run":
             return 0, "SUCCESS: run.\r\n", ""
@@ -157,13 +157,13 @@ class TestDefinition(unittest.TestCase):
         s = schedule.parse({**GOOD, **kv})
         return schedule.task_xml(s, self.PY, self.PROJECT, "toy", self.CONFIG, today=datetime.date(2026, 10, 5))
 
-    def test_the_task_runs_collect_as_system(self):
+    def test_the_task_runs_capture_as_system(self):
         root = ET.fromstring(re.sub(r"^<\?xml[^>]*\?>", "", self.xml(description="a & <b>")))
         ns = {"t": schedule.NS}
         get = lambda p: root.findtext(p, namespaces=ns)  # noqa: E731
         self.assertEqual(get("t:Actions/t:Exec/t:Command"), self.PY)
         self.assertEqual(get("t:Actions/t:Exec/t:Arguments"),
-                         f'-s -B "{Path(self.PROJECT, "manage.py")}" collect toy --config "{self.CONFIG}"')
+                         f'-s -B "{Path(self.PROJECT, "manage.py")}" capture toy --config "{self.CONFIG}"')
         self.assertEqual(get("t:Actions/t:Exec/t:WorkingDirectory"), self.PROJECT)
         self.assertEqual(get("t:Principals/t:Principal/t:UserId"), "S-1-5-18")
         self.assertEqual(get("t:Principals/t:Principal/t:RunLevel"), "HighestAvailable")
@@ -196,13 +196,13 @@ class TestDefinition(unittest.TestCase):
             "interval": back.replace("PT3H", "PT4H"),
             "start": back.replace("T01:14:00", "T01:15:00"),
             "time_limit": back.replace("PT2H", "PT3H"),
-            "arguments": back.replace(" collect toy --config", " capture toy --config"),
+            "arguments": back.replace(" capture toy --config", " other toy --config"),
             "command": back.replace("Py 3", "Py 4"),
             "enabled": back.replace("</Settings>", "<Enabled>false</Enabled></Settings>"),
             "user": back.replace("S-1-5-18", "S-1-5-21-1"),
             "start_when_available": back.replace("<StartWhenAvailable>true", "<StartWhenAvailable>false"),
             "triggers": back.replace("</Triggers>", "<BootTrigger/></Triggers>"),
-            "description": back.replace("toy: collect", "other"),
+            "description": back.replace("toy: capture", "other"),
         }
         for name, changed in cases.items():
             with self.subTest(name=name):
@@ -216,10 +216,14 @@ class TestDefinition(unittest.TestCase):
         self.assertNotIn('"', plain)                            # the unquoted form, not `quoted` below again
         self.assertEqual(config_of(schedule.registered_config(p, "toy", plain)), d)
         # every path quoted (the retired script's spelling)
-        quoted = f'-s -B "{Path(p, "manage.py")}" collect toy --config "{d}"'
+        quoted = f'-s -B "{Path(p, "manage.py")}" capture toy --config "{d}"'
         self.assertEqual(config_of(schedule.registered_config(p, "toy", quoted)), d)
+        # the command's previous name is not the current form, and is asked for by name
+        previous = quoted.replace(" capture ", " collect ")
+        self.assertIsNone(schedule.registered_config(p, "toy", previous))
+        self.assertEqual(config_of(schedule.registered_config(p, "toy", previous, "collect")), d)
         for foreign in ("", "-s -B other.py", schedule.arguments(str(TMP / "elsewhere"), "toy", self.CONFIG), None,
-                        args.replace("-s -B", "-S -B"), args.replace(" collect ", " capture "), args + " --x",
+                        args.replace("-s -B", "-S -B"), args.replace(" capture ", " collect "), args + " --x",
                         schedule.arguments(self.PROJECT, "toy2", self.CONFIG), self.OLD):
             with self.subTest(args=foreign):
                 self.assertIsNone(schedule.registered_config(self.PROJECT, "toy", foreign))
@@ -520,6 +524,24 @@ class TestStatus(Case):
         self.assertIn("registered from the earlier layout", out)
         self.assertIn("manage.py schedule install toy", out)
 
+    def test_a_task_of_the_previous_command_name(self):
+        """Registered as `manage.py collect <app> --config <cfg>` (the capture command's previous name): status calls
+        it outdated and says to install again, and install replaces it with the generated definition."""
+        self.install()
+        self.tasks.last_result = "0"
+        current = self.tasks.xml
+        self.tasks.xml = current.replace(" capture toy --config", " collect toy --config")
+        self.assertNotEqual(self.tasks.xml, current)
+        rc, out, _err = self.status()
+        self.assertEqual(rc, 3)
+        self.assertIn("definition: outdated", out)
+        self.assertIn("manage.py schedule install toy", out)
+        self.assertNotIn("not this project's", out)
+        rc, _out, err = self.install()
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual(self.tasks.xml, current)
+        self.assertIn("definition: current", self.status()[1])
+
     def test_registered_and_current(self):
         self.install()
         for result, rc, shown in (("0", 0, "0 (ok)"), (NO_RUN, 0, "0x00041303 (has not run yet)"),
@@ -594,7 +616,7 @@ class TestStatus(Case):
         self.assertIn("task.log, previous run, incomplete (stopped before its index step):\n", out)
 
     def test_a_failing_step_needs_attention_though_the_last_result_is_ok(self):
-        """collect's exit code (Last Result) is capture's: an index that stops at a defect shows only in task.log."""
+        """the command's exit code (Last Result) is the capture step's: an index that stops at a defect shows only in task.log."""
         self.install()
         self.tasks.last_result = "0"
         self.task_log("run\n2026-10-05T01:00:00Z step=capture rc=0 seconds=9\n"
@@ -620,7 +642,7 @@ class TestStatus(Case):
         project = str(T.REPO.resolve())
         args = re.search(r"<Arguments>(.*?)</Arguments>", self.tasks.xml).group(1)
         other = args.replace(project, respelled(project))
-        quoted = re.sub(r"(\S+manage\.py) collect toy --config (.+)$", r'"\1" collect toy --config "\2"', other)
+        quoted = re.sub(r"(\S+manage\.py) capture toy --config (.+)$", r'"\1" capture toy --config "\2"', other)
         for spelled in (other, quoted):
             with self.subTest(args=spelled):
                 self.tasks.xml = self.tasks.xml.replace(f"<Arguments>{args}</Arguments>",

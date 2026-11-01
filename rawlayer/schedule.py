@@ -16,13 +16,14 @@ library only.
   remove  [<app>]  unregister the task
   (<app> may be left out of run and remove in a project with a single app)
 
-An app's task runs `<python> -s -B <project>\\manage.py collect <app> --config <CFG>` in the project folder as SYSTEM
+An app's task runs `<python> -s -B <project>\\manage.py capture <app> --config <CFG>` in the project folder as SYSTEM
 at the highest run level: daily from `start` (local time) and every `every_hours` hours after it that day, at most
 `limit_hours` hours per run. A start is ignored while a run is still going, a start missed while the machine was off
 runs when it is back, and batteries neither block nor stop it. The project folder and the config are registered by
 their real path (on-disk case, junctions and subst drives resolved), so SYSTEM sees the same files and a prompt that
 spells the path differently still matches. A task registered from the earlier layout of one project per folder
-(`<folder>\\manage.py collect --config <CFG>`) is reported as such by status: install replaces it.
+(`<folder>\\manage.py collect --config <CFG>`), or under the command's previous name (`<project>\\manage.py collect
+<app> --config <CFG>`), is reported as outdated by status: install replaces it.
 
 install refuses before anything is registered when the task would fail: the schedule malformed, the config refused
 (Config: paths, data parent), the data root unsafe or not verifiable (precheck: outside git, inherited ACL, Search
@@ -57,13 +58,13 @@ _DECL = re.compile(r"^\s*<\?xml[^>]*\?>")
 # list2cmdline output for paths, which never hold '"': split where Windows' argv parser splits, on space and tab
 # only (a path may hold other white space, U+3000 or U+00A0, unquoted)
 _TOKEN = re.compile(r'"([^"]*)"|([^ \t]+)')
-# collect's task.log (rawlayer/collect.py): "run" before every run, then one line per step it finished
+# capture's task.log (rawlayer/management/commands/capture.py): "run" before every run, then one line per step it finished
 _STEP = re.compile(r"^\S+ step=([a-z_-]+) rc=(-?[0-9]+) seconds=-?[0-9]+$")
 _LAST_STEP = "index"
 # schtasks /Query /FO CSV /V /NH: HostName, TaskName, Next Run Time, Status, Logon Mode, Last Run Time, Last Result, ...
 # The later fields (the command line) are written without escaping their quotes, so only this prefix is parsed.
 _CSV_HEAD = re.compile(r'^"([^"]*)","([^"]*)","([^"]*)","([^"]*)","([^"]*)","([^"]*)","([^"]*)"')
-# Last Result: collect's exit code (capture's) or a Task Scheduler code
+# Last Result: the capture command's exit code (the capture step's) or a Task Scheduler code
 RESULTS = {0: "ok", 1: "capture error", 2: "capture refused", 3: "capture suspect",
            75: "capture busy, or an origin skipped", 124: "capture timed out",
            0x41301: "running now", 0x41303: "has not run yet", 0x41306: "stopped (time limit, or by hand)",
@@ -130,7 +131,7 @@ def _project():
 
 def arguments(project, app, config):
     """The registered Arguments text: str() of each path (a config given as text is kept as written)."""
-    return subprocess.list2cmdline(["-s", "-B", str(Path(project) / "manage.py"), "collect", app, "--config",
+    return subprocess.list2cmdline(["-s", "-B", str(Path(project) / "manage.py"), "capture", app, "--config",
                                     str(config)])
 
 
@@ -252,11 +253,12 @@ def differences(actual_xml, expected_xml):
     return [k for k in e if a.get(k) != e[k]]
 
 
-def registered_config(project, app, args):
-    """The --config path (a Path) of registered Arguments that run `project`'s `manage.py collect <app> --config
-    <path>` (quoted or not, the project path in any spelling Windows treats as the same), else None."""
+def registered_config(project, app, args, command="capture"):
+    """The --config path (a Path) of registered Arguments that run `project`'s `manage.py <command> <app> --config
+    <path>` (quoted or not, the project path in any spelling Windows treats as the same), else None. `command`
+    "collect" asks for the previous name of the capture command, whose registered task install replaces."""
     t = _argv(args) if isinstance(args, str) else []
-    if len(t) == 7 and t[:2] == ["-s", "-B"] and t[3:6] == ["collect", app, "--config"] and \
+    if len(t) == 7 and t[:2] == ["-s", "-B"] and t[3:6] == [command, app, "--config"] and \
             _path_key(t[2]) == _path_key(Path(project) / "manage.py"):
         return Path(t[6])
     return None
@@ -385,7 +387,7 @@ def _settings_or_refuse(app):
 
 
 def _ready(config):
-    """Config, precheck and the selected app's task checks: the reasons collect would refuse, or None. A check that
+    """Config, precheck and the selected app's task checks: the reasons capture would refuse, or None. A check that
     cannot be completed (say Get-Acl failing) is a reason too: install registers only what it could verify."""
     from .capture import ledger, precheck  # noqa: PLC0415
     from .capture.config import Config, ConfigError  # noqa: PLC0415
@@ -522,7 +524,7 @@ def _runs(path):
 
 def last_run(data_root):
     """What task.log (after task.log.1, the log it rolled over from) says about the newest run that finished a step:
-    {"steps": [(line, step, rc)], "complete": it reached collect's last step, "newer_started": a later run has
+    {"steps": [(line, step, rc)], "complete": it reached the capture command's last step, "newer_started": a later run has
     started and finished no step yet}, or {"error": type} when a log cannot be read, or None when there is none.
     Only the step lines are kept, never the children's output under them."""
     reports = Path(data_root) / "reports"
@@ -564,7 +566,7 @@ def _task_log(data_root):
     if info is None:
         from .capture import paths  # noqa: PLC0415
         refused = Path(paths.DATA_PARENT).resolve() / "task-refused.log"
-        note = f"; {refused} exists (a collect run refused its data root)" if refused.exists() else ""
+        note = f"; {refused} exists (a capture run refused its data root)" if refused.exists() else ""
         print(f"  task.log: none yet{note}")
         return False
     if "error" in info:
@@ -604,22 +606,27 @@ def status(a, app):
     registered_python = (exec_.findtext(f"{{{NS}}}Command") if exec_ is not None else None) or ""
     registered_args = (exec_.findtext(f"{{{NS}}}Arguments") if exec_ is not None else None) or ""
     registered = registered_config(project, app, registered_args)
+    previous = registered is None and registered_config(project, app, registered_args, "collect") is not None
     legacy = registered is None and old_layout(registered_args)
     # the registered --config as its text, not str() of a Path: a relative one written with "/" or a "." part
     # would no longer match the definition read back (only an absolute token is compared as a path)
     t = _argv(registered_args)
     config = Path(a.config).resolve() if a.config else (
-        t[6] if registered is not None else (t[5] if legacy else None))
+        t[6] if registered is not None or previous else (t[5] if legacy else None))
     python = Path(os.path.abspath(a.python)) if a.python else registered_python     # as install, not resolve()
     print(f"schedule: {s.task} registered ({'enabled' if f['enabled'] == 'true' else 'DISABLED'})")
     print(f"  runs: {registered_python} {registered_args}")
-    if legacy:
+    if previous:
+        attention = True
+        print(f"  definition: outdated, registered with the command's previous name (`manage.py collect`): re-run "
+              f"`manage.py schedule install {app}` (elevated)")
+    elif legacy:
         attention = True
         print(f"  definition: registered from the earlier layout (one project per folder): re-run "
               f"`manage.py schedule install {app}`")
     elif registered is None:
         attention = True
-        print(f"  definition: its action is not this project's `manage.py collect {app} --config <config>` "
+        print(f"  definition: its action is not this project's `manage.py capture {app} --config <config>` "
               f"(re-run install)")
     else:
         diff = differences(back, task_xml(s, python, project, app, config))
@@ -718,11 +725,11 @@ def _every(a, apps):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="manage.py schedule", description="The apps' scheduled tasks "
-                                 "(AppConfig.schedule): manage.py collect <app> as SYSTEM, through schtasks.exe.")
+                                 "(AppConfig.schedule): manage.py capture <app> as SYSTEM, through schtasks.exe.")
     sub = ap.add_subparsers(dest="action", required=True)
     p = sub.add_parser("install", help="register (or replace) the app's task, or every app's; elevated")
     p.add_argument("app", nargs="?", help="the app (default: every app that has a schedule)")
-    p.add_argument("--config", help="the config.json collect runs with (default: <DATA_PARENT>\\<app>\\config.json)")
+    p.add_argument("--config", help="the config.json capture runs with (default: <DATA_PARENT>\\<app>\\config.json)")
     p.add_argument("--python", help="the interpreter the task starts (default: this one)")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--run-now", action="store_true", help="start the task once after registering it")

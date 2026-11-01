@@ -13,7 +13,7 @@ Files
   mail (gmail)                             gmail/<YYYY-MM>.md, a "## <subject / sender> (<date>)" section per mail
   page (notion)               per page     notion/<breadcrumb> (<h8>).md, headings kept
 <h8> is a hash of the container id; the frontmatter holds the id itself. A chat or mail month is written once it is
-over (+09:00): the open month would change, and be ingested again in full, on every collect. Closed months, oldest
+over (+09:00): the open month would change, and be ingested again in full, on every capture. Closed months, oldest
 first, fill a file up to PACK characters, and <YYYY-MM> is the file's first month: the newest file of a stream grows
 (and is ingested again) as months close, until it is full; a file before it changes only when its records do.
 
@@ -234,7 +234,7 @@ def export(app, drv, con, project, include=(), since="", dry_run=False, prune=Fa
     refused before anything is deleted on a stale index (stale=True), or when no file came out while orphans exist."""
     if prune and not dry_run and stale:
         raise Refused(f"--prune refused, nothing written or deleted: the index is not at the ledger's head -- run: "
-                      f"python -s -B manage.py collect {app}, then export again")
+                      f"python -s -B manage.py capture {app}, then export again")
     kind = APPS[app][1]
     tz = common.parse_tz(TZ)
     now_month = common.fmt_ts(time.time() if now is None else now, tz, "%Y-%m")
