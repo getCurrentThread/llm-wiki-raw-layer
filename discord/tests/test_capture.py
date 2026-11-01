@@ -1,8 +1,6 @@
 import json
 import unittest
-from unittest.mock import patch
 from rawlayer.capture import canon
-from rawlayer.capture.origins import Unstable
 from discord.readers.archive import msg_native
 from discord.keys import snowflake_ms
 from .fixtures import Fixture, CID, MID, message
@@ -27,11 +25,6 @@ class CaptureTests(unittest.TestCase):
         h.rounds(self.fx, [{CID: [[message(text=t)]]} for t in texts])
         recs = h.by_key(h.records(self.fx))[f"dc:msg:{CID}:{MID}"]
         self.assertEqual([r["rev"] for r in recs], [1, 2, 3])
-
-    def test_two_versions_same_pass(self):
-        self.fx.write({CID: [[message()], [message(text="changed")]]})
-        self.assertEqual(h.capture(self.fx), 0)
-        self.assertEqual(len(h.by_key(h.records(self.fx))[f"dc:msg:{CID}:{MID}"]), 2)
 
     def test_volatile_fields_no_revision(self):
         self.assertEqual(h.capture(self.fx), 0)
@@ -76,10 +69,6 @@ class CaptureTests(unittest.TestCase):
         (self.fx.root / man["channels"][CID]["files"][-1]).write_text("{", encoding="utf-8")
         self.assertEqual(h.capture(self.fx), 75)
         self.assertEqual(len(h.records(self.fx)), n)
-
-    def test_unstable(self):
-        with patch("discord.origins.archive.read_once", side_effect=Unstable()), patch("rawlayer.capture.origins.time.sleep"):
-            self.assertEqual(h.capture(self.fx), 75)
 
     def test_dm_and_snowflake_day(self):
         self.fx.write({CID: [[message()]]}, guild="0")

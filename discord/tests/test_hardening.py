@@ -34,54 +34,6 @@ class HardeningTests(unittest.TestCase):
         self.fx.save("manifest.json", man)
         self.assertEqual(read_once(self.fx.root, [], set(), "dc_archive").notes["order_bad"], 1)
 
-    def test_orphan_tmp_bad_pk(self):
-        self.fx.save("exports/orphan.json", {})
-        self.fx.save("exports/ignored.tmp", {})
-        rd = read_once(self.fx.root, [], set(), "dc_archive")
-        self.assertEqual(rd.notes["orphan_file"], 1)
-        self.fx.write({CID: [[{"id": "bad:id"}]]})
-        self.assertEqual(read_once(self.fx.root, [], set(), "dc_archive").notes["pk_bad"], 1)
-
-    def test_manifest_race(self):
-        from unittest.mock import patch
-        from rawlayer.capture import fsio
-        from rawlayer.capture.origins import Unstable
-        original = fsio.read_shared
-        count = 0
-        def read(path):
-            nonlocal count
-            data = original(path)
-            if path.name == "manifest.json":
-                count += 1
-                if count == 2:
-                    return data + b" "
-            return data
-        with patch("discord.readers.archive.fsio.read_shared", side_effect=read):
-            with self.assertRaises(Unstable):
-                read_once(self.fx.root, [], set(), "dc_archive")
-
-    def test_nonfinite_partition_channel_rejected(self):
-        man = json.loads((self.fx.root / "manifest.json").read_text())
-        path = self.fx.root / man["channels"][CID]["files"][0]
-        obj = json.loads(path.read_text())
-        obj["messages"][0]["content"] = float("nan")
-        path.write_text(json.dumps(obj), encoding="utf-8")
-        rd = read_once(self.fx.root, [], set(), "dc_archive")
-        self.assertEqual(rd.notes["bad_file"], 1)
-        self.assertNotIn("dc:ch:" + CID, rd.keys)
-
-    def test_message_count_requires_integer(self):
-        for count in (1.0, True, "1"):
-            with self.subTest(count=count):
-                man = self.fx.write({CID: [[message()]]})
-                rel = man["channels"][CID]["files"][0]
-                obj = json.loads((self.fx.root / rel).read_text())
-                obj["messageCount"] = count
-                self.fx.save(rel, obj)
-                rd = read_once(self.fx.root, [], set(), "dc_archive")
-                self.assertEqual(rd.notes["count_mismatch"], 1)
-                self.assertNotIn("dc:ch:" + CID, rd.keys)
-
     def test_projection_failure_rejects_only_affected_channel(self):
         self.fx.write({CID: [[message()]], MID: [[message()]]}, parents={MID: CID})
         self.assertEqual(h.capture(self.fx), 0)

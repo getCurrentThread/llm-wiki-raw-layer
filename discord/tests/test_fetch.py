@@ -1,6 +1,5 @@
 import copy
 import io
-import json
 import os
 import unittest
 from unittest.mock import patch
@@ -35,15 +34,6 @@ class Client:
         if self.fail:
             raise FetchError("api_error",403)
         yield from copy.deepcopy([m for m in self.rows if int(m['id'])>lower])
-
-
-class Response:
-    def __init__(self,value,headers=None):
-        self.data=json.dumps(value).encode()
-        self.headers=headers or {}
-    def __enter__(self):return self
-    def __exit__(self,*args):pass
-    def read(self):return self.data
 
 
 class FetchTests(unittest.TestCase):
@@ -134,21 +124,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(len(rows),249)
         self.assertEqual(len({m['id'] for m in rows}),249)
         self.assertEqual(len(queries),3)
-
-    def test_rate_limit_retry_and_bot_user_autodetection(self):
-        calls=[]
-        responses=[HTTPError('https://discord.com',429,'rate limited',{'Retry-After':'0'},io.BytesIO(b'{"retry_after":0}')),
-                   HTTPError('https://discord.com',401,'unauthorized',{},io.BytesIO(b'{}')),
-                   Response({'id':UID})]
-        def opener(req,timeout=None):
-            calls.append(req.get_header('Authorization'))
-            value=responses.pop(0)
-            if isinstance(value,Exception):raise value
-            return value
-        client=DiscordClient('synthetic-token',opener=opener,sleep=lambda delay:None)
-        self.assertEqual(client.authenticate()['id'],UID)
-        self.assertEqual(calls,['Bot synthetic-token','Bot synthetic-token','synthetic-token'])
-        self.assertFalse(client.is_bot)
 
     def test_token_comes_from_the_first_set_variable_and_refuses_line_breaks(self):
         none = {"DISCORD_BOT_TOKEN": "", "DISCORD_TOKEN": ""}

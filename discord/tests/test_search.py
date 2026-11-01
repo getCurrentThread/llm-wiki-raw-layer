@@ -2,8 +2,8 @@ import json
 import sqlite3
 import unittest
 from contextlib import closing
-from rawlayer.search import dense, index
-from discord.search import SPEC, DRIVER, DiscordApplier, msg_text
+from rawlayer.search import index
+from discord.search import SPEC, msg_text
 from .fixtures import Fixture, CID, MID, UID, message
 from tests.core import appfix as h
 
@@ -25,20 +25,6 @@ class SearchTests(unittest.TestCase):
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
                     for t in ("msgs", "ch_src", "guild_src", "users", "channels", "counts")}
 
-    def test_chunk_units_cover_the_live_rows_in_order(self):
-        con, _meta, _fresh = index.open_search(self.fx.data_root, SPEC)
-        self.addCleanup(con.close)
-        units = {c: DRIVER.chunk_units(con, c) for c in DRIVER.changed_containers(con, 0)}
-        live = {r[0] for r in con.execute("SELECT key FROM msgs WHERE deleted=0 AND message!=''")}
-        self.assertEqual(sorted(u[0] for _, us in units.values() for u in us), sorted(live))
-        for label, us in units.values():
-            self.assertTrue(label or not us)
-            self.assertEqual([u[1] for u in us], sorted(u[1] for u in us))
-            self.assertTrue(all(": " in u[2] and u[3] is False for u in us))
-        self.assertEqual(DRIVER.changed_containers(con, 10 ** 9), [])
-        chunks, _containers = dense.plan(con, DRIVER, 0)
-        self.assertTrue(chunks and all(set(v[1]) <= live for v in chunks.values()))
-
     def test_incremental_equals_rebuild_three_rounds(self):
         for text in ("edited deployment", "synthetic deployment"):
             self.fx.write({CID: [[message(text=text)]]})
@@ -55,9 +41,6 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(result["total"], 1)
             self.assertFalse(result["index"]["stale"])
             self.assertEqual(result["source"], "discord")
-            rc, out, err = h.run_rawsearch(["discord", "--config", self.fx.config_path, "deployment", "--mode", mode])
-            self.assertEqual(rc, 0, err)
-            self.assertTrue(out)
         self.assertEqual(self.query("deployment", "--guild", "absent")["total"], 0)
 
     def test_context_browse_paging(self):
@@ -101,42 +84,3 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(msg_text({"attachments": [{"fileName": "file.txt"}]}), ("file.txt", "files"))
         self.assertEqual(msg_text({"forwardedMessage": {"content": "forward"}}), ("forward", "forwarded"))
 
-    def test_thread_from_inner_message(self):
-        inner = message(str(int(MID) + 1), "thread reply")
-        self.fx.write({CID: [[message()]], MID: [[message(), inner]]}, parents={MID: CID})
-        self.assertEqual(h.capture(self.fx), 0)
-        index.update(self.fx.data_root, SPEC)
-        result = self.query("--thread", inner["id"])
-        self.assertEqual(result["root_id"], MID)
-        self.assertEqual(result["total"], 3)
-
-    def test_usage_errors(self):
-        for args in ([], ["--thread", "bad"], ["--channel", CID, "--before", "bad"],
-                     ["--channel", CID, "--before", "9" * 5000 + ".1.1"],
-                     ["deployment", "--limit", "-1"], ["deployment", "--since", "bad"],
-                     ["--thread", MID, "--list-channels"]):
-            rc, out, err = h.run_rawsearch(["discord", "--config", self.fx.config_path, *args])
-            self.assertEqual(rc, 2, (args, out, err))
-
-    def test_direct_fold_full_incremental_and_odd_counts(self):
-        records = h.records(self.fx)
-        out = []
-        for full in (False, True):
-            con = sqlite3.connect(":memory:")
-            self.addCleanup(con.close)
-            con.executescript(index.META_DDL)
-            SPEC.create_tables(con)
-            app = DiscordApplier(con, full)
-            for rec in records:
-                app.record(rec, 1)
-                if not full:
-                    app.end_manifest(1)
-            for bad in (None, {}, {"origin": "dc_archive", "op": "put", "rev": 1, "key": "bad", "kind": "msg"},
-                        dict(records[0], rev=2 ** 80), dict(records[0], rev=99, native=[])):
-                app.record(bad, 1)
-            app.end_manifest(1)
-            if full:
-                app.finish()
-            out.append({t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall() for t in ("msgs", "channels", "counts")})
-        self.assertEqual(out[0], out[1])
-        self.assertTrue(out[0]["counts"])

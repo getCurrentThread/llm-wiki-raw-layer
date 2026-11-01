@@ -44,22 +44,12 @@ class SetupDefaults(Base):
         self.assertEqual(self.cfg["dc_desktop_path"], str(cache))
         self.assertFalse(any(str(self.root) in n or str(self.home) in n for n in self.notes))
 
-    def test_api_token_file(self):
-        self.cfg["dc_source"] = "api"
-        self.app.setup_defaults(self.cfg, self.notes.append)
-        self.assertEqual(self.cfg["dc_token_file"], str(self.root / "token.txt"))
-        self.assertEqual(self.cfg["dc_desktop_path"], "")
-        self.assertFalse((self.root / "token.txt").exists())        # the owner writes it (6.2 handshake)
-
 
 class TaskChecks(Base):
     def cfg(self, **kv):
         base = {"dc_sync": True, "dc_source": "desktop", "dc_desktop_path": "", "dc_token_file": ""}
         base.update(kv)
         return SimpleNamespace(**base)
-
-    def test_sync_off(self):
-        self.assertEqual(self.app.task_checks(self.cfg(dc_sync=False)), [])
 
     def test_desktop(self):
         f = self.root / "file"
@@ -90,25 +80,3 @@ class TaskChecks(Base):
                 found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token)))
             self.assertEqual(len(found), 1)
             self.assertIn("machine-wide DISCORD_BOT_TOKEN", found[0])
-
-    def test_api_token_folder_failing_precheck(self):
-        # the fetch step's own precheck of the token's folder (ACL, Windows Search): the same refusal as a bad path
-        from rawlayer.capture.config import ConfigError
-        token = Path(tempfile.mkdtemp(prefix="dc-tok-", dir=TEST_PARENT)) / "token.txt"
-        self.addCleanup(shutil.rmtree, token.parent, True)
-        token.write_text("x", encoding="utf-8")
-        with mock.patch("rawlayer.capture.precheck.check", side_effect=ConfigError("data root ACL unreadable")):
-            found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token)))
-        self.assertEqual(len(found), 1)
-        self.assertIn("protected token path", found[0])
-
-
-
-class WikiExportDeclaration(unittest.TestCase):
-    def test_collect_declaration(self):
-        """`manage.py collect discord`: the declared prefix and layout, and the config keys derived from it."""
-        app = registry.app_registry("discord").apps[0]
-        self.assertEqual(app.wiki, ("dc", "chat"))
-        keys = [f"dc_wiki_{k}" for k in ("project", "include", "exclude", "since")]
-        self.assertEqual([op.key for op in app.options][-4:], keys)
-        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

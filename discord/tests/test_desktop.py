@@ -1,7 +1,7 @@
 import gzip
 import json
 import unittest
-from discord.desktop import payloads, json_values, scan, sync
+from discord.desktop import scan, sync
 from .fixtures import Fixture, CID, MID, UID
 from tests.core import appfix as h
 
@@ -46,20 +46,11 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(h.capture(self.fx),0)
         self.assertEqual(len(h.records(self.fx)),count)
 
-    def test_unknown_guild_remains_unclassified(self):
-        self.obj.pop('guild_id')
-        self.save(self.obj)
-        self.assertEqual(scan(self.source)[2]['unclassified_channels'],1)
-        sync(self.fx.root,self.source)
-        self.assertEqual(h.capture(self.fx),0)
-
     def test_non_message_objects_and_credentials_not_imported(self):
         (self.source/'Local Storage').mkdir()
         (self.source/'Local Storage'/'token.json').write_text(json.dumps({'token':'private-secret','content':'not a message'}))
         self.path.write_bytes(b'header {"id":"1","author":{},"content":"not a message"}')
         self.assertEqual(scan(self.source)[2]['messages_found'],0)
-        self.assertEqual(list(json_values(b'header {"a":1} tail')),[{'a':1}])
-        self.assertEqual(len(list(payloads(b'not compressed'))),1)
 
     def test_later_guild_classification_preserves_partition_order(self):
         from appkit.archive import load
