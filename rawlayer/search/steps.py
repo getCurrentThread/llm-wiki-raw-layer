@@ -2,7 +2,7 @@
 """The index and search steps, run in-process: `manage.py capture` runs `index` as its index step and `manage.py search`
 runs `search` (rawlayer.management.commands.capture, rawlayer.management.commands.search); not a command surface.
 
-  index <app>     --config CFG [--rebuild] [--status] [--json]
+  index <app>     --config CFG [--rebuild] [--json]
                   bring <data_root>/index/<app>.sqlite up to the committed ledger (incremental; a full rebuild
                   when the index is missing, outdated, or the ledger was reset)
   search <app>    --config CFG [QUERY] ...    search the app's index (<app>/search.py; --help for its options)
@@ -30,7 +30,6 @@ def _parser(mods):
     # one app per process, so its one index; several installed apps (the core tests' toy apps) index one by one
     ix.add_argument("--source", choices=tuple(mods) + ("all",), default="all", help=argparse.SUPPRESS)
     ix.add_argument("--rebuild", action="store_true", help="rebuild from the whole ledger")
-    ix.add_argument("--status", action="store_true", help="report index state only (writes nothing)")
     ix.add_argument("--json", action="store_true")
     se = sub.add_parser("search", help="search one app's index")
     by_label = se.add_subparsers(dest="source", required=True, metavar="{" + ",".join(mods) + "}")
@@ -46,10 +45,6 @@ def _worst(a, b):
 
 
 def _fmt_report(name, r):
-    if "action" not in r:          # --status
-        keys = ("state", "seq", "ledger_seq", "stale", "rows", "rooms", "channels", "writer_busy", "built_at",
-                "updated_at")
-        return f"{name}: " + " ".join(f"{k}={r[k]}" for k in keys if k in r)
     parts = [f"{name}: {r['action']}"]
     if r.get("reason"):
         parts.append(f"reason={r['reason']}")
@@ -75,10 +70,7 @@ def cmd_index(a, mods):
     for name in names:
         mod = mods[name]
         try:
-            if a.status:
-                r = index.status(data_root, mod.SPEC)
-            else:
-                r = index.update(data_root, mod.SPEC, rebuild=a.rebuild)
+            r = index.update(data_root, mod.SPEC, rebuild=a.rebuild)
         except Busy:
             r = {"source": name, "action": "busy", "reason": "another index update holds the lock"}
             rc = _worst(rc, index.EXIT_BUSY)

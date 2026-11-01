@@ -359,8 +359,6 @@ class TestLedgerChanges(Scenario):
                 rc, _out, err = run_search("search", "toy", "--config", cfg, "배포")
                 self.assertEqual(rc, 2)
                 self.assertIn("--rebuild", err)
-                rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--status", "--json")
-                self.assertEqual(json.loads(out)["toy"]["state"], "outdated")
                 rc, rep, _ = self.index(cfg)
                 self.assertEqual((rc, rep["action"], rep["reason"]), (0, "rebuilt", "version"))
                 self.assertEqual(search(cfg, "배포")["total"], 1)
@@ -375,20 +373,6 @@ class TestLedgerChanges(Scenario):
         self.assertEqual(search(cfg, "b5")["keys"], ["toy:toy_b:5"])   # only pending at seq 2: still held
         rc, _out, err = run_search("search", "toy", "--config", self.cfg, "배포")
         self.assertEqual(err, "")
-
-    def test_status(self):
-        rc, out, _ = run_search("index", "--config", self.cfg, "--source", "toy", "--status", "--json")
-        st = json.loads(out)["toy"]
-        self.assertEqual(rc, 0)
-        self.assertEqual((st["state"], st["seq"], st["ledger_seq"], st["stale"], st["rows"], st["writer_busy"]),
-                         ("ok", 3, 3, False, 38, False))
-        rc, out, _ = run_search("index", "--config", self.cfg, "--source", "toy", "--status")
-        self.assertIn("state=ok", out)
-        cfg, dr = self.clone()
-        ipath(dr).unlink()
-        rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--status", "--json")
-        self.assertEqual((json.loads(out)["toy"]["state"], json.loads(out)["toy"]["stale"]), ("missing", True))
-        self.assertFalse(ipath(dr).exists())                  # status writes nothing
 
 
 class TestLocks(Scenario):
@@ -413,8 +397,6 @@ class TestLocks(Scenario):
             self.assertEqual(rc, 75)
             self.assertIn("busy", out)
             self.assertEqual(search(cfg, "배포")["total"], 1)       # readers are not blocked
-            rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--status", "--json")
-            self.assertIs(json.loads(out)["toy"]["writer_busy"], True)
         finally:
             release()
         self.assertEqual(self.index(cfg)[0], 0)
@@ -433,8 +415,6 @@ class TestLocks(Scenario):
                 rc, _, err = run_search("search", "toy", "--config", cfg, "--json", "배포")
                 self.assertEqual(rc, 75, err)
                 self.assertNotIn("damaged", err)
-                rc, out, _ = run_search("index", "--config", cfg, "--source", "toy", "--status", "--json")
-                self.assertEqual(json.loads(out)["toy"]["state"], "busy")
         finally:
             writer.rollback()
             writer.close()

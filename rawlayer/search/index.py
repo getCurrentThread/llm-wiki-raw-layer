@@ -688,40 +688,6 @@ def warn_if_stale(spec, fresh):
          f"misstate the newest captures -- run: python -s -B manage.py capture {spec.name}")
 
 
-def status(data_root, spec):
-    """Index state without writing anything (the lock is only probed when the index folder exists)."""
-    path = index_path(data_root, spec)
-    rep = {"source": spec.name, "state": "missing", "seq": None, "ledger_seq": len(LedgerView(data_root).manifests())}
-    if index_dir(data_root).is_dir():
-        try:
-            IndexLock(index_dir(data_root), spec.name).release()
-            rep["writer_busy"] = False
-        except Busy:
-            rep["writer_busy"] = True
-    if not path.exists():
-        rep["stale"] = True
-        return rep
-    try:
-        con = open_ro(path)
-    except sqlite3.DatabaseError as e:
-        rep.update(state="busy" if is_locked(e) else "unreadable", stale=True)
-        return rep
-    try:
-        meta = dict(con.execute("SELECT k, v FROM meta").fetchall())
-        fr = freshness(data_root, meta)
-        rep.update(fr)
-        rep["state"] = "ok" if all(meta.get(k) == v for k, v in spec.stamp().items()) else "outdated"
-        for k in ("built_at", "updated_at", "build_reason", "schema_version", "tokenizer", "extractor_version"):
-            rep[k] = meta.get(k)
-        if rep["state"] == "ok":
-            rep.update(spec.stats(con))
-    except sqlite3.DatabaseError as e:
-        rep.update(state="busy" if is_locked(e) else "unreadable", stale=True)
-    finally:
-        con.close()
-    return rep
-
-
 # ------------------------------------------------------------------------------------------------ time
 
 _TZ_RE = re.compile(r"^(?:UTC|Z|([+-])([0-9]{1,2}):?([0-9]{2}))$", re.I)
