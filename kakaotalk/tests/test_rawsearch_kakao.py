@@ -299,7 +299,7 @@ class TestSearch(Scenario):
         self.assertEqual((env["source"], env["mode"], env["query"], env["total"]), ("kakaotalk", "hits", "10월 -회의", 1))
         self.assertEqual(env["index"], {"seq": 3, "ledger_seq": 3, "stale": False})
         self.assertIsInstance(env["rows"][0]["log_id"], str)
-        env = search(self.cfg, '"가나 다라" -마바')          # the separator token is shown as <S>, as in --explain
+        env = search(self.cfg, '"가나, 다라" -마바')         # the separator token is shown as <S>, as in --explain
         self.assertEqual((env["fts"], env["exclude_fts"]), ('"가나 <S> 다라"', '"마바"'))
         self.assertNotIn(common.ti.SEP, json.dumps(env, ensure_ascii=False))
 
@@ -369,12 +369,12 @@ class TestSearch(Scenario):
         self.assertIn("id=301", out)
 
     def test_explain(self):
-        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--explain", "\"가나 나다\"")
+        rc, out, _ = rs("kakaotalk", "--config", self.cfg, "--explain", "\"가나, 나다\"")
         self.assertEqual(rc, 0)
         self.assertIn("# fts5 index expr", out)
         self.assertNotIn(chr(0xE000), out)
         self.assertIn("<S>", out)
-        rc, out, err = rs("kakaotalk", "--config", self.cfg, "--explain", "\"가 나\"")
+        rc, out, err = rs("kakaotalk", "--config", self.cfg, "--explain", "\"가, 나\"")
         self.assertIn("(none -- full scan)", out)
         self.assertIn("full scan", err)
 

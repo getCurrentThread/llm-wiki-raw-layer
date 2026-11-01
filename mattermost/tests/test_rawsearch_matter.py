@@ -368,7 +368,7 @@ class TestSearch(Scenario):
         self.assertEqual(env["index"], {"seq": 3, "ledger_seq": 3, "stale": False})
         self.assertEqual(env["filters"]["include_system"], False)
         self.assertEqual(env["tz"], "+09:00")
-        env = search(self.cfg, '"가나 다라" -마바')          # the separator token is shown as <S>, as in --explain
+        env = search(self.cfg, '"가나, 다라" -마바')         # the separator token is shown as <S>, as in --explain
         self.assertEqual((env["fts"], env["exclude_fts"]), ('"가나 <S> 다라"', '"마바"'))
         self.assertNotIn(common.ti.SEP, json.dumps(env, ensure_ascii=False))
 
@@ -477,12 +477,12 @@ class TestSearch(Scenario):
         self.assertIn("[team-a]", out)
 
     def test_explain(self):
-        rc, out, _ = rs("mattermost", "--config", self.cfg, "--explain", "\"가나 나다\"")
+        rc, out, _ = rs("mattermost", "--config", self.cfg, "--explain", "\"가나, 나다\"")
         self.assertEqual(rc, 0)
         self.assertIn("# fts5 index expr", out)
         self.assertNotIn(chr(0xE000), out)
         self.assertIn("<S>", out)
-        rc, out, err = rs("mattermost", "--config", self.cfg, "--explain", "\"가 나\"")
+        rc, out, err = rs("mattermost", "--config", self.cfg, "--explain", "\"가, 나\"")
         self.assertIn("(none -- full scan)", out)
         self.assertIn("full scan", err)
 

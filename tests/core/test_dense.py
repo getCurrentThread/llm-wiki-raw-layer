@@ -480,11 +480,11 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual([(c["key"], c["hit"]) for c in top["context"]], [("a1", True), ("a2", False)])
         self.assertEqual(env["total"], 1)
         self.assertTrue(all(r["sources"]["kw"] is None for r in env["rows"][1:]))
-        # no keyword match ("회의일정" is one phrase): meaning only, no relaxing
-        env, _ = self.search("회의일정", "--hybrid")
+        # no keyword match ("회의계획" is one phrase no row holds): meaning only, no relaxing
+        env, _ = self.search("회의계획", "--hybrid")
         self.assertEqual((env["total"], env["relaxed"], env["rows"][0]["key"]), (0, False, "a1"))
         self.assertEqual(env["rows"][0]["sources"], {"kw": None, "sem": 1})
-        env, _ = self.search("메뉴추천", "--hybrid")                        # the chunk's row nearest the words
+        env, _ = self.search("메뉴선택", "--hybrid")                        # the chunk's row nearest the words
         self.assertEqual((env["rows"][0]["key"], env["rows"][0]["sources"]), ("a2", {"kw": None, "sem": 1}))
         self.assertEqual([(c["key"], c["hit"]) for c in env["rows"][0]["context"]], [("a1", False), ("a2", True)])
         # no row holds both terms: the keyword list relaxes to either, as plain hits do

@@ -247,17 +247,22 @@ overlapping bigrams and Latin/digit runs become one token. A query term is issue
 same tokens. As a result:
 
 - Korean matches as a substring: `배포` finds `배포를` and `재배포`.
+- A lone space between Korean words may be left out: `회의실예약` finds `회의실 예약`.
 - A Latin/digit run at a term's edge must match a whole run: `api` finds `API 키` but not `rapid`, and
   `api*` finds `apis`.
 - Quoted phrases and terms with punctuation (`C++`, `AES-256`) match literally after normalisation.
 
-Tokenizer `ngram-2` fixes two bugs of the knowledge-base engine (`ngram-1`) it was ported from:
+Tokenizer `ngram-2` fixed two bugs of the knowledge-base engine (`ngram-1`) it was ported from:
 
 1. **Missed matches.** `10월` did not find `10월에`, nor `3시` find `3시에` or `SQL문` find `SQL문을`. The
    query's lone `월` token never appeared in a document that held only `월에`. A Korean run that touches a
    Latin/digit run now also emits a one-character head or tail token, so the phrase lines up.
 2. **False positives.** `가나다` matched `가나 나다`: the bigrams of two separate words lined up as one
    phrase. A separator token now stands between runs that whitespace or punctuation kept apart.
+
+Tokenizer `ngram-3` bridges a lone space between two Korean/CJK runs with the bigram across it, so a term
+typed without that space still matches (`회의실예약` finds `회의실 예약`); two spaces, a line break or
+punctuation still separate, and `가나다` still does not match `가나 나다`.
 
 In addition, excluded terms use the same match rule as positive ones (`-api` no longer drops posts containing
 `rapid`), and `OR` next to an excluded term is refused instead of being silently ignored. A property test in

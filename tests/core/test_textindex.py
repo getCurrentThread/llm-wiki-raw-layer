@@ -70,10 +70,17 @@ def t_is_literal(t, quoted):
     return len(t) == 1 and t_is_n(t[0])
 
 
+def t_squeeze(m):
+    """m without every lone space that has an N character on each side."""
+    return "".join(c for i, c in enumerate(m)
+                   if not (c == " " and 0 < i < len(m) - 1 and t_is_n(m[i - 1]) and t_is_n(m[i + 1])))
+
+
 def t_term_matches(body, text, quoted, prefix):
     m, t = t_norm(body), t_norm(text)
     if t_is_literal(t, quoted):
         return t in m
+    m = t_squeeze(m)
     start = 0
     while True:
         i = m.find(t, start)
@@ -158,6 +165,14 @@ class GapFalsePositiveRegressions(unittest.TestCase):
 
     def test_space_between_runs(self):
         self.assertEqual(hits(["가나 나다", "가나다라"], "가나다"), {"가나다라"})
+
+    def test_a_lone_space_may_be_left_out(self):
+        bodies = ["회의실 예약 부탁", "회의실  예약", "회의실, 예약", "회의실\n예약", "회의 실 예약", "회의실예약", "a 회의"]
+        self.assertEqual(hits(bodies, "회의실예약"), {"회의실 예약 부탁", "회의 실 예약", "회의실예약"})
+        self.assertEqual(hits(bodies, "실예"), {"회의실 예약 부탁", "회의 실 예약", "회의실예약"})
+        self.assertEqual(hits(bodies, '"회의실 예약"'), {"회의실 예약 부탁"})          # quoted: as typed
+        self.assertEqual(hits(bodies, "회의실 예약"), set(bodies) - {"a 회의"})        # two terms: as before
+        self.assertEqual(hits(bodies, "a회의"), set())                                  # a Latin run is not bridged
 
     def test_punctuation_and_emoji_between_runs(self):
         bodies = ["가나,나다", "가나\U0001F600나다", "가나\n나다", "가나다"]
@@ -262,7 +277,9 @@ class KbBehaviour(unittest.TestCase):
         self.assertEqual(q._fields, ("fts", "verify", "exclude", "weak", "marks", "exclude_fts"))
         self.assertTrue(ti.is_weak_term("돈"))
         self.assertFalse(ti.is_weak_term("송금"))
-        self.assertEqual(ti.ng_text("오늘 송금을"), f"오늘 {ti.SEP} 송금 금을")
+        self.assertEqual(ti.ng_text("오늘 송금을"), "오늘 늘송 송금 금을")
+        self.assertEqual(ti.ng_text("오늘, 송금"), f"오늘 {ti.SEP} 송금")
+        self.assertEqual(ti.ng_text("a 가나"), f"a {ti.SEP} 가나")
         self.assertEqual(ti.ng_text("10월에"), "10 월 월에")
         self.assertEqual(ti.ng_text(""), "")
         self.assertIn("tokenize='ascii'", ti.fts_ddl("item"))

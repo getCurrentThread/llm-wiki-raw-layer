@@ -12,9 +12,10 @@ message gets a pre-tokenised shadow column `ng`, indexed by an FTS5 external-con
 tokenize='ascii' (see fts_ddl()). In `ng`, each run of Korean/CJK characters becomes its
 overlapping bigrams, each Latin/digit run becomes one lowercase token:
 
-    "오늘 송금을 했어요"   ->  "오늘 ⟨S⟩ 송금 금을 ⟨S⟩ 했어 어요"
+    "오늘 송금을 했어요"   ->  "오늘 늘송 송금 금을 을했 했어 어요"
 
-and a query term is turned into an FTS5 *phrase* over the same tokens.
+(a lone space between two Korean/CJK runs is bridged by the bigram across it, so a term typed without that space
+still matches), and a query term is turned into an FTS5 *phrase* over the same tokens.
 
 THE TRUTH (what a search must return -- the tests compare the index against exactly this)
 -----------------------------------------------------------------------------------------
@@ -22,6 +23,8 @@ norm(s) = NFC(casefold(NFC(s))). Every character of a normalised string is one o
   N  Hangul syllables/jamo, CJK ideographs, hiragana, katakana (the _NGRAM_RANGES below),
   L  ASCII [0-9a-z]  (after casefold, so "OAuth" == "oauth"; "ß" folds to "ss", which is L),
   D  anything else: whitespace, punctuation, symbols, emoji, other scripts (é, Cyrillic, ...).
+sq(s) is s without every lone space that has an N character on each side ("회의실 예약" -> "회의실예약"; two spaces,
+a newline or punctuation stay).
 
 A query is a list of terms: whitespace-separated words or "quoted phrases"; OR between two terms;
 a leading `-` excludes a term; a trailing `*` on an unquoted word asks for a prefix. For a term
@@ -29,12 +32,13 @@ with text T (the `*` removed) let t = norm(T). A term is LITERAL when it is quot
 a D character, or t's only N/L character is a single N character (a "weak" term). Then:
 
   * a literal term matches message m  iff  t is a substring of norm(m);
-  * any other term (t is two or more N/L characters, no D) matches m iff some occurrence
-    norm(m)[i:j] == t satisfies
-        - if t[0] is L:                       i == 0 or norm(m)[i-1] is not L, and
-        - if t[-1] is L and there is no `*`:  j == len(norm(m)) or norm(m)[j] is not L.
+  * any other term (t is two or more N/L characters, no D) matches m iff, with s = sq(norm(m)), some
+    occurrence s[i:j] == t satisfies
+        - if t[0] is L:                       i == 0 or s[i-1] is not L, and
+        - if t[-1] is L and there is no `*`:  j == len(s) or s[j] is not L.
 
-So CJK parts match as substrings ("송금" finds "송금을" and "입금송금"; "송금을" narrows), a Latin/digit
+So CJK parts match as substrings ("송금" finds "송금을" and "입금송금"; "송금을" narrows; "회의실예약" finds
+"회의실 예약", the space a user may leave out), a Latin/digit
 run at a term edge matches a whole run ("api" finds "API 키" but not "rapid" or "apis"; "api*"
 finds "apis"; "10월" finds "10월에" but not "210월"), and runs inside a term are fixed by the term
 itself. Lossy terms ("C++", "AES-256") and quoted phrases match literally ("C++" finds "vc++").
@@ -54,17 +58,21 @@ it (prefix terms included). Terms with shorter runs are exact whatever the docum
 literal terms are unaffected (a cut token is still a necessary condition, and rs_contains decides).
 The Windows command line (32767 characters) cannot carry such a query anyway.
 
-HOW THE INDEX AGREES WITH THE TRUTH (tokenizer "ngram-2")
+HOW THE INDEX AGREES WITH THE TRUTH (tokenizer "ngram-3")
 ---------------------------------------------------------
 Document tokens (ng_tokens), for the maximal N/L runs of norm(text) in order:
   * an L run -> one token, the run itself;
   * an N run c1..cn -> its bigrams c1c2 .. c(n-1)cn, plus a single-character HEAD token c1 when an
     L run touches it on the left and a TAIL token cn when an L run touches it on the right
     ("10월에" -> "10 월 월에"; "SQL문을" -> "sql 문 문을"; "가a" -> "가 a");
-  * SEP (U+E000, a private-use character the 'ascii' tokenizer treats as a token character) between
+  * between two N runs that a lone space separates, the BRIDGE bigram of the last character before it and the
+    first after it ("회의실 예약" -> "회의 의실 실예 예약", the tokens of "회의실예약"): the stream is that of
+    sq(norm(m)), where the two runs are one;
+  * else SEP (U+E000, a private-use character the 'ascii' tokenizer treats as a token character) between
     two runs that dropped (D) characters separated, so runs that were apart never line up as a
-    phrase: "가나 나다" -> "가나 ⟨S⟩ 나다", which the query "가나다" (phrase "가나 나다") no longer
-    matches -- ngram-1 emitted "가나 나다" and returned it.
+    phrase: "가나, 나다" -> "가나 ⟨S⟩ 나다", which the query "가나다" (phrase "가나 나다") does not
+    match -- ngram-1 emitted "가나 나다" and returned it. A bridged "가나 나다" -> "가나 나나 나다" does not
+    match "가나다" either (sq gives "가나나다").
 A non-literal term is tokenised by the very same rule and issued as one phrase; edge runs of the
 term simply get no HEAD/TAIL token, which is what makes their outer side "open". Head/tail tokens
 fix the ngram-1 miss where "10월" emitted the lone token "월" while "10월에" held only "월에".
@@ -91,7 +99,7 @@ from typing import NamedTuple
 # Bump TOKENIZER_VERSION when tokenization changes (an index built by another version must be
 # rebuilt, never queried), SCHEMA_VERSION when the index tables change. The index code stamps both
 # into its meta table and the search code refuses an index whose stamps differ.
-TOKENIZER_VERSION = "ngram-2"
+TOKENIZER_VERSION = "ngram-3"
 SCHEMA_VERSION = "1"
 FTS_TOKENIZE = "ascii"
 
@@ -142,17 +150,24 @@ def _kind(ch: str):
     return None
 
 
+TOUCH, APART, BRIDGED = 0, 1, 2      # the gap before a run (APART and BRIDGED are truthy: dropped characters)
+
+
 def _runs(normed: str) -> list:
     """Maximal runs of a normalised string as (kind, run, gap_before) triples.
 
-    gap_before is True when dropped characters separate this run from the previous run; it is
-    always False for the first run (dropped characters before it separate it from nothing).
+    gap_before is APART when dropped characters separate this run from the previous run, BRIDGED when that is one
+    space between two N runs, and TOUCH otherwise; always TOUCH for the first run (dropped characters before it
+    separate it from nothing).
     """
     out = []
     end = 0
     for m in _RUN_RE.finditer(normed):
         kind = "N" if m.group(1) else "L"
-        out.append((kind, m.group(0), bool(out) and m.start() > end))
+        gap = TOUCH
+        if out and m.start() > end:
+            gap = BRIDGED if kind == "N" and out[-1][0] == "N" and normed[end:m.start()] == " " else APART
+        out.append((kind, m.group(0), gap))
         end = m.end()
     return out
 
@@ -162,7 +177,9 @@ def _tokens_of(runs: list) -> list:
     toks = []
     last = len(runs) - 1
     for idx, (kind, run, gap) in enumerate(runs):
-        if gap:
+        if gap == BRIDGED:
+            toks.append(runs[idx - 1][1][-1] + run[0])
+        elif gap:
             toks.append(SEP)
         if kind == "L":
             toks.append(run)
