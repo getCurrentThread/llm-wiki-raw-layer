@@ -134,6 +134,11 @@ class AuthTests(unittest.TestCase):
             with self.assertRaisesRegex(CollectorError, "auth_required"):
                 refresh(self.client_file, self.token_file, opener=lambda *a, **k: self.fail("network"))
 
+    def test_credential_path_refuses_archive_and_ledger_folders(self):
+        for folder in ("archive", "raw", "RAW/ledger"):
+            with self.subTest(folder=folder), self.assertRaisesRegex(CollectorError, "unsafe_token_path"):
+                credential_path(str(self.fx.base / folder / "token.json"))
+
     def test_auth_missing_refresh_not_persisted(self):
         url, box, thread = self.authorize_serving(lambda *a, **k: Response({"access_token": "synthetic"}))
         state = parse_qs(urlsplit(url).query)["state"][0]

@@ -66,6 +66,10 @@ def credential_path(value):
     path = Path(value)
     if not value or not path.is_absolute() or not path.resolve().is_relative_to(Path(paths.DATA_PARENT).resolve()):
         raise CollectorError("unsafe_token_path")
+    # only the fetch step writes an archive and only capture writes a ledger (data root layout: archive/, raw/)
+    # shortcut: the folders are matched by their conventional names, not read from a config; upgrade if they become configurable
+    if {"archive", "raw"} & {n.lower() for n in path.resolve().relative_to(Path(paths.DATA_PARENT).resolve()).parts}:
+        raise CollectorError("unsafe_token_path")
     precheck.check(path.parent)
     return path
 

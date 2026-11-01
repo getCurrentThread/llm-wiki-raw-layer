@@ -41,7 +41,8 @@ DENIED = {"config", "json", "query", "q", "mode", "explain", "help", "h", "sende
           "limit", "width", "include-deleted", "hybrid"}
 HIDDEN = ("text", "body_text")          # full texts, kept only with full_text (TEXT_FIELDS)
 QUIET = ("fts", "exclude_fts", "weak", "verify", "exclude")     # the translated query, for --explain only
-AGGREGATE_MODES = ("count", "timeline", "senders", "labels", "threads", "channels", "pages", "rooms")
+AGGREGATE_MODES = ("count", "timeline", "senders", "labels", "threads", "channels", "pages", "rooms",
+                   "sessions", "projects")
 WHOLE_MODES = ("thread", "page-text")   # one whole container: the app ignores --limit, the server pages by offset
 TEXT_FIELDS = ("text", "body_text")     # a row's full texts, read in windows (text_offset) when too long
 TOOLS = ("raw_status", "raw_aggregate", "raw_search", "raw_read", "raw_help")
