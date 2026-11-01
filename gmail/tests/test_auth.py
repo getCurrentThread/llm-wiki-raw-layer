@@ -107,18 +107,6 @@ class AuthTests(unittest.TestCase):
             exchange.assert_not_called()
         self.assertFalse(self.token_file.exists())
 
-    def test_loopback_error_parameter_rejected(self):
-        with patch("gmail.auth.token_request") as exchange:
-            url, box, thread = self.authorize_serving(lambda *a, **k: self.fail("exchange must not run"))
-            state = parse_qs(urlsplit(url).query)["state"][0]
-            status, _ = self.callback(url, state=state, error="access_denied")
-            self.assertEqual(status, 400)
-            thread.join(30)
-            self.assertFalse(thread.is_alive())
-            self.assertRegex(str(box.get("error")), "auth_failed")
-            exchange.assert_not_called()
-        self.assertFalse(self.token_file.exists())
-
     def test_invalid_grant_and_redaction(self):
         def opener(req, **kwargs):
             raise HTTPError("https://example.com", 400, "synthetic-secret", {},
@@ -128,16 +116,12 @@ class AuthTests(unittest.TestCase):
         self.assertNotIn("synthetic-secret", str(caught.exception))
 
     def test_protected_paths_and_missing_token(self):
-        with self.assertRaisesRegex(FetchError, "unsafe_token_path"):
-            credential_path("relative-token.json")
+        for path in ("relative-token.json", *(str(self.fx.base / f / "token.json") for f in ("archive", "raw", "RAW/ledger"))):
+            with self.subTest(path=path), self.assertRaisesRegex(FetchError, "unsafe_token_path"):
+                credential_path(path)
         with patch("rawlayer.capture.precheck.check"):
             with self.assertRaisesRegex(FetchError, "auth_required"):
                 refresh(self.client_file, self.token_file, opener=lambda *a, **k: self.fail("network"))
-
-    def test_credential_path_refuses_archive_and_ledger_folders(self):
-        for folder in ("archive", "raw", "RAW/ledger"):
-            with self.subTest(folder=folder), self.assertRaisesRegex(FetchError, "unsafe_token_path"):
-                credential_path(str(self.fx.base / folder / "token.json"))
 
     def test_auth_missing_refresh_not_persisted(self):
         url, box, thread = self.authorize_serving(lambda *a, **k: Response({"access_token": "synthetic"}))

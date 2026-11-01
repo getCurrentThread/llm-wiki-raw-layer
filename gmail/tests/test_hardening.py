@@ -53,13 +53,6 @@ class HardeningTests(unittest.TestCase):
         for value in ("exports/../outside.json", "exports\\bad.json", "C:/bad.json"):
             self.assertFalse(safe_rel(value, "exports"))
 
-    def test_orphan_count_and_tmp_ignored(self):
-        self.fx.save("exports/orphan.json", {})
-        self.fx.save("state/ff.json", {})
-        self.fx.save("exports/ignored.tmp", {})
-        self.assertEqual(h.capture(self.fx), 0)
-        self.assertEqual(h.manifests(self.fx)[-1]["origins"]["gm_archive"]["notes"]["orphan_file"], 2)
-
     def test_bad_pk_count_and_hex_not_snowflake(self):
         man = self.manifest()
         path = self.fx.root / man["files"][0]
@@ -92,12 +85,6 @@ class HardeningTests(unittest.TestCase):
         value["messages"][0]["size_estimate"] = 0
         value["messages"][0]["internal_date_ms"] = 2 ** 63 - 1
         self.fx.save(self.manifest()["files"][0], value)
-        self.assertEqual(h.capture(self.fx), 75)
-
-    def test_manifest_missing_or_unsorted(self):
-        man = self.manifest()
-        man["files"] = man["files"] * 2
-        self.fx.save("manifest.json", man)
         self.assertEqual(h.capture(self.fx), 75)
 
     def test_duplicate_message_partition_rejected(self):

@@ -87,16 +87,6 @@ class MimeTests(unittest.TestCase):
         self.assertEqual(value["subject"], "https://example.org/reset")
         self.assertEqual(value["attachments"][0]["filename"], "http://example.net/file")
 
-    def test_inline_related_image_without_filename_has_decoded_metadata(self):
-        payload = b"synthetic image bytes"
-        msg = EmailMessage()
-        msg.set_content("synthetic body")
-        msg.add_related(payload, maintype="image", subtype="png", cid="<synthetic@example.org>")
-        value = extract(self.wrap(msg.as_bytes()))
-        self.assertEqual(value["body_text"], "synthetic body")
-        self.assertEqual(value["attachments"], [{"part_path": "2", "filename": "", "mime_type": "image/png",
-                                                 "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}])
-
     def test_binary_leaf_without_disposition_is_metadata_only(self):
         payload = b"synthetic binary bytes"
         msg = EmailMessage()

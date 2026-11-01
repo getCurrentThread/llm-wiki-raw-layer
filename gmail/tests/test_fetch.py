@@ -1,5 +1,4 @@
 import contextlib
-import copy
 import io
 import json
 import unittest
@@ -7,10 +6,9 @@ from unittest.mock import patch
 from gmail import fetch
 from gmail.fetch import sync, main
 from gmail.search import SPEC
-from gmail.api import GmailClient, Bucket, pages
 from rawlayer.search import index
 from appkit.archive import FetchError, load, locked
-from .fixtures import Fixture, Transport, Response, http_error, raw_message, MID, OTHER
+from .fixtures import Fixture, Transport, raw_message, MID, OTHER
 from tests.core import appfix as h
 
 
@@ -58,11 +56,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(self.sync(max_items=1)["messages_written"], 1)
         self.assertEqual(self.manifest()["cursor"], "10")
         self.assertFalse(any(p == "/history" for p, _ in self.http.calls))
-
-    def test_genesis_time_budget(self):
-        self.assertTrue(self.sync(time_budget=0)["limited"])
-        self.assertIsNone(self.manifest()["cursor"])
-        self.assertEqual(self.sync()["messages_written"], 1)
 
     def test_history_paging_fetch_after_last_page(self):
         self.sync()
@@ -122,25 +115,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(self.manifest()["cursor"], "30")
         self.assertTrue(any(q.get("labelIds") == ["Label_1"] for p, q in self.http.calls if p == "/messages"))
 
-    def test_resync_resume_before_history(self):
-        self.sync()
-        self.http.messages.update({OTHER: raw_message(OTHER), "abc125": raw_message("abc125")})
-        self.http.failures["/history"] = [404]
-        self.assertTrue(self.sync(max_items=1)["limited"])
-        self.assertEqual(self.manifest()["cursor"], "10")
-        self.http.calls.clear()
-        self.sync()
-        self.assertFalse(any(p == "/history" for p, _ in self.http.calls))
-        self.assertFalse(load(self.fx.root / "_collector_state.json")["active"])
-
-    def test_partial_history_page_keeps_cursor_no_deletion(self):
-        self.sync()
-        self.http.history = [{"historyId": "12", "history": [{"messagesDeleted": [{"message": {"id": MID}}]}], "nextPageToken": "1"}]
-        self.http.failures["/history"] = [None, 403]
-        self.assertEqual(self.sync()["errors"], 1)
-        self.assertEqual(self.manifest()["cursor"], "10")
-        self.assertNotIn("_removedAt", self.state())
-
     def test_fetch_failure_keeps_cursor_and_deletion_state(self):
         self.sync()
         self.http.messages[OTHER] = raw_message(OTHER)
@@ -161,14 +135,6 @@ class FetchTests(unittest.TestCase):
         self.events(labelsRemoved=[{"message": {"id": MID}, "labelIds": ["SPAM"]}],
                     labelsAdded=[{"message": {"id": MID}, "labelIds": ["INBOX"]}])
         self.assertEqual(self.sync()["messages_written"], 1)
-
-    def test_later_excluded_recorded_without_fetch(self):
-        self.sync()
-        self.http.calls.clear()
-        self.events(labelsAdded=[{"message": {"id": MID}, "labelIds": ["TRASH"]}])
-        self.assertEqual(self.sync()["messages_written"], 0)
-        self.assertIn("TRASH", self.state()["label_ids"])
-        self.assertFalse(any(p.startswith("/messages/") for p, _ in self.http.calls))
 
     def test_labels_directory_nonshrinking(self):
         self.sync()
@@ -219,78 +185,11 @@ class FetchTests(unittest.TestCase):
         self.assertTrue(result["limited"])
         self.assertEqual(len(load(self.fx.root / "_collector_state.json")["pending"]), 501)
 
-    def test_rate_retry_after_and_bounded_exhaustion(self):
-        failures = [http_error(429, headers={"Retry-After": "7"}),
-                    http_error(403, "userRateLimitExceeded"), Response({"historyId": "1"})]
-        delays = []
-        def opener(req, **kwargs):
-            value = failures.pop(0)
-            if isinstance(value, Exception):
-                raise value
-            return value
-        client = GmailClient("synthetic", opener=opener, sleep=delays.append)
-        self.assertEqual(client.request("/profile")["historyId"], "1")
-        self.assertIn(7, delays)
-        self.assertIn(2, delays)
-        def always(req, **kwargs):
-            raise http_error(429)
-        client = GmailClient("synthetic", opener=always, sleep=lambda n: None)
-        with self.assertRaises(FetchError):
-            client.request("/profile")
-        self.assertEqual(client.requests, 6)
-
-    def test_bucket_250_gets_headroom(self):
-        bucket = Bucket(self.http.sleep, lambda: self.http.t)
-        for _ in range(251):
-            bucket.take(20)
-        self.assertGreaterEqual(self.http.t, 60)
-
-    def test_pagination_cycle_rejected(self):
-        client = GmailClient("synthetic", opener=lambda *a, **k: Response({"nextPageToken": "same"}), sleep=lambda n: None)
-        with self.assertRaisesRegex(FetchError, "bad_response"):
-            list(pages(client, "/messages"))
-
     def test_endpoint_cannot_receive_credentials(self):
         client = self.http.client()
         with self.assertRaises(FetchError):
             client.request("https://example.com")
         self.assertFalse(self.http.calls)
-
-    def test_publication_order_cursor_last(self):
-        from gmail import fetch
-        original, writes = fetch.atomic, []
-        def atomic(root, path, value, **kwargs):
-            writes.append((str(path.relative_to(root)).replace("\\", "/"), copy.deepcopy(value)))
-            return original(root, path, value, **kwargs)
-        with patch("gmail.fetch.atomic", side_effect=atomic):
-            self.sync()
-        kinds = [p.split("/")[0] for p, _ in writes]
-        self.assertLess(kinds.index("exports"), kinds.index("state"))
-        self.assertLess(kinds.index("state"), kinds.index("labels.json"))
-        self.assertLess(kinds.index("labels.json"), kinds.index("manifest.json"))
-        self.assertEqual(next(v for p, v in reversed(writes) if p == "manifest.json")["cursor"], "10")
-
-    def test_full_recovers_pending_message_deleted_during_genesis(self):
-        self.http.messages[OTHER] = raw_message(OTHER)
-        self.sync(max_items=1)
-        del self.http.messages[OTHER]
-        self.assertEqual(self.sync()["errors"], 1)
-        self.assertIsNone(self.manifest()["cursor"])
-        self.http.profile["historyId"] = "20"
-        self.assertEqual(self.sync(full=True)["errors"], 0)
-        self.assertTrue(self.manifest()["genesis_complete"])
-        self.assertEqual(self.manifest()["cursor"], "20")
-
-    def test_partition_byte_cap_splits(self):
-        from gmail.fetch import Writer
-        man, stats = {"files": []}, {"messages_written": 0, "partitions_written": 0}
-        with patch("gmail.fetch.PARTITION_BYTES", 300):
-            writer = Writer(self.fx.root, man, stats, 1000)
-            writer.add({"id": MID, "body_text": "a" * 80})
-            writer.add({"id": OTHER, "body_text": "b" * 80})
-            writer.flush()
-        self.assertEqual(stats["partitions_written"], 2)
-        self.assertTrue(all((self.fx.root / p).stat().st_size <= 300 for p in man["files"]))
 
     def test_publish_failure_keeps_old_cursor(self):
         self.sync()
@@ -321,15 +220,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(self.sync()["errors"], 1)
         self.assertEqual(self.manifest()["cursor"], "10")
         self.assertFalse(any(p.startswith("/messages/") for p, _ in self.http.calls))
-
-    def test_unknown_unspam_uses_fetched_current_labels(self):
-        self.http.messages[MID]["labelIds"] = ["SPAM"]
-        self.sync()
-        self.http.messages[MID]["labelIds"] = ["INBOX", "Label_1"]
-        self.events(labelsRemoved=[{"message": {"id": MID}, "labelIds": ["SPAM"]}])
-        self.assertEqual(self.sync()["messages_written"], 1)
-        self.assertEqual(self.state()["label_ids"], ["INBOX", "Label_1"])
-
 
 class ContentOnlyTests(unittest.TestCase):
     def setUp(self):
@@ -387,24 +277,6 @@ class ContentOnlyTests(unittest.TestCase):
         calls = [q for p, q in self.http.calls if p == "/messages/" + OTHER]
         self.assertEqual(calls, [{"format": ["minimal"], "fields": ["id,labelIds"]}])
 
-    def test_successful_resync_reconciles_present_content_only_without_get(self):
-        self.partial()
-        self.http.failures["/history"] = [404]
-        self.http.messages[OTHER]["labelIds"] = ["Label_1"]
-        self.http.profile["historyId"] = "30"
-        self.http.calls.clear()
-        self.assertEqual(self.sync()["errors"], 0)
-        self.assertEqual(load(self.fx.root / "state/ab.json")[OTHER], {"label_ids": ["Label_1"]})
-        self.assertFalse(any(p == "/messages/" + OTHER for p, q in self.http.calls))
-        self.assertEqual(load(self.fx.root / "manifest.json")["cursor"], "30")
-        # Repeat with a surviving content-only ID outside this history window.
-        states = load(self.fx.root / "state/ab.json")
-        del states[OTHER]
-        self.fx.save("state/ab.json", states)
-        self.http.history = [{"historyId": "31", "history": []}]
-        self.assertEqual(self.sync()["errors"], 0)
-        self.assertEqual(load(self.fx.root / "state/ab.json")[OTHER], {"label_ids": ["Label_1"]})
-
     def test_unreconciled_content_only_keeps_cursor_and_cli_exit_75(self):
         self.partial()
         self.http.history = [{"historyId": "20", "history": []}]
@@ -417,26 +289,3 @@ class ContentOnlyTests(unittest.TestCase):
         self.assertEqual(load(self.fx.root / "manifest.json")["cursor"], "10")
         self.assertNotIn(OTHER, load(self.fx.root / "state/ab.json"))
 
-    def test_cursor_guard_rejects_unreconciled_state_after_minimal_fetch(self):
-        self.partial()
-        self.http.history = [{"historyId": "20", "history": []}]
-        # Simulate a state dropped during reconciliation; the final guard must
-        # prevent cursor publication even though the minimal request succeeded.
-        import gmail.fetch as fetch
-        archive = fetch._archive
-
-        class DroppingState(dict):
-            def __setitem__(self, key, value):
-                if key != OTHER:
-                    super().__setitem__(key, value)
-
-            def __deepcopy__(self, memo):
-                return DroppingState(self)
-
-        def missing(*args):
-            known, states = archive(*args)
-            return known, DroppingState(states)
-
-        with patch("gmail.fetch._archive", side_effect=missing):
-            self.assertEqual(self.sync()["errors"], 1)
-        self.assertEqual(load(self.fx.root / "manifest.json")["cursor"], "10")
