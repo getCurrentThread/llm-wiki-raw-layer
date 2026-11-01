@@ -262,9 +262,9 @@ def _claude_cli(argv):
 
 
 def _named_only(found):
-    """The apps the MCP server searches only when a call names them: the off-limits ones (kakaotalk)."""
+    """The apps the MCP server searches only when a call names them: the owner-gated ones (kakaotalk)."""
     from tools import bootstrap  # noqa: PLC0415
-    return [a for a in found if a in bootstrap.OFF_LIMITS]
+    return [a for a in found if a in bootstrap.OWNER_GATED]
 
 
 class Kit:

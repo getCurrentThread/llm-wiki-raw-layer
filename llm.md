@@ -68,10 +68,11 @@ repeating them.
 ## 2. Ground rules
 
 1. Always invoke Python as `python -s -B` (or `& '<PY>' -s -B`).
-2. **kakaotalk is owner-gated, not off-limits.** Its code is a local-archive connector for the owner's own,
-   signed-in KakaoTalk client on this machine (own data, local-only; see `kakaotalk/README.md`): read and edit
-   it like any other app's code. Its data stays gated: never touch its data root, run kakaotalk commands only
-   when the owner explicitly asks, and read only their pass/fail summary lines.
+2. **kakaotalk is owner-gated.** Its code is a local-archive connector for the owner's own, signed-in
+   KakaoTalk client on this machine (own data, local-only; see `kakaotalk/README.md`): read and edit it like any
+   other app's code, and run its commands yourself when the owner asks for them (6.5). This runbook's general
+   steps leave it out, and its search runs only for requests about KakaoTalk. Report aggregates only (rule 3);
+   its keys never leave its data root and are never printed.
    `mattermost/admin.py` and `kakaotalk/admin.py` write outward (Mattermost channels, webhooks and posts; messages
    through the owner's client): no step of this runbook runs them; run one only when the owner asks for that write.
    Framework-wide `manage.py check`, with no app named, is allowed: it validates every app's contract and prints

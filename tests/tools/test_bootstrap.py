@@ -511,7 +511,7 @@ class OffLimits(unittest.TestCase):
                                                             return_value=(["gmail"], ["kakaotalk"])):
                 rc, out, err = run(*argv)
                 self.assertEqual(rc, 2)
-                self.assertIn("off-limits", err)
+                self.assertIn("owner-gated", err)
                 self.assertEqual(out, "")
 
     def test_unknown_app(self):
@@ -524,7 +524,7 @@ class OffLimits(unittest.TestCase):
     def test_discovery_leaves_it_out(self):
         apps, off = B.in_scope_apps()
         self.assertNotIn("kakaotalk", apps)
-        self.assertTrue(set(off) <= set(B.OFF_LIMITS))
+        self.assertTrue(set(off) <= set(B.OWNER_GATED))
 
 
 class DoctorReport(unittest.TestCase):
@@ -541,7 +541,7 @@ class DoctorReport(unittest.TestCase):
                  verify={"rc": 0, "busy": True, "differing_rows": None, "head_seq": None})
         return {"machine": m, "apps": {"gmail": p, "notion": {"error": "x", "next": {"step": "9", "why": "x"}},
                                        "discord": {"config": {"exists": False}, "next": {"step": "5.1", "why": "s"}}},
-                "skipped": ["kakaotalk (off-limits)"], "attention": ["gmail 6.1.3: w"]}
+                "skipped": ["kakaotalk (owner-gated)"], "attention": ["gmail 6.1.3: w"]}
 
     def test_text_report(self):
         out = io.StringIO()
@@ -549,7 +549,7 @@ class DoctorReport(unittest.TestCase):
             B._print_doctor(self.report())
         text = out.getvalue()
         for want in ("doctor: gmail  next 6.1.3", "paths not there: gm_client_file (missing)", "registration unknown",
-                     "ledger busy: not verified", "doctor: kakaotalk (off-limits): not checked",
+                     "ledger busy: not verified", "doctor: kakaotalk (owner-gated): not checked",
                      "1 item(s) need attention"):
             self.assertIn(want, text)
 

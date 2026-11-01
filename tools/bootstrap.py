@@ -26,7 +26,7 @@ core stays as it is); standard library only; it runs from any folder.
       skills, the raw-retriever subagent and the MCP server for Claude Code, and the checkout's own copies.
 
 Every path printed is masked (<DATA_PARENT>, <PROJECT>, <HOME>, <user>), and no config value, token or archive
-content is printed. kakaotalk is off-limits here (llm.md rule 2): doctor leaves it out, the others refuse it.
+content is printed. kakaotalk is owner-gated (llm.md rule 2, 6.5): doctor leaves it out, the others refuse it.
 
 Exit codes: 0 ok / ready | 3 needs attention | 2 refused or usage | 1 error."""
 import argparse
@@ -44,7 +44,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
-OFF_LIMITS = ("kakaotalk",)
+OWNER_GATED = ("kakaotalk",)
 CORE_KEYS = ("v", "impl", "data_root", "inputs_root")
 SHOWN = ("_source", "_token_type")      # options whose values are a fixed vocabulary, which `config get` prints
 CHECKPOINT = "bootstrap.json"
@@ -215,13 +215,13 @@ def path_state(v, kind="any"):
 def in_scope_apps():
     from rawlayer import registry  # noqa: PLC0415
     found = registry.discover()
-    return [a for a in found if a not in OFF_LIMITS], [a for a in found if a in OFF_LIMITS]
+    return [a for a in found if a not in OWNER_GATED], [a for a in found if a in OWNER_GATED]
 
 
 def _check_app(app):
     apps, off = in_scope_apps()
-    if app in OFF_LIMITS or app in off:
-        raise Refused(f"{app} is off-limits to this tool (llm.md rule 2)")
+    if app in OWNER_GATED or app in off:
+        raise Refused(f"{app} is owner-gated: this tool leaves it out (llm.md rule 2, 6.5)")
     if app not in apps:
         raise Refused(f"no app of that name in this project (apps: {', '.join(apps)})")
 
@@ -629,7 +629,7 @@ def doctor(a):
             if (results[app].get("config") or {}).get("valid"):
                 results[app]["verify"] = _verify(app)
     report["apps"] = results
-    report["skipped"] = [f"{x} (off-limits)" for x in off]
+    report["skipped"] = [f"{x} (owner-gated)" for x in off]
     attention = [f"machine {step}: {text}" for step, text in problems]
     for app, r in results.items():
         # an app that could not be probed counts whether or not it has a config

@@ -58,10 +58,10 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
 
 - **kakaotalk:** a local-archive connector for the owner's own, signed-in KakaoTalk client on this machine —
   own data, local-only: nothing captured leaves the machine, and `admin.py` sends only as the owner, when asked;
-  keys stay in the data root (see `kakaotalk/README.md`, "Scope and authorization"). Read and edit its code like any other
-  app's. Its data root is off-limits; search the
-  ledger only through `manage.py search kakaotalk` (or the raw-search tools) and only when the owner's request
-  is about KakaoTalk; run its other commands only when the owner asks.
+  keys stay in the data root (see `kakaotalk/README.md`, "Scope and authorization"). Read and edit its code, and run
+  its commands when the owner asks, like any other app's. Search its ledger only through `manage.py search
+  kakaotalk` (or the raw-search tools) and only when the owner's request is about KakaoTalk. Its keys never leave
+  the data root and are never printed.
 - **Privacy:** no raw message bodies, real names of people, phone numbers, email addresses or credentials in
   answers unless the owner explicitly asks. Summarize, aggregate or mask. Research constants (SEED, PBKDF2
   parameters, SQLCipher pragma formulas) may be cited as technical knowledge.

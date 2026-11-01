@@ -27,9 +27,9 @@ Checkout: `{{PROJECT}}`. Append-only raw ledgers with FTS5 search over the owner
   Research constants (SEED, PBKDF2 parameters, SQLCipher pragma formulas) may be cited as technical knowledge.
 - Raw data, configs and tokens stay under the data parent: never copy them into a repository, a note or a chat,
   and never commit or sync them.
-- kakaotalk is searched only through the tools above, and only for requests about KakaoTalk (the MCP tools' app
-  `all` leaves it out). Its code in the checkout may be read and edited like any other app's; its data root is
-  off-limits.
+- kakaotalk is an app like the others: read and edit its code, and run its commands (`embed`, `collect`, ...)
+  yourself when the owner asks. Only its search is scoped: through the tools above, and only for requests about
+  KakaoTalk (the MCP tools' app `all` leaves it out). Its keys stay in its data root: never print or copy them.
 
 ## Setup and operations
 
