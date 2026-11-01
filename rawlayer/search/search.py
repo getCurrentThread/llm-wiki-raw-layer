@@ -13,6 +13,7 @@ cursor, dispatch, the JSON envelope), the hits/browse/aggregate queries, the tim
 filters, and the count/timeline/senders text output. An app overrides the hooks its row model needs and adds
 its own dispatch (mattermost's --thread) through check_args/extra_result."""
 import json
+import sqlite3
 import sys
 
 from . import common
@@ -20,6 +21,8 @@ from . import dense
 from . import normalize
 from . import textindex as ti
 from .common import UsageError
+
+WINDOW_TERM_ROWS = 2000              # a term in more rows than this is too common to pair across rows
 
 
 class Filters:
@@ -246,6 +249,79 @@ class SearchDriver:
             out.append(h)
         return {"mode": "hits", "total": total, "rows": out}
 
+    def window_hits(self, con, a, query, q, flt, data_root):
+        """For a --hybrid query no single row matched: (total, anchors) of the windows -- the dense sidecar's chunks,
+        each a stretch of one container -- whose rows (those passing the filters and q's exclusions) together hold
+        every positive term; the tightest first (fewest rows between the ones holding the terms), then the newest.
+        Each is named by its row holding the most terms (its anchor). None when there is none: no sidecar, an OR,
+        fewer than two terms, or a term in more than WINDOW_TERM_ROWS rows."""
+        terms = ti._split_terms(query)
+        pos = [normalize._show("AND", p, t) for op, p, t in terms if op == "AND"]
+        neg = [normalize._show(op, p, t) for op, p, t in terms if op == "NOT"]
+        path = dense.sidecar_path(data_root, self.name)
+        if any(op == "OR" for op, _, _ in terms) or len(pos) < 2 or not self.container_col or not path.exists():
+            return None
+        sets = []
+        for term in pos:
+            qt = self.compile(" ".join([term] + neg))[0]
+            body, params = self.body(qt, flt)
+            keys = {self.rec_key(r) for r in con.execute(f"SELECT t.* {body} LIMIT ?", params + [WINDOW_TERM_ROWS + 1])}
+            if not keys or len(keys) > WINDOW_TERM_ROWS:
+                return None
+            sets.append(keys)
+        try:
+            side = common.open_ro(path)
+            try:
+                chunks = None
+                for keys in sets:
+                    got = set()
+                    for part in dense._parts(keys):
+                        got.update(r[0] for r in side.execute(
+                            f"SELECT chunk_id FROM chunk_rec WHERE rec_key IN ({dense._in(len(part))})", part))
+                    chunks = got if chunks is None else chunks & got
+                    if not chunks:
+                        return None
+                members, newest = {}, {}
+                for part in dense._parts(chunks):
+                    for cid, key in side.execute(f"SELECT chunk_id, rec_key FROM chunk_rec WHERE chunk_id IN "
+                                                 f"({dense._in(len(part))}) ORDER BY chunk_id, ord", part):
+                        members.setdefault(cid, []).append(key)
+                    newest.update(side.execute(f"SELECT id, ts_hi FROM chunks WHERE id IN ({dense._in(len(part))})",
+                                               part))
+            finally:
+                side.close()
+        except (sqlite3.Error, OSError):
+            return None
+        rows = self.rows_by_key(con, {k for ks in members.values() for k in ks}, q, flt)
+        found, seen = [], set()
+        for cid, keys in members.items():
+            keys = [k for k in keys if k in rows]
+            held = [{i for i, s in enumerate(sets) if k in s} for k in keys]
+            if set().union(*held) != set(range(len(sets))):
+                continue                    # a row holding a term is filtered out or excluded
+            # the fewest rows that hold every term between them (two pointers over the reading order)
+            span, need, have, lo = len(keys), len(sets), {}, 0
+            for hi, h in enumerate(held):
+                for i in h:
+                    have[i] = have.get(i, 0) + 1
+                while len(have) == need:
+                    span = min(span, hi - lo + 1)
+                    for i in held[lo]:
+                        have[i] -= 1
+                        if not have[i]:
+                            del have[i]
+                    lo += 1
+            hit_keys = frozenset(k for k, h in zip(keys, held) if h)
+            if hit_keys in seen:            # overlapping chunks: the same rows hold the terms
+                continue
+            seen.add(hit_keys)
+            anchor = max(range(len(keys)), key=lambda n: (len(held[n]), -n))
+            found.append((span, -newest.get(cid, 0), cid, keys, anchor))
+        if not found:
+            return None
+        found.sort()
+        return len(found), [rows[keys[anchor]] for _span, _ts, _cid, keys, anchor in found[:a.limit]]
+
     def browse(self, con, a, q, flt, cursor, tz):
         body, params = self.body(q, flt)
         total = con.execute(f"SELECT count(*) {body}", params).fetchone()[0]
@@ -307,7 +383,7 @@ class SearchDriver:
                          or (self.list_flag and getattr(a, self.list_flag))):
             raise UsageError("--hybrid ranks hits: give a query, with --mode hits and no --before/--after")
         q = exact = normalized = None
-        relaxed = False
+        relaxed = window = False
         if query is not None and extra is None:
             q, exact, normalized = self.compile(query, a.literal)
         con, meta, fresh = common.open_search(data_root, self.spec)
@@ -340,12 +416,16 @@ class SearchDriver:
                     res, hy = None, None
                     if a.hybrid:
                         body, params = self.body(q, flt)
-                        # its keyword list relaxes as plain hits do
-                        lo = None if con.execute(f"SELECT 1 {body} LIMIT 1", params).fetchone() else \
-                            self.loosen(normalized or query, a.literal)
+                        # its keyword list is the windows', or relaxes, as plain hits do
+                        none = not con.execute(f"SELECT 1 {body} LIMIT 1", params).fetchone()
+                        win = self.window_hits(con, a, query, q, flt, data_root) if none and not a.literal else None
+                        lo = self.loosen(normalized or query, a.literal) if none and not win else None
                         if lo:
                             (q, normalized), exact, relaxed = lo, None, True
-                        res, hy = dense.hybrid(self, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed)
+                        res, hy = dense.hybrid(self, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed,
+                                               kw_rows=win[1][:dense.KW_N] if win else None)
+                        if win and res is not None:
+                            res["total"], window = win[0], True
                         if res is None:
                             common.note(f"--hybrid unavailable ({hy['reason']}): keyword hits only")
                         elif hy["stale"]:
@@ -359,13 +439,16 @@ class SearchDriver:
                             res = self.hits(con, a, q, flt, tz)
                     if relaxed:
                         common.note("no row matched every term, so these rows match any of them (relaxed)")
+                    if window:
+                        common.note("no row held every term, so the keyword list is the rows of stretches of one "
+                                    "conversation or page that hold them all between them (window)")
                     if hy is not None:
                         res["hybrid"] = hy
                 else:
                     res = self.aggregate(con, a, q, flt, tz)
             if a.json:
                 env = {"source": self.name, "mode": res["mode"], "query": query, "normalized_query": normalized,
-                       "relaxed": relaxed,
+                       "relaxed": relaxed, "window": window,
                        "fts": common.show_fts(q.fts) if q else None,
                        "exclude_fts": common.show_fts(q.exclude_fts) if q else None,
                        "weak": q.weak if q else [], "verify": q.verify if q else [], "exclude": q.exclude if q else [],

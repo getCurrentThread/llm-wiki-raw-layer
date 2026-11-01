@@ -515,6 +515,27 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertIn("embedding server", env["hybrid"]["reason"])
         self.assertEqual([r["key"] for r in env["rows"]], ["a3"])
 
+    def test_a_window_holds_terms_no_single_row_holds(self):
+        env, err = self.search("회의 메뉴", "--hybrid")                     # no sidecar: relaxed hits, as before
+        self.assertEqual((env["relaxed"], env["window"]), (True, False))
+        self.embed()
+        env, err = self.search("회의 메뉴")                                 # plain hits never pair rows
+        self.assertEqual((env["relaxed"], env["window"]), (True, False))
+        env, err = self.search("회의 메뉴", "--hybrid")                     # a1 and a2 share room A's first chunk
+        self.assertEqual((env["total"], env["relaxed"], env["window"]), (1, False, True))
+        top = env["rows"][0]
+        self.assertEqual((top["key"], top["sources"]["kw"]), ("a1", 1))
+        self.assertAlmostEqual(top["rrf"], 1 / 61 + 1 / (60 + top["sources"]["sem"]), places=6)  # full keyword weight
+        self.assertIn("(window)", err)
+        for argv in (["회의 메뉴 -점심"], ["회의 메뉴", "--sender", "nobody"], ["회의 장애"], ["회의 OR 메뉴"],
+                     ["회의 메뉴", "--literal"]):
+            with self.subTest(argv=argv):                                   # an excluded or filtered row, two
+                env, _ = self.search(*argv, "--hybrid")                     # chunks, OR, --literal: no window
+                self.assertFalse(env["window"])
+        with mock.patch.object(drv, "WINDOW_TERM_ROWS", 0):                 # a term too common to pair
+            env, _ = self.search("회의 메뉴", "--hybrid")
+            self.assertFalse(env["window"])
+
     def test_hybrid_usage(self):
         for argv in (["--hybrid", "--mode", "count", "회의"], ["--hybrid", "--since", "2020"],
                      ["--hybrid", "회의", "--before", "1.2.3"]):

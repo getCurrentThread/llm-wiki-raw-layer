@@ -34,7 +34,9 @@ Apps here: claudecode, discord, gmail, kakaotalk, mattermost, notion.
 - A question worded unlike the text it is after (a paraphrase, a description, "the mail where they said the
   launch slips"): search with `hybrid: true` (`--hybrid`), limit 10 or less. It also ranks by meaning: each hit's
   `sources` gives its keyword and semantic rank (a semantic-only hit holds none of the terms), and `context` is the
-  conversation window or section around it. When `hybrid.available` is false the result is keyword hits only: say
+  conversation window or section around it. `window: true` means no single row held every term, so the keyword
+  ranks went to stretches of one conversation or page whose rows hold them all between them: read the `context`.
+  When `hybrid.available` is false the result is keyword hits only: say
   so (and why) if it matters. `hybrid.stale: true` (a warning too) means rows changed since the embeddings were
   made rank by keyword only. Never run `embed` unless the owner asks.
 - Zero hits: widen before concluding. A hits search that matches nothing retries with its terms OR-ed (quoted and

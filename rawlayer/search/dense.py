@@ -38,8 +38,10 @@ Reciprocal rank fusion (RRF_K) of two lists, per chunk: the keyword ranking (top
 to the chunk of each row (of the chunks holding it, the best-ranked semantic one), and the KNN of the query vector
 (SEM_K candidates; every other filter and the query's exclusions applied through the main index, top SEM_N kept).
 When those filters leave at most PREFILTER rows, the KNN runs over their chunks only, so a channel or a page keeps
-its own best chunks. A relaxed keyword list (no row held every term) is weighted RELAXED_KW: OR-ed common words
-otherwise push the semantic hits down. A hit is the unit's anchor row (its best keyword row, else the chunk's row
+its own best chunks. When no row holds every term, the keyword list is first the windows' anchor rows at full
+weight (search.window_hits: chunks whose rows hold every term between them, "window": true); only without a window
+does it relax. A relaxed keyword list is weighted RELAXED_KW: OR-ed common words otherwise push the semantic hits
+down. A hit is the unit's anchor row (its best keyword row, else the chunk's row
 sharing the most query bigrams that no hit above shows) with "sources" (rank in each list), "rrf" and "context"
 (the chunk's rows).
 """
@@ -482,15 +484,16 @@ def _query_text(query):
     return " ".join(words).replace('"', "") or query
 
 
-def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=False):
+def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=False, kw_rows=None):
     """(res, info): fused hits, or (None, info) with info["reason"] when dense retrieval cannot run. relaxed: the
-    keyword list is q OR-ed (weighted RELAXED_KW)."""
+    keyword list is q OR-ed (weighted RELAXED_KW); kw_rows: the keyword list as given (the windows' rows)."""
     info = {"available": False, "rrf_k": RRF_K}
     path = sidecar_path(data_root, drv.name)
-    # keyword list: exact-first, as hits() orders
-    kw = drv.ranked(con, exact, flt, KW_N) if exact is not None else []
-    seen = set(kw)
-    kw_rows = drv.rows_by_id(con, (kw + [i for i in drv.ranked(con, q, flt, KW_N + len(kw)) if i not in seen])[:KW_N])
+    if kw_rows is None:
+        # keyword list: exact-first, as hits() orders
+        kw = drv.ranked(con, exact, flt, KW_N) if exact is not None else []
+        seen = set(kw)
+        kw_rows = drv.rows_by_id(con, (kw + [i for i in drv.ranked(con, q, flt, KW_N + len(kw)) if i not in seen])[:KW_N])
     kw_keys = [drv.rec_key(r) for r in kw_rows]
     # a selective filter: the KNN runs over the chunks of the rows it keeps, not over the filtered top SEM_K
     cand = drv.filtered_keys(con, q, flt, PREFILTER) if flt.selector and path.exists() else None
