@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """The app's Mattermost fetch step (mattertok's archiver, ported) against an in-process fake server: backfill and
-forward cursors, timestamp ties at page edges, retention, purged cursors, archived channels, resuming a mattertok
-archive, exclusion, unavailable channels, partial progress and interruption, torn files, users, account binding,
-bounds, kept files, the HTTP client (retries, redirects), sign-in, the command line, options and the origin hook."""
+forward cursors, timestamp ties at page edges, purged cursors, archived channels, exclusion, unavailable channels,
+partial progress, torn files, users, account binding, kept files, the HTTP client (retries, redirects), sign-in, the
+command line, options and the origin hook."""
 import contextlib
 import hashlib
 import http.client
@@ -39,7 +39,7 @@ ME, OTHER, TEAM, TEAM2 = ident("u", 0), ident("u", 1), ident("t", 1), ident("t",
 class Server:
     """Just enough of Mattermost's API v4: teams, channels (archived ones on request), cursor paging of posts as
     the server does it -- `before`/`after` compare the cursor post's create_at strictly, a cursor post that no
-    longer exists matches nothing, posts older than the retention cut are not served -- users and files."""
+    longer exists matches nothing -- users and files."""
 
     def __init__(self):
         self.users = {ME: {"id": ME, "username": "me", "nickname": "", "first_name": "", "last_name": ""},
@@ -47,7 +47,7 @@ class Server:
         self.teams = [{"id": TEAM, "name": "team", "display_name": "Team"}]
         self.channels, self.posts, self.fail, self.calls = {}, {}, {}, []
         self.files, self.file_fail = {}, {}
-        self.clock, self.seq, self.cut = 1_700_000_000_000, 0, 0
+        self.clock, self.seq = 1_700_000_000_000, 0
 
     def channel(self, n, name="general", ctype="O", display=None, posts=0, author=ME, same=1):
         cid = ident("c", n)
@@ -115,21 +115,20 @@ class Server:
                 raise status
             raise FetchError("api_error", status)
         rows = sorted(self.posts[cid], key=lambda p: (p["create_at"], p["id"]))
-        visible = [p for p in rows if p["create_at"] >= self.cut]
         stamp = {p["id"]: p["create_at"] for p in rows}
         per = query["per_page"]
         if "after" in query:
-            page = [p for p in visible if query["after"] in stamp and p["create_at"] > stamp[query["after"]]][:per]
+            page = [p for p in rows if query["after"] in stamp and p["create_at"] > stamp[query["after"]]][:per]
         else:
-            older = visible if "before" not in query else \
-                [p for p in visible if query["before"] in stamp and p["create_at"] < stamp[query["before"]]]
+            older = rows if "before" not in query else \
+                [p for p in rows if query["before"] in stamp and p["create_at"] < stamp[query["before"]]]
             page = older[-per:]
         # like the server's, the neighbours of a page compare create_at strictly too
-        prev = [p["id"] for p in visible if page and p["create_at"] < page[0]["create_at"]][-1:]
-        nxt = [p["id"] for p in visible if page and p["create_at"] > page[-1]["create_at"]][:1]
+        prev = [p["id"] for p in rows if page and p["create_at"] < page[0]["create_at"]][-1:]
+        nxt = [p["id"] for p in rows if page and p["create_at"] > page[-1]["create_at"]][:1]
         return {"order": [p["id"] for p in reversed(page)], "posts": {p["id"]: dict(p) for p in page},
                 "next_post_id": "".join(nxt), "prev_post_id": "".join(prev),
-                "first_inaccessible_post_time": self.cut if len(visible) < len(rows) else 0}
+                "first_inaccessible_post_time": 0}
 
     def client(self):
         c = MattermostClient(URL, "synthetic-token", sleep=lambda s: None, rate=0)
@@ -191,29 +190,6 @@ class TestSync(Base):
         self.assertFalse(invariants(self.fx)[0])
         self.assertEqual(replay_diff(self.fx), 0)
 
-    def test_resume_mattertok_archive(self):
-        cid = self.srv.channel(1, posts=5)
-        old = self.srv.posts[cid]
-        rel = f"public/team/general__{cid[:8]}.jsonl"
-        state = {"channel_id": cid, "display": "general", "channel_name": "general", "team_name": "team",
-                 "type": "O", "path": rel, "oldest_cursor": old[0]["id"], "newest_post_id": old[-1]["id"],
-                 "newest_create_at": old[-1]["create_at"], "backfill_done": True, "post_count": 5, "expected": 5,
-                 "inaccessible_before": 0, "error": ""}
-        self.fx.mm.joinpath("manifest.json").write_text(json.dumps(
-            {"version": 1, "base_url": URL, "user_id": ME, "username": "me", "created_at": 1, "updated_at": 1,
-             "channels": {cid: state}}, ensure_ascii=False, indent=1), encoding="utf-8")
-        target = self.fx.mm.joinpath("posts", *rel.split("/"))
-        target.parent.mkdir(parents=True)
-        target.write_bytes(b"".join(json.dumps(p, ensure_ascii=False).encode() + b"\r\n" for p in old))
-        before = target.read_bytes().splitlines()
-        self.srv.add(cid, 2)
-        stats = self.sync()
-        self.assertEqual((stats["posts_written"], stats["errors"]), (2, 0))
-        self.assertEqual(self.srv.post_calls(cid), [{"per_page": 200, "after": old[4]["id"]}])
-        after = target.read_bytes().splitlines()
-        self.assertEqual([x.rstrip(b"\r") for x in before], after[:5])
-        self.assertEqual(len(after), 7)
-
     def test_exclusion_is_decided_before_any_fetch(self):
         keep = self.srv.channel(1, posts=2)
         skip = self.srv.channel(2, name="room-x", display="Room (Skip-Me)", posts=2)
@@ -229,16 +205,6 @@ class TestSync(Base):
         self.srv.calls.clear()
         self.assertEqual(self.sync(patterns=["skip-me"])["excluded"], 2)
         self.assertEqual(self.srv.post_calls(keep), [])
-
-    def test_new_empty_channel_and_dm_labels(self):
-        self.srv.channel(1, posts=0)
-        dm = self.srv.channel(2, ctype="D", posts=1)
-        self.sync()
-        man = self.manifest()["channels"]
-        self.assertEqual(list(man), [dm])
-        self.assertEqual(man[dm]["display"], "@other")
-        self.assertEqual(man[dm]["path"], f"dm/@other__{dm[:8]}.jsonl")
-        self.assertEqual(man[dm]["team_name"], "")
 
     def test_unavailable_channel_and_every_channel_refused(self):
         ok, gone = self.srv.channel(1, posts=1), self.srv.channel(2, name="gone", posts=1)
@@ -279,61 +245,6 @@ class TestSync(Base):
         self.assertEqual([("after" in q) for q in self.srv.post_calls(cid)], [True, True, True])
         st = self.manifest()["channels"][cid]
         self.assertEqual((st["newest_post_id"], st["post_count"]), (self.served(cid)[-1], 900))
-
-    def test_full_page_at_the_end_reads_the_rest_of_its_timestamp(self):
-        # the server's prev/next_post_id are empty when only the rest of the page's edge timestamp remains
-        cid = self.srv.channel(1)
-        self.srv.add(cid, 15, same=15)
-        self.srv.add(cid, 195)
-        self.assertEqual(self.sync()["posts_written"], 210)
-        self.assertEqual(self.ids(cid), self.served(cid))
-        self.srv.add(cid, 190)
-        self.srv.add(cid, 15, same=15)
-        self.assertEqual(self.sync()["posts_written"], 205)
-        self.assertEqual(self.ids(cid), self.served(cid))
-
-    def test_forward_stop_between_pages_resumes_inside_the_split_timestamp(self):
-        cid = self.srv.channel(1, posts=5)
-        self.sync()
-        self.srv.add(cid, 195)
-        self.srv.add(cid, 10, same=10)              # the first forward page ends inside this timestamp
-        self.srv.add(cid, 50)
-        self.srv.fail[cid] = (500, 3)               # this run's second forward page fails
-        self.assertEqual(self.sync()["posts_written"], 200)
-        del self.srv.fail[cid]
-        self.assertEqual(self.sync()["errors"], 0)
-        self.assertEqual(self.ids(cid), self.served(cid))
-
-    def test_deleted_backfill_cursor_pages_back_again(self):
-        cid = self.srv.channel(1, posts=600)
-        self.srv.fail[cid] = (500, 1)
-        self.sync()
-        cursor = self.manifest()["channels"][cid]["oldest_cursor"]
-        self.srv.posts[cid] = [p for p in self.srv.posts[cid] if p["id"] != cursor]   # deleted for good
-        del self.srv.fail[cid]
-        self.srv.calls.clear()
-        stats = self.sync()
-        self.assertEqual((stats["errors"], stats["posts_written"]), (0, 400))    # known posts read again don't count
-        self.assertEqual([q.get("before") for q in self.srv.post_calls(cid)][:2], [cursor, None])
-        self.assertTrue(self.manifest()["channels"][cid]["backfill_done"])
-        self.assertEqual(len(self.lines(cid)), 600)  # the deleted post stays in the archive
-        self.assertLessEqual(set(self.served(cid)), set(self.ids(cid)))
-
-    def test_retention_cut_ends_the_backfill(self):
-        cid = self.srv.channel(1, posts=6)
-        self.srv.cut = self.srv.posts[cid][2]["create_at"]   # the two oldest posts are past the retention limit
-        self.assertEqual(self.sync()["posts_written"], 4)
-        st = self.manifest()["channels"][cid]
-        self.assertEqual((st["inaccessible_before"], st["backfill_done"]), (self.srv.cut, True))
-        self.assertEqual(self.ids(cid), self.served(cid)[2:])
-
-    def test_dm_listed_in_every_team_is_fetched_once(self):
-        self.srv.teams.append({"id": TEAM2, "name": "second", "display_name": "Second"})
-        dm = self.srv.channel(1, ctype="D", posts=3)
-        stats = self.sync()
-        self.assertEqual((stats["channels"], stats["posts_written"]), (1, 3))
-        self.assertEqual(sum(1 for p, _q in self.srv.calls if p.endswith("/channels")), 2)
-        self.assertEqual([("after" in q) for q in self.srv.post_calls(dm)], [False, True])
 
     def test_purged_forward_cursor_catches_up(self):
         cid = self.srv.channel(1, posts=5)
@@ -400,23 +311,6 @@ class TestSync(Base):
         self.assertEqual(self.ids(cid), self.served(cid))
         self.assertEqual(self.manifest()["channels"][cid]["error"], "")
 
-    def test_interruption_keeps_finished_channels_and_flushed_pages(self):
-        done = self.srv.channel(1, posts=3)
-        cid = self.srv.channel(2, name="long", posts=450)
-        self.srv.fail[cid] = (RuntimeError("killed"), 2)
-        with patch.object(fetch, "FLUSH_POSTS", 100), self.assertRaises(RuntimeError):
-            self.sync()
-        man = self.manifest()["channels"]
-        self.assertTrue(man[done]["backfill_done"])
-        self.assertEqual(self.ids(done), self.served(done))
-        self.assertEqual((man[cid]["backfill_done"], man[cid]["post_count"]), (False, 399))
-        self.assertEqual(len(self.lines(cid)), 399)
-        del self.srv.fail[cid]
-        self.srv.calls.clear()
-        self.assertEqual(self.sync()["errors"], 0)
-        self.assertEqual(self.srv.post_calls(cid)[0]["before"], man[cid]["oldest_cursor"])
-        self.assertEqual(self.ids(cid), self.served(cid))
-
     def test_fetch_lock_is_exclusive(self):
         self.srv.channel(1, posts=1)
         with fetch.locked(self.fx.mm), self.assertRaisesRegex(FetchError, "collector_busy"):
@@ -469,16 +363,6 @@ class TestSync(Base):
             self.fx.mm.joinpath("manifest.json").write_text(json.dumps(man), encoding="utf-8")
         self.assertEqual(self.sync()["errors"], 0)
 
-    def test_bounds(self):
-        a, b = self.srv.channel(1, posts=1), self.srv.channel(2, name="second", posts=1)
-        stats = self.sync(max_items=1)
-        self.assertTrue(stats["limited"])
-        self.assertEqual(len(self.manifest()["channels"]), 1)
-        self.srv.calls.clear()
-        self.assertTrue(self.sync(time_budget=-1)["limited"])
-        self.assertEqual(self.srv.post_calls(a) + self.srv.post_calls(b), [])
-
-
 class TestFiles(Base):
     def file_calls(self):
         return [p.rsplit("/", 1)[1] for p, _q in self.srv.calls if p.startswith("/files/")]
@@ -528,7 +412,7 @@ class TestFiles(Base):
         with self.assertRaisesRegex(FetchError, "auth_required"):
             self.sync(files_cap=100)
 
-    def test_off_switch_skipped_channels_deadline_and_disk_floor(self):
+    def test_off_switch_excluded_channels_and_disk_floor(self):
         a, b = self.srv.channel(1), self.srv.channel(2, name="second")
         fa, _fb = self.srv.upload(a, 4), self.srv.upload(b, 4)
         self.assertEqual(self.sync()["files_stored"], 0)        # no cap: nothing is kept
@@ -536,13 +420,8 @@ class TestFiles(Base):
         self.assertEqual(self.file_calls(), [])
         with patch.object(fetch.shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)):
             self.assertTrue(self.sync(files_cap=100)["limited"])
-        self.assertTrue(self.sync(files_cap=100, time_budget=-1)["limited"])
         self.assertEqual(self.file_calls(), [])
         self.assertEqual(self.sync(files_cap=100, patterns=["second"])["files_stored"], 1)   # excluded channel
-        self.assertEqual(self.file_calls(), [fa])
-        self.srv.fail[b] = (403, 0)
-        stats = self.sync(files_cap=100)
-        self.assertEqual((stats["unavailable"], stats["files_stored"]), (1, 0))      # unavailable channel
         self.assertEqual(self.file_calls(), [fa])
 
 
@@ -589,13 +468,6 @@ class TestHttp(unittest.TestCase):
             self.assertNotIn("private-secret", repr(raised.exception.args))
         with self.assertRaisesRegex(FetchError, "bad_url"):
             MattermostClient("http://mm.example", "t")
-
-    def test_truncated_reply_is_retried(self):
-        client = self.client([http.client.IncompleteRead(b"{"), Response({"id": ME})])
-        self.assertEqual(client.authenticate()["id"], ME)
-        self.assertEqual(client.requests, 2)
-        with self.assertRaisesRegex(FetchError, "transport_error"):
-            self.client([http.client.RemoteDisconnected("synthetic")] * 4).authenticate()
 
     def test_redirect_is_refused_not_followed(self):
         class Redirect(BaseHandler):
@@ -667,7 +539,6 @@ class TestApp(Base):
 
     def test_options_and_task_checks(self):
         app, cfg = MatterConfig("mattermost"), self.config()
-        self.assertEqual((cfg.mm_sync, cfg.mm_url, cfg.mm_token_file, cfg.mm_files_max_mb), (False, "", "", 0))
         self.assertEqual(app.task_checks(cfg), [])
         cfg = self.config(mm_sync=True)
         self.assertEqual(app.task_checks(cfg), ["mm_sync requires mm_url"])

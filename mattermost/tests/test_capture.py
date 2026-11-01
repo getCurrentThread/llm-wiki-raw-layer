@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""M2 (mm_archive) on synthetic archives: line handling, multi-version order (Q3), moves, vanished,
-missing and empty channels, unstable manifest, exclusion, slim posts, os.replace concurrency, and the ledger
-invariants (tests/core/ledgercheck.py)."""
+"""The mattermost archive origin on synthetic archives: pinned genesis records and notes, an unchanged re-run, the ledger
+invariants (tests/core/ledgercheck.py), posts with odd timestamps, files.json pointer validation, channel exclusion,
+a channel path that tries to leave posts/, and the option's validation. Vanished, move, version order, unstable reads
+and recovery are core rules, tested on the toy app in tests/core."""
 import json
 import shutil
-import threading
 import unittest
-from pathlib import Path
 
-from rawlayer.capture import canon, fsio
+from rawlayer.capture import canon
+from rawlayer.capture.config import Config, ConfigError
 from mattermost.readers import archive as src_matter
 from mattermost.tests.fixtures import Fixture, mm_file, post
 from tests.core.appfix import _force, by_key, capture, invariants, manifests, records, replay_diff
@@ -25,6 +25,18 @@ def std_channels():
         "c2": {"path": "d/dm.jsonl", "posts": [post("p6", "c2", user="u9")]},
         "c3": {"path": "o/empty.jsonl", "posts": None, "post_count": 0},
     }
+
+
+def set_cfg(fx, **kv):
+    with fx.config_path.open(encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    for k, v in kv.items():
+        if v is None:
+            cfg.pop(k, None)
+        else:
+            cfg[k] = v
+    with fx.config_path.open("w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
 
 
 class Base(unittest.TestCase):
@@ -83,51 +95,6 @@ class TestMM(Base):
         self.assertEqual(c1["days"], {canon.kst_day(1_600_000_000_000): 1, "none": 2})
         self.assertEqual(invariants(self.fx)[0], {})
 
-    def test_versions_order_q3(self):
-        ch = {"c1": {"path": "c1.jsonl", "posts": [post("p1", "c1", msg=m) for m in ("1", "3", "1", "2")]}}
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        revs = [(r["rev"], r["native"]["message"]) for r in by_key(records(self.fx))["mm:post:p1"]]
-        self.assertEqual(revs, [(1, "1"), (2, "3"), (3, "2")])
-        self.assertEqual(manifests(self.fx)[0]["origins"]["mm_archive"]["containers"][
-            canon.source_id("posts/c1.jsonl")]["kinds"]["post"]["n"], 1)
-        # same versions, different last one: only the representative is re-put (a reverted edit)
-        ch["c1"]["posts"] = [post("p1", "c1", msg=m) for m in ("2", "3", "1")]
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        revs = [(r["rev"], r["native"]["message"]) for r in by_key(records(self.fx))["mm:post:p1"]]
-        self.assertEqual(revs[3:], [(4, "1")])
-        self.assertEqual(invariants(self.fx)[0], {})
-
-    def test_move_is_one_put_not_vanished(self):
-        ch = std_channels()
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        moved = ch["c1"]["posts"].pop(1)
-        ch["c2"]["posts"].append(moved)
-        ch["c1"]["post_count"], ch["c2"]["post_count"] = 4, 2
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        new = [r for r in records(self.fx) if r["seq"] == 2]
-        self.assertEqual([(r["key"], r["rev"], r["src"]) for r in new],
-                         [("mm:post:p2", 2, canon.source_id("posts/d/dm.jsonl"))])
-        p2 = by_key(records(self.fx))["mm:post:p2"]
-        self.assertEqual(p2[0]["h"], p2[1]["h"])
-        self.assertEqual(invariants(self.fx)[0], {})             # same h, new src: not put_same_h (Q3)
-
-    def test_vanished_is_suspect(self):
-        ch = std_channels()
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        ch["c1"]["posts"].pop(1)
-        ch["c1"]["posts"][0]["message"] = "edited"
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 3)
-        m = manifests(self.fx)[1]
-        self.assertEqual(m["origins"]["mm_archive"]["status"], "suspect")
-        self.assertEqual(m["origins"]["mm_archive"]["notes"]["vanished"], 1)
-        self.assertEqual(m["segments"], [])
-
     def test_files_json_pointers(self):
         sha = "ab" * 32
         good = {"post_id": "p1", "sha256": sha, "size": 3, "path": "files/f1/f1"}
@@ -148,52 +115,12 @@ class TestMM(Base):
         self.assertEqual(capture(self.fx), 3)
         self.assertEqual(replay_diff(self.fx), 0)
 
-    def test_missing_file_is_not_vanished(self):
-        ch = std_channels()
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        ch["c2"]["posts"], ch["c2"]["post_count"] = None, 1
-        self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx), 0)
-        m = manifests(self.fx)[1]["origins"]["mm_archive"]
-        self.assertEqual(m["containers"][canon.source_id("posts/d/dm.jsonl")]["status"], "missing")
-        self.assertEqual(m["status"], "ok")
-        self.assertEqual(manifests(self.fx)[1]["segments"], [])
-        bad, nums = invariants(self.fx)
-        self.assertEqual((bad, nums["containers_skipped"]), ({}, 1))   # the missing file is not compared
-
-    def test_unstable_manifest(self):
-        self.fx.mm_write(std_channels())
-        real = fsio.read_shared
-        calls = {"n": 0}
-
-        def flaky(path, *a, **kw):
-            data = real(path, *a, **kw)
-            if Path(path).name == "manifest.json":
-                calls["n"] += 1
-                if calls["n"] % 2 == 0:
-                    data += b" "
-            return data
-        src_matter.fsio.read_shared = flaky
-        try:
-            self.assertEqual(capture(self.fx), 75)       # unstable = skipped (SPEC 13)
-        finally:
-            src_matter.fsio.read_shared = real
-        m = manifests(self.fx)[0]
-        self.assertEqual(m["origins"]["mm_archive"]["status"], "unstable")
-        self.assertEqual(m["segments"], [])
-        self.assertEqual(calls["n"], 6)
-
     def test_exclusion_and_slim(self):
         ch = std_channels()
         ch["c2"]["display"] = "My FEEDback room"
         ch["c1"]["posts"].append(post("p7", "c1", files=[mm_file("f7", "p7", "c1")], _files=[]))
         self.fx.mm_write(ch)
-        with self.fx.config_path.open(encoding="utf-8") as fh:
-            cfg = json.load(fh)
-        cfg["mm_exclude_patterns"] = ["feedBack"]
-        with self.fx.config_path.open("w", encoding="utf-8") as fh:
-            json.dump(cfg, fh)
+        set_cfg(self.fx, mm_exclude_patterns=["feedBack"])
         self.assertEqual(capture(self.fx), 0)
         keys = set(by_key(records(self.fx)))
         self.assertNotIn("mm:ch:c2", keys)
@@ -201,44 +128,25 @@ class TestMM(Base):
         self.assertIn("mm:post:p7", keys)
         self.assertNotIn("mm:file:f7", keys)
         notes = manifests(self.fx)[0]["origins"]["mm_archive"]["notes"]
-        self.assertEqual((notes["excluded"], notes["slim_post"]), (1, 1))
+        self.assertEqual((notes["excluded"], notes["slim_post"], notes.get("orphan_file")), (1, 1, None))
+    def test_channel_path_cannot_leave_posts(self):
+        ch = std_channels()
+        ch["c9"] = {"path": "../evil.jsonl", "posts": [post("p99", "c9")]}
+        self.fx.mm_write(ch)
+        self.assertEqual(capture(self.fx), 0)
+        self.assertNotIn("mm:post:p99", {r["key"] for r in records(self.fx)})
+        self.assertGreaterEqual(manifests(self.fx)[0]["origins"]["mm_archive"]["notes"].get("bad_line"), 1)
 
-    def test_read_shared_under_concurrent_os_replace(self):
-        """Q4: the reader never fails and never sees a torn file. The writer's os.replace CAN fail while
-        any handle is open (MoveFileExW ignores FILE_SHARE_DELETE), so that is measured, not asserted."""
-        target = self.fx.base / "posts.jsonl"
-        versions = [b"a" * 50000 + b"\r\n", b"b" * 70000 + b"\r\n"]
-        target.write_bytes(versions[0])
-        errors = {"replace": 0, "read": 0, "torn": 0, "replaced": 0}
-        stop = threading.Event()
-
-        def writer():
-            i = 0
-            tmp = target.with_name(target.name + ".tmp")
-            while not stop.is_set():
-                tmp.write_bytes(versions[i % 2])
-                try:
-                    tmp.replace(target)               # os.replace
-                    errors["replaced"] += 1
-                except PermissionError:
-                    errors["replace"] += 1
-                i += 1
-        t = threading.Thread(target=writer)
-        t.start()
-        try:
-            for _ in range(400):
-                try:
-                    data = fsio.read_shared(target)
-                except OSError:
-                    errors["read"] += 1
-                    continue
-                if data not in versions:
-                    errors["torn"] += 1
-        finally:
-            stop.set()
-            t.join()
-        self.assertEqual((errors["read"], errors["torn"]), (0, 0))
-        self.assertGreater(errors["replaced"], 0)
+    def test_exclude_option_types(self):
+        for v in ("feedback", [""], [3]):
+            with self.subTest(value=v):
+                self.fx.write_config()
+                set_cfg(self.fx, mm_exclude_patterns=v)
+                with self.assertRaises(ConfigError):
+                    Config(self.fx.config_path)
+        self.fx.write_config()
+        set_cfg(self.fx, mm_exclude_patterns=None)              # left out: the default (none excluded)
+        self.assertEqual(Config(self.fx.config_path).mm_exclude, [])
 
 
 if __name__ == "__main__":

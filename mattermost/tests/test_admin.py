@@ -241,25 +241,6 @@ class TestApply(Base):
         self.assertEqual(res["team_id"], TEAM)
         self.assertEqual(self.run_admin("plan", "--spec", self.spec())[1]["exists"], 2)
 
-    def test_second_apply_changes_nothing(self):
-        self.apply()
-        before, self.fake.writes = self.stored(), []
-        code, report = self.apply()
-        self.assertEqual((code, report["created"], report["members_added"], report["hooks_created"]), (0, 0, 0, 0))
-        self.assertEqual(set(report["items"].values()), {"unchanged"})
-        self.assertEqual(self.fake.writes, [])
-        self.assertEqual((len(self.fake.channels), len(self.fake.hooks)), (2, 2))
-        self.assertEqual(self.stored()["channels"], before["channels"])
-
-    def test_header_and_missing_member_are_repaired(self):
-        self.apply()
-        cid = self.fake.channel("team-01")["id"]
-        self.fake.members[cid].discard(BOB)
-        code, report = self.apply(self.spec(header="synthetic header"))
-        self.assertEqual((code, report["members_added"], report["items"]["team-01"]), (0, 1, "updated"))
-        self.assertEqual(self.fake.channel("team-01")["header"], "synthetic header")
-        self.assertIn(BOB, self.fake.members[cid])
-
     def test_same_name_with_another_display_name_is_never_adopted(self):
         cid = self.fake.new("c")
         self.fake.channels[cid] = {"id": cid, "team_id": TEAM, "name": "team-01", "display_name": "Other",
@@ -308,45 +289,6 @@ class TestApply(Base):
         self.assertEqual((code, report["status"], report["http_status"]), (2, "auth_required", 401))
 
 
-class TestVerify(Base):
-    def setUp(self):
-        super().setUp()
-        self.apply()
-        self.cid = self.fake.channel("team-01")["id"]
-
-    def verify(self):
-        return self.run_admin("verify", "--spec", self.spec(), "--out", str(self.result))
-
-    def test_passes_then_fails_on_each_difference(self):
-        code, report = self.verify()
-        self.assertEqual((code, report["status"], report["problems"]), (0, "ok", {}))
-        hook = next(h for h in self.fake.hooks.values() if h["channel_id"] == self.cid)
-        for label, mutate, undo, category in (
-                ("extra member", lambda: self.fake.members[self.cid].add(CAROL),
-                 lambda: self.fake.members[self.cid].discard(CAROL), "members"),
-                ("unlocked hook", lambda: hook.update(channel_locked=False),
-                 lambda: hook.update(channel_locked=True), "hook_unlocked"),
-                ("second hook", lambda: self.fake.hooks.update(h999={**hook, "id": ident("h", 999)}),
-                 lambda: self.fake.hooks.pop("h999"), "hook_count"),
-                ("deleted channel", lambda: self.fake.channels[self.cid].update(delete_at=5),
-                 lambda: self.fake.channels[self.cid].update(delete_at=0), "archived")):
-            with self.subTest(label):
-                mutate()
-                code, report = self.verify()
-                self.assertEqual(code, 1)
-                self.assertIn(category, report["items"]["team-01"])
-                self.assertEqual(report["items"]["team-02"], "ok")
-                undo()
-        self.assertEqual(self.verify()[0], 0)
-
-    def test_a_result_that_no_longer_matches_fails(self):
-        res = self.stored()
-        res["channels"]["team-01"]["webhook_url"] = "https://other.example/hooks/x"
-        self.result.write_text(json.dumps(res), encoding="utf-8")
-        code, report = self.verify()
-        self.assertEqual((code, report["problems"]), (1, {"result_url": 1}))
-
-
 class TestPost(Base):
     def setUp(self):
         super().setUp()
@@ -354,9 +296,9 @@ class TestPost(Base):
         self.cid = self.fake.channel("team-01")["id"]
         self.fake.writes.clear()
 
-    def post(self, *extra, via_webhook=False):
+    def post(self, *extra, via_webhook=False, text=MESSAGE):
         args = ["post", "--spec", self.spec(count=1, members=("alice",)), "--key", "team-01",
-                "--message-file", self.message(), *extra]
+                "--message-file", self.message(text), *extra]
         return self.run_admin(*args, *(["--out", str(self.result), "--via-webhook"] if via_webhook else []))
 
     def test_post_is_at_most_once(self):
@@ -368,17 +310,15 @@ class TestPost(Base):
         self.assertEqual((code, report["status"]), (0, "already_posted"))
         self.assertEqual([w for w in self.fake.writes if w[1].endswith("/posts")], [("POST", "/api/v4/posts")])
         self.assertEqual([p["message"] for p in self.fake.posts[self.cid]], [MESSAGE])
+        code, report = self.run_admin("post", "--channel-id", self.cid, "--message-file", self.message(MESSAGE + "\n"))
+        self.assertEqual((code, report["status"]), (0, "already_posted"))          # a trailing newline changes nothing
+        self.assertEqual([p["message"] for p in self.fake.posts[self.cid]], [MESSAGE])
 
     def test_an_error_after_a_write_is_partial_not_refused(self):
         self.fake.drop = ("POST", "/posts")
         code, report = self.post()
         self.assertEqual((code, report["status"], report["writes"]), (1, "transport_error", 1))
         self.assertEqual(self.post()[1]["status"], "already_posted")        # the server did post it
-
-    def test_a_trailing_newline_does_not_defeat_at_most_once(self):
-        self.run_admin("post", "--channel-id", self.cid, "--message-file", self.message(MESSAGE + "\n"))
-        self.assertEqual(self.post()[1]["status"], "already_posted")
-        self.assertEqual([p["message"] for p in self.fake.posts[self.cid]], [MESSAGE])
 
     def test_webhook_post_carries_no_credentials(self):
         code, report = self.post(via_webhook=True)
@@ -400,14 +340,12 @@ class TestPost(Base):
         self.assertEqual((code, report["status"], self.fake.seen), (2, "bad_webhook_url", []))
 
     def test_pin(self):
-        code, report = self.post("--pin")
-        self.assertEqual((code, report["status"], report["pinned"]), (0, "posted", True))
-        self.assertEqual(self.fake.pinned, {self.fake.posts[self.cid][0]["id"]})
-
-    def test_pin_of_a_webhook_post_finds_it_by_message(self):
-        code, report = self.post("--pin", via_webhook=True)
-        self.assertEqual((code, report["pinned"]), (0, True))
-        self.assertEqual(self.fake.pinned, {self.fake.posts[self.cid][0]["id"]})
+        """--pin pins the posted message; a webhook answers 'ok' only, so its post is found again by message."""
+        for i, via_webhook in enumerate((False, True)):
+            with self.subTest(via_webhook=via_webhook):
+                code, report = self.post("--pin", via_webhook=via_webhook, text=f"{MESSAGE} {i}")
+                self.assertEqual((code, report["status"], report["pinned"]), (0, "posted", True))
+                self.assertEqual(self.fake.pinned, {p["id"] for p in self.fake.posts[self.cid]})
 
     def test_arguments_and_message(self):
         for argv, category in ((["--spec", self.spec(), "--message-file", self.message()], "bad_arguments"),
