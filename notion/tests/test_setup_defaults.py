@@ -70,3 +70,14 @@ class TaskChecks(Base):
                          (str(self.root), False), (str(db), True)):
             with self.subTest(path=path):
                 self.assertEqual(self.app.task_checks(self.cfg(nt_desktop_path=path)) == [], ok)
+
+
+
+class WikiExportDeclaration(unittest.TestCase):
+    def test_collect_declaration(self):
+        """`manage.py collect notion`: the declared prefix and layout, and the config keys derived from it."""
+        app = registry.app_registry("notion").apps[0]
+        self.assertEqual(app.wiki, ("nt", "page"))
+        keys = [f"nt_wiki_{k}" for k in ("project", "include", "exclude", "since")]
+        self.assertEqual([op.key for op in app.options][-4:], keys)
+        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

@@ -37,3 +37,14 @@ class SetupDefaults(unittest.TestCase):
         self.assertEqual(self.cfg["mm_token_file"], str(self.root / "elsewhere.txt"))
         self.assertEqual(self.cfg["sources"]["mm_archive"], str(self.root / "kept"))
         self.assertEqual(self.notes, ["sources.mm_archive: folder created"])
+
+
+
+class WikiExportDeclaration(unittest.TestCase):
+    def test_collect_declaration(self):
+        """`manage.py collect mattermost`: the declared prefix and layout, and the config keys derived from it."""
+        app = registry.app_registry("mattermost").apps[0]
+        self.assertEqual(app.wiki, ("mm", "chat"))
+        keys = [f"mm_wiki_{k}" for k in ("project", "include", "exclude", "since")]
+        self.assertEqual([op.key for op in app.options][-4:], keys)
+        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

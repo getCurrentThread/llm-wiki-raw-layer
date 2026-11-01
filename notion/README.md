@@ -126,6 +126,6 @@ gone: only an inaccessible page lookup does so. Backoff handles throttling/trans
 
 ## LLM Wiki export
 
-`nt_wiki_project`, `nt_wiki_include`, `nt_wiki_exclude` and `nt_wiki_since` configure `tools/wikiexport.py notion` (llm.md 13), which
+`nt_wiki_project`, `nt_wiki_include`, `nt_wiki_exclude` and `nt_wiki_since` configure `manage.py collect notion` (llm.md 13), which
 writes one Markdown file per page (headings kept) into an LLM Wiki project's `raw/sources/notion/`. Empty by
 default: nothing is exported.

@@ -37,6 +37,8 @@ Checkout: `{{PROJECT}}`. Append-only raw ledgers with FTS5 search over the owner
   checkout's `llm.md` and its doctor: `{{BOOT}} doctor`
 - Agent tests: `{{RUN}} test core claudecode discord gmail kakaotalk mattermost notion`.
 - Always run Python as `python -s -B`. Never run `capture`, `collect`, `schedule` or a fetch step unless the owner asks.
+  `collect` sends private data out of the raw layer (to LLM Wiki, and its LLM) and refuses to run as LocalSystem;
+  `collect --prune` deletes wiki pages: only on the owner's explicit yes.
   `mattermost/admin.py` and `kakaotalk/admin.py` write outward (posts, channels, messages): only when the owner
   asks for that write, after their read-only step or `--dry-run`.
 - This block, the skills, the subagent and the MCP server are managed by the checkout's agent integration

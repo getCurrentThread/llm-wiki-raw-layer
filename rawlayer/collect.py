@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""python -s -B <PROJECT>/tools/wikiexport.py <app> [--config CFG] [--project DIR] [--include S ...] [--exclude S ...]
-       [--since YYYY-MM] [--dry-run] [--prune]
-
-Feeds an app's raw ledger to an LLM Wiki project (nashsu/llm_wiki, llm.md 13): renders the app's search index as
+"""Feeds an app's raw ledger to an LLM Wiki project (nashsu/llm_wiki, llm.md 13): renders the app's search index as
 Markdown sources under <project>/raw/sources/<app>/, which the desktop app watches and ingests. Standard library
 only; the index is read as `search` reads it, through the driver's chunk hooks (SearchDriver.changed_containers and
 chunk_units: the units dense.py embeds, without deleted, system or empty rows).
 
-Files
-  chat (discord, mattermost,  per channel  <app>/<label> (<h8>)/<YYYY-MM>.md, a "## <day>" heading per day
-        kakaotalk)              or room
-  mail (gmail)                             gmail/<YYYY-MM>.md, a "## <subject / sender> (<date>)" section per mail
-  page (notion)               per page     notion/<breadcrumb> (<h8>).md, headings kept
+An app opts in with AppConfig.wiki = (prefix, layout) in its apps.py; the layout says what the containers of its
+index are, and so what the files are:
+  chat  conversations (a channel, a room, a session)
+          per container  <label> (<h8>)/<YYYY-MM>.md, a "## <day>" heading per day
+  mail  mails
+          <YYYY-MM>.md, a "## <subject / sender> (<date>)" section per mail
+  page  documents
+          per container  <breadcrumb> (<h8>).md, headings kept
 <h8> is a hash of the container id; the frontmatter holds the id itself. A chat or mail month is written once it is
 over (+09:00): the open month would change, and be ingested again in full, on every capture. Closed months, oldest
 first, fill a file up to PACK characters, and <YYYY-MM> is the file's first month: the newest file of a stream grows
@@ -19,40 +19,34 @@ first, fill a file up to PACK characters, and <YYYY-MM> is the file's first mont
 
 The config's <p>_wiki_include and <p>_wiki_exclude (substrings of the container label, casefolded; an empty include
 keeps all, an exclude wins) and <p>_wiki_since (YYYY-MM: a chat or mail file stays when its newest month is not
-before it, a page by its newest unit) narrow what is written. --project, --include, --exclude and --since replace
-them, and are the only way to give kakaotalk's (its app folder declares no wiki keys).
+before it, a page by its newest unit) narrow what is written; <p> is the prefix of AppConfig.wiki. --project,
+--include, --exclude and --since replace them, and are the only way to give the settings of an app whose prefix is
+None.
 
 Every run renders everything and rewrites only the files whose bytes changed (tmp + replace), so the wiki's
-SHA-256 ingest cache stays valid. The tool owns <project>/raw/sources/<app>/: a file there that the run did not
+SHA-256 ingest cache stays valid. The command owns <project>/raw/sources/<app>/: a file there that the run did not
 produce (a renamed channel, a narrowed include, a purge) is counted as an orphan and kept, because deleting a source
 deletes its wiki pages; only --prune removes them, and it refuses (exit 2, nothing deleted) when the index is not at
 the ledger's head or produced no file. A month that shrinks (deleted messages) can move the start of every later file
 of its stream, so their names change: the old names become orphans and --prune deletes them while the renamed files
 are ingested again. Output is counts only, never a label, a path or a text.
 
-Exit codes: 0 ok | 2 refused (config, project, app, index) | 75 busy | 1 error."""
-import argparse
+The command is `manage.py collect <app>` (rawlayer/management/commands/collect.py); this module is its logic.
+
+Exit codes: 0 ok | 2 refused (config, project, app, index, running as LocalSystem) | 75 busy | 1 error."""
 import hashlib
 import json
 import os
 import re
-import sys
 import time
 import uuid
 from pathlib import Path
 
-PROJECT = Path(__file__).resolve().parent.parent
-if str(PROJECT) not in sys.path:
-    sys.path.insert(0, str(PROJECT))
+from .capture import paths
+from .registry import Option, RegistryError, identifiers, text
+from .search import common
 
-from rawlayer.registry import Option  # noqa: E402
-from rawlayer.search import common  # noqa: E402
-from tools.archiveio import identifiers, inside, text  # noqa: E402
-
-# app -> (config key prefix, layout); kakaotalk/ is not edited, so it declares no keys: its settings come from the
-# command line only
-APPS = {"discord": ("dc", "chat"), "mattermost": ("mm", "chat"), "gmail": ("gm", "mail"), "notion": ("nt", "page"),
-        "kakaotalk": (None, "chat")}
+LAYOUTS = ("chat", "mail", "page")
 TZ = "+09:00"
 NAME_MAX = 80
 # characters of closed months per chat/mail file: LLM Wiki pays an analysis and a generation pass per file, and its
@@ -60,6 +54,7 @@ NAME_MAX = 80
 PACK = 16000
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
+_PREFIX = re.compile(r"[a-z][a-z0-9]{0,7}")
 
 
 class Refused(Exception):
@@ -78,9 +73,16 @@ def _since(value):
     return value
 
 
-def options(prefix):
-    """The config keys an app declares for its export (AppConfig.options): the project root ('' = off), the label
-    substrings to keep and to leave out, and the first month."""
+def options(wiki):
+    """The config keys an app's AppConfig.wiki = (prefix, layout) adds to its options (the registry calls this when it
+    loads the app): the project root ('' = off), the label substrings to keep and to leave out, and the first month;
+    none when the prefix is None. RegistryError for a declaration of another shape."""
+    if not (isinstance(wiki, tuple) and len(wiki) == 2 and wiki[1] in LAYOUTS and
+            (wiki[0] is None or isinstance(wiki[0], str) and _PREFIX.fullmatch(wiki[0]))):
+        raise RegistryError("wiki must be (config key prefix or None, one of chat, mail, page)")
+    prefix = wiki[0]
+    if prefix is None:
+        return ()
     return (Option(f"{prefix}_wiki_project", "", _project), Option(f"{prefix}_wiki_include", [], identifiers),
             Option(f"{prefix}_wiki_exclude", [], identifiers), Option(f"{prefix}_wiki_since", "", _since))
 
@@ -204,7 +206,9 @@ def render(app, kind, key, entries, tz):
 def write(root, path, data, dry_run=False):
     """True when the file's bytes change. tmp + replace, so the wiki's watcher never reads a half-written source;
     the tmp name starts with a dot, which the watcher skips."""
-    path = inside(root, path)
+    path = Path(path)
+    if not paths.inside(path.resolve(), Path(root).resolve()):
+        raise Refused("an output path leaves the wiki project's source folder")
     if path.is_file() and path.read_bytes() == data:
         return False
     if dry_run:
@@ -229,13 +233,14 @@ def write(root, path, data, dry_run=False):
     return True
 
 
-def export(app, drv, con, project, include=(), since="", dry_run=False, prune=False, now=None, exclude=(), stale=False):
-    """Render every container of the app's index into <project>/raw/sources/<app>/ -> the report (counts). prune is
-    refused before anything is deleted on a stale index (stale=True), or when no file came out while orphans exist."""
+def export(app, kind, drv, con, project, include=(), since="", dry_run=False, prune=False, now=None, exclude=(),
+           stale=False):
+    """Render every container of the app's index (layout `kind`) into <project>/raw/sources/<app>/ -> the report
+    (counts). prune is refused before anything is deleted on a stale index (stale=True), or when no file came out
+    while orphans exist."""
     if prune and not dry_run and stale:
         raise Refused(f"--prune refused, nothing written or deleted: the index is not at the ledger's head -- run: "
-                      f"python -s -B manage.py capture {app}, then export again")
-    kind = APPS[app][1]
+                      f"python -s -B manage.py capture {app}, then collect again")
     tz = common.parse_tz(TZ)
     now_month = common.fmt_ts(time.time() if now is None else now, tz, "%Y-%m")
     items = ((c, *drv.chunk_units(con, c)) for c in drv.changed_containers(con, 0))
@@ -260,54 +265,3 @@ def export(app, drv, con, project, include=(), since="", dry_run=False, prune=Fa
                 pass
         rep["pruned"] = len(orphans)
     return rep
-
-
-def main(argv=None):
-    from rawlayer import registry  # noqa: PLC0415
-    from rawlayer.capture import paths  # noqa: PLC0415
-    from rawlayer.management.base import default_config  # noqa: PLC0415
-    ap = argparse.ArgumentParser(prog="tools/wikiexport.py", description=__doc__.split("\n\n")[1],
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("app", choices=sorted(APPS))
-    ap.add_argument("--config", help="the app's config (default <DATA_PARENT>/<app>/config.json)")
-    ap.add_argument("--project", help="the LLM Wiki project root, instead of the config's <p>_wiki_project")
-    ap.add_argument("--include", action="append", help="a label substring to keep (repeat), instead of <p>_wiki_include")
-    ap.add_argument("--exclude", action="append",
-                    help="a label substring to leave out (repeat), instead of <p>_wiki_exclude; it wins over --include")
-    ap.add_argument("--since", help="the first month, YYYY-MM, instead of <p>_wiki_since")
-    ap.add_argument("--dry-run", action="store_true", help="count what would be written, write nothing")
-    ap.add_argument("--prune", action="store_true", help="delete the orphans (LLM Wiki deletes their pages too)")
-    a = ap.parse_args(argv)
-    common.setup_stdio()
-    prefix = APPS[a.app][0]
-    try:
-        registry.select(a.app)
-        config = a.config or default_config(a.app)
-        data_root = common.load_data_root(config)
-        with open(config, encoding="utf-8") as fh:
-            cfg = json.load(fh)
-        project, include, exclude, since = settings(cfg, prefix, a.project, a.include, a.exclude, a.since)
-        root = target(project, paths.DATA_PARENT, f"{prefix}_wiki_project" if prefix else "--project")
-        drv = dict(registry.search_modules())[a.app].DRIVER
-        con, _meta, fresh = common.open_search(data_root, drv.spec)
-        try:
-            common.warn_if_stale(drv.spec, fresh)
-            rep = export(a.app, drv, con, root, include=include, since=since, dry_run=a.dry_run, prune=a.prune,
-                         exclude=exclude, stale=fresh["stale"])
-        finally:
-            con.close()
-    except (Refused, common.UsageError, registry.RegistryError) as e:
-        print(f"wikiexport: {e}", file=sys.stderr)
-        return common.EXIT_USAGE
-    except common.Busy:
-        print("wikiexport: the index is busy (being rebuilt); run again later", file=sys.stderr)
-        return common.EXIT_BUSY
-    except Exception as e:  # noqa: BLE001 -- the type only: a message can carry a path holding a label
-        print(f"wikiexport: error {type(e).__name__}", file=sys.stderr)
-        return common.EXIT_ERR
-    print(f"wikiexport: {a.app}{' dry-run' if a.dry_run else ''} " + " ".join(f"{k}={v}" for k, v in rep.items()))
-    return common.EXIT_OK
-
-
-if __name__ == "__main__":
-    sys.exit(main())

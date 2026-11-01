@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from rawlayer.registry import AppConfig, Option
 from tools.archiveio import boolean, nonnegative, text
-from tools.wikiexport import options as wiki_options
 
 
 def _patterns(v):
@@ -26,7 +25,8 @@ class MatterConfig(AppConfig):
     # mm_files_max_mb: the fetch step also keeps each attached file of at most this many MB (0: none).
     options = (Option("mm_exclude_patterns", [], _patterns, attr="mm_exclude"),
                Option("mm_sync", False, boolean), Option("mm_url", "", _url),
-               Option("mm_token_file", "", text), Option("mm_files_max_mb", 0, nonnegative)) + wiki_options("mm")
+               Option("mm_token_file", "", text), Option("mm_files_max_mb", 0, nonnegative))
+    wiki = ("mm", "chat")
     # The scheduled task `manage.py schedule install mattermost` registers: `manage.py capture mattermost --config
     # <CFG>` as SYSTEM, daily from `start` (local time) and every `every_hours` hours after it, at most `limit_hours`
     # hours per run. Start minutes are staggered across the apps: README.md, "Scheduled tasks".

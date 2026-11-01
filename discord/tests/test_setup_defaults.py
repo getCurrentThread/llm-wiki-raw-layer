@@ -101,3 +101,14 @@ class TaskChecks(Base):
             found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token)))
         self.assertEqual(len(found), 1)
         self.assertIn("protected token path", found[0])
+
+
+
+class WikiExportDeclaration(unittest.TestCase):
+    def test_collect_declaration(self):
+        """`manage.py collect discord`: the declared prefix and layout, and the config keys derived from it."""
+        app = registry.app_registry("discord").apps[0]
+        self.assertEqual(app.wiki, ("dc", "chat"))
+        keys = [f"dc_wiki_{k}" for k in ("project", "include", "exclude", "since")]
+        self.assertEqual([op.key for op in app.options][-4:], keys)
+        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

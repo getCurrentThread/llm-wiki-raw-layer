@@ -12,6 +12,7 @@ its index file, the <app> of every command). Each app has the same modules:
   vocab.py    WORDS and PATTERNS: the strings the app's readers put in manifests and console lines (its origin
               names, kinds and statuses are registered from origins.py)
   search.py   optional: a rawlayer.search source module (SPEC, HELP, add_arguments, run)
+              (an app that sets AppConfig.wiki also declares its export to an LLM Wiki project: rawlayer/collect.py)
 
 One app owns one ledger, so a process works on ONE app: every command that opens a data root calls select(app)
 before anything reads the registry, and the registry then holds that app alone (its origin order is the app's
@@ -53,11 +54,29 @@ class Option(NamedTuple):
     attr: str = None
 
 
+def text(value):
+    """An Option check: a string."""
+    if not isinstance(value, str):
+        raise ValueError("text")
+    return value
+
+
+def identifiers(value):
+    """An Option check: a list of non-empty strings."""
+    if not isinstance(value, list) or not all(isinstance(x, str) and x for x in value):
+        raise ValueError("identifier list")
+    return value
+
+
 class AppConfig:
     """Subclassed once in <app>/apps.py."""
     label = None
     source_keys = ()
     options = ()
+    # (config key prefix or None, layout "chat" | "mail" | "page"): the app's index can be exported to an LLM Wiki
+    # project by `manage.py collect <app>`. A prefix adds the keys <prefix>_wiki_project / _include / _exclude /
+    # _since to `options` (rawlayer/collect.py); None adds none (the settings come from the command line only).
+    wiki = None
     schedule = None             # {"task", "start", "every_hours", "limit_hours", "description"} (rawlayer/schedule.py)
 
     def __init__(self, name):
@@ -107,6 +126,9 @@ def _load(name):
     if len(found) != 1:
         raise RegistryError(f"{name}.apps must define exactly one AppConfig subclass")
     app = found[0](name)
+    if app.wiki is not None:
+        from . import collect   # noqa: PLC0415 -- collect reads the registry
+        app.options = tuple(app.options) + collect.options(app.wiki)
     app.origins = tuple(cls(app) for cls in importlib.import_module(name + ".origins").ORIGINS)
     app.inputs = importlib.import_module(name + ".inputs")
     app.vocab = importlib.import_module(name + ".vocab")

@@ -4,3 +4,4 @@ from rawlayer.registry import AppConfig
 
 class Toy2Config(AppConfig):
     label = "toy2"
+    wiki = ("toy2", "mail")

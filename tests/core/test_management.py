@@ -109,18 +109,20 @@ class TestDispatch(unittest.TestCase):
             self.assertIn("unknown command", run("nope")[2])
             self.assertEqual(run()[0], 2)
             self.assertEqual(run("--help")[0], 0)
-            for name in ("capture", "check", "schedule", "test", "setup"):
+            for name in ("capture", "collect", "check", "schedule", "test", "setup"):
                 self.assertIn(f"manage.py {name}", run("help", name)[1])
             self.assertEqual(run("help", "nope")[0], 2)
 
-    def test_collect_is_not_a_command(self):
-        """The capture command's previous name (a stale scheduled task, an old habit) is refused and writes nothing."""
+    def test_collect_refuses_an_app_without_a_wiki_declaration(self):
+        """`collect` exports an app's index to an LLM Wiki project: an app that declares no AppConfig.wiki (and a stale
+        task still registered as `manage.py collect <app> --config <cfg>`, the capture command's previous name) is
+        refused, exit 2, and nothing is read or written."""
         with Project({"a1": app_files("a1")}):
-            rc, _out, err = run("collect", "a1")
-            self.assertEqual(rc, 2)
-            self.assertIn("unknown command", err)
-            self.assertIsNone(registry.selected())
-            self.assertEqual(run("help", "collect")[0], 2)
+            rc, out, err = run("collect", "a1")
+            self.assertEqual((rc, out), (2, ""))
+            self.assertIn("a1 declares no wiki export", err)
+            self.assertEqual(run("collect", "a1", "--config", "x.json", "--prune")[0], 2)
+            self.assertIn("manage.py collect", run("help", "collect")[1])
 
 
 class TestOwnership(T.ToyCase):

@@ -6,6 +6,7 @@ class ClaudeCodeConfig(AppConfig):
     label = "claudecode"
     source_keys = ("cc_archive",)
     options = (Option("cc_sync", False, boolean), Option("cc_claude_dir", "", text))
+    wiki = ("cc", "chat")       # a session is a conversation: `manage.py collect claudecode`
     schedule = {"task": r"\llm-wiki\claudecode-capture", "start": "02:44",
                 "every_hours": 3, "limit_hours": 1,
                 "description": "Capture Claude Code transcripts and update its search index"}

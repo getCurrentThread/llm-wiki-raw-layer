@@ -1,6 +1,5 @@
 from rawlayer.registry import AppConfig, Option
 from tools.archiveio import boolean, text, identifiers, nonnegative
-from tools.wikiexport import options as wiki_options
 
 
 def _source(value):
@@ -15,7 +14,8 @@ class NotionConfig(AppConfig):
     options = (Option("nt_sync", False, boolean), Option("nt_cli", "", text),
                Option("nt_page_ids", [], identifiers), Option("nt_comments", True, boolean),
                Option("nt_max_pages", 0, nonnegative), Option("nt_source", "api", _source),
-               Option("nt_desktop_path", "", text)) + wiki_options("nt")
+               Option("nt_desktop_path", "", text))
+    wiki = ("nt", "page")
     schedule = {"task": r"\llm-wiki\notion-capture", "start": "03:29",
                 "every_hours": 6, "limit_hours": 1,
                 "description": "Capture Notion archive and update its search index"}

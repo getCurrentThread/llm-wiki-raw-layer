@@ -20,6 +20,7 @@ class KakaoConfig(AppConfig):
     # config.json "sources": absolute paths that must exist
     source_keys = ("backup_decrypted", "kakao_user_dir", "keystore")
     options = (Option("mac_db", None, _mac_db),)
+    wiki = (None, "chat")       # `manage.py collect`: a chat layout, no config keys (settings: the command line)
     # The scheduled task `manage.py schedule install kakaotalk` registers: `manage.py capture kakaotalk --config
     # <CFG>` as SYSTEM, daily from `start` (local time) and every `every_hours` hours after it, at most `limit_hours`
     # hours per run. Start minutes are staggered across the apps: README.md, "Scheduled tasks".

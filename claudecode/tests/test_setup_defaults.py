@@ -62,3 +62,14 @@ class SetupDefaultsTests(unittest.TestCase):
                     self.assertEqual(errors, ["cc_sync requires an absolute cc_claude_dir to an existing folder "
                                               "(SYSTEM has another home)"])
         self.assertEqual(self.app.task_checks(SimpleNamespace(cc_sync=False, cc_claude_dir="")), [])
+
+
+
+class WikiExportDeclaration(unittest.TestCase):
+    def test_collect_declaration(self):
+        """`manage.py collect claudecode`: the declared prefix and layout, and the config keys derived from it."""
+        app = registry.app_registry("claudecode").apps[0]
+        self.assertEqual(app.wiki, ("cc", "chat"))
+        keys = [f"cc_wiki_{k}" for k in ("project", "include", "exclude", "since")]
+        self.assertEqual([op.key for op in app.options][-4:], keys)
+        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

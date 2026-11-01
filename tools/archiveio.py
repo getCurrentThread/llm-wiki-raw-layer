@@ -8,6 +8,8 @@ import subprocess
 import sys
 import uuid
 
+from rawlayer.registry import identifiers, text  # noqa: F401 -- the apps import them from here
+
 
 class FetchError(ValueError):
     def __init__(self, category, status=None):
@@ -132,21 +134,9 @@ def boolean(value):
     return value
 
 
-def text(value):
-    if not isinstance(value, str):
-        raise ValueError("text")
-    return value
-
-
 def nonnegative(value):
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100000:
         raise ValueError("nonnegative integer")
-    return value
-
-
-def identifiers(value):
-    if not isinstance(value, list) or not all(isinstance(x, str) and x for x in value):
-        raise ValueError("identifier list")
     return value
 
 

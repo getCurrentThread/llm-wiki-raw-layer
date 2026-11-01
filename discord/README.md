@@ -140,6 +140,6 @@ account digest. See [third-party references](../THIRD_PARTY.md) for the DCE mapp
 
 ## LLM Wiki export
 
-`dc_wiki_project`, `dc_wiki_include`, `dc_wiki_exclude` and `dc_wiki_since` configure `tools/wikiexport.py discord` (llm.md 13), which
+`dc_wiki_project`, `dc_wiki_include`, `dc_wiki_exclude` and `dc_wiki_since` configure `manage.py collect discord` (llm.md 13), which
 writes each channel's closed months, packed into Markdown files of about 16,000 characters, into an LLM Wiki
 project's `raw/sources/discord/`. Empty by default: nothing is exported.

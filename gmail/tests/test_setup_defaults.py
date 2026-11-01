@@ -59,3 +59,14 @@ class SetupDefaults(unittest.TestCase):
         del self.cfg["data_root"]
         self.fill()
         self.assertEqual(self.notes, [])
+
+
+
+class WikiExportDeclaration(unittest.TestCase):
+    def test_collect_declaration(self):
+        """`manage.py collect gmail`: the declared prefix and layout, and the config keys derived from it."""
+        app = registry.app_registry("gmail").apps[0]
+        self.assertEqual(app.wiki, ("gm", "mail"))
+        keys = [f"gm_wiki_{k}" for k in ("project", "include", "exclude", "since")]
+        self.assertEqual([op.key for op in app.options][-4:], keys)
+        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

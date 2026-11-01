@@ -5,5 +5,9 @@
   "inputs_root": "<DATA_PARENT>\\inputs",
   "sources": {"cc_archive": "<abs dir>\\archive"},
   "cc_sync": false,
-  "cc_claude_dir": ""
+  "cc_claude_dir": "",
+  "cc_wiki_project": "",
+  "cc_wiki_include": [],
+  "cc_wiki_exclude": [],
+  "cc_wiki_since": ""
 }

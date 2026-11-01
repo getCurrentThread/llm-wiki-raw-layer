@@ -2,6 +2,7 @@
 """The app registry (rawlayer.registry): what it derives from the installed apps, what it refuses at load (the
 app contract), use() for tests, and publicout's vocabulary (discovery, selection and manage.py: test_management)."""
 import contextlib
+import os
 import sys
 import types
 import unittest
@@ -41,13 +42,14 @@ class FakeApps:
         self.names = []
 
     def fake(self, name, label=None, origins=(), source_keys=(), options=(), words=(), patterns=(), search=None,
-             configs=1, resolve=None):
+             configs=1, resolve=None, wiki=None):
         pkg = "fakeapps_" + name
         mods = {pkg: types.ModuleType(pkg)}
         apps = mods[pkg + ".apps"] = types.ModuleType(pkg + ".apps")
         for i in range(configs):
             cls = type(f"Cfg{i}", (AppConfig,), {"label": label or name, "source_keys": tuple(source_keys),
-                                                 "options": tuple(options), "__module__": pkg + ".apps"})
+                                                 "options": tuple(options), "wiki": wiki,
+                                                 "__module__": pkg + ".apps"})
             setattr(apps, cls.__name__, cls)
         mods[pkg + ".origins"] = types.SimpleNamespace(ORIGINS=tuple(origins))
         mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg, n, f: {}),
@@ -84,7 +86,8 @@ class TestDerived(unittest.TestCase):
             self.assertEqual(registry.statuses(), registry.CORE_STATUSES + ("clean", "partial", "unreadable"))
             self.assertEqual([t for t, _ddl in registry.state_tables()], ["toy_last", "hist"])
             self.assertEqual(reg.source_keys, ("toy_dir",))
-            self.assertEqual([op.key for op in reg.options], ["toy_system"])
+            self.assertEqual([op.key for op in reg.options], ["toy_system", "toy_wiki_project", "toy_wiki_include",
+                                                              "toy_wiki_exclude", "toy_wiki_since"])
             self.assertEqual(list(registry.search_modules()), ["toy"])
             self.assertEqual(registry.origin("toy_b").name, "toy_b")
             self.assertIsNone(registry.origin("nope"))
@@ -163,6 +166,35 @@ class TestRefusals(Base):
         op = Option("same", 0, int)
         self.refused(self.apps.fake("op1", options=[op]), self.apps.fake("op2", options=[op]))
         self.refused(self.apps.fake("opcore", options=[Option("data_root", None, str)]))
+
+    def test_wiki_declaration(self):
+        """AppConfig.wiki = (prefix, layout) adds the four export keys to the app's options; a None prefix adds none."""
+        a = self.apps.fake("wk1", options=[Option("own", 0, int)], wiki=("w", "mail"))
+        b = self.apps.fake("wk2", wiki=(None, "page"))
+        reg = registry.Registry([a, b])
+        self.assertEqual([op.key for op in reg.options], ["own", "w_wiki_project", "w_wiki_include", "w_wiki_exclude",
+                                                          "w_wiki_since"])
+        self.assertEqual([x.wiki for x in reg.apps], [("w", "mail"), (None, "page")])
+        self.assertEqual(AppConfig.wiki, None)
+        project, include, exclude, since = reg.options[1:]
+        root = os.path.abspath(os.sep)
+        self.assertEqual((project.default, include.default, exclude.default, since.default), ("", [], [], ""))
+        self.assertEqual((project.check(root), project.check(""), include.check(["a"]), since.check("2026-01")),
+                         (root, "", ["a"], "2026-01"))
+        for op, bad in ((project, "relative"), (project, 3), (since, "2026-13"), (since, "2026"), (include, [""]),
+                        (exclude, "x")):
+            with self.assertRaises(ValueError):
+                op.check(bad)
+
+    def test_wiki_declaration_shapes(self):
+        shapes = ("w", ("w",), ("w", "chat", 1), ("w", "web"), ("W", "chat"), ("1w", "chat"), (3, "chat"),
+                  ("toolongprefix", "chat"), ["w", "chat"], ("", "chat"))
+        for i, bad in enumerate(shapes):
+            with self.subTest(wiki=bad):
+                self.refused(self.apps.fake(f"wk{i}", wiki=bad))
+        taken = Option("w_wiki_since", "", str)             # a key the declaration would add, claimed by an option
+        self.refused(self.apps.fake("wka", options=[taken], wiki=("w", "chat")))
+        self.refused(self.apps.fake("wkb", wiki=("w", "chat")), self.apps.fake("wkc", wiki=("w", "mail")))
 
     def test_search_name_is_the_label(self):
         search = types.SimpleNamespace(SPEC=types.SimpleNamespace(name="other"))

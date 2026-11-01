@@ -317,6 +317,6 @@ importing the real apps. See the root README for the full command table and core
 
 ## LLM Wiki export
 
-`mm_wiki_project`, `mm_wiki_include`, `mm_wiki_exclude` and `mm_wiki_since` configure `tools/wikiexport.py mattermost` (llm.md 13), which
+`mm_wiki_project`, `mm_wiki_include`, `mm_wiki_exclude` and `mm_wiki_since` configure `manage.py collect mattermost` (llm.md 13), which
 writes each channel's closed months, packed into Markdown files of about 16,000 characters, into an LLM Wiki
 project's `raw/sources/mattermost/`. Empty by default: nothing is exported.

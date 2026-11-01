@@ -10,10 +10,11 @@ project reads is its **app**: a folder next to `manage.py` that holds `__init__.
 The framework is these files:
 
 ```
-manage.py           the single entry point: setup | capture | search | embed | check | test | schedule
+manage.py           the single entry point: setup | capture | collect | search | embed | check | test | schedule
 CORE.md             this file
 rawlayer/           the framework: capture pipeline (rawlayer/capture), search driver (rawlayer/search), registry,
-                    schedule (registers the task), management commands (capture is the scheduled task's body)
+                    schedule (registers the task), collect (the index as LLM Wiki sources: rawlayer/collect.py),
+                    management commands (capture is the scheduled task's body; collect is owner-only, never scheduled)
 tests/__init__.py
 tests/core/         the framework's tests, on a toy app (tests/core/toyapp, toyapp2); they import no real app
 ```
@@ -48,11 +49,11 @@ registry loads, and by `manage.py check`):
 
 | module | what it holds |
 |---|---|
-| `apps.py` | exactly one `AppConfig` subclass: `label`, `source_keys` (config `"sources"` entries, absolute paths that must exist), `options` (top-level config keys: `Option(key, default, check, attr)`), optionally `schedule` (the scheduled task) and `task_checks(cfg)` (a list of short reasons the config is unfit for the scheduled task; `schedule install` refuses while there is one) |
+| `apps.py` | exactly one `AppConfig` subclass: `label`, `source_keys` (config `"sources"` entries, absolute paths that must exist), `options` (top-level config keys: `Option(key, default, check, attr)`), optionally `schedule` (the scheduled task), `task_checks(cfg)` (a list of short reasons the config is unfit for the scheduled task; `schedule install` refuses while there is one) and `wiki = (prefix, layout)` (the app can be exported by `manage.py collect`: `layout` is `chat`, `mail` or `page`, what the containers of its index are; `prefix` is written once and the registry adds `<prefix>_wiki_project`, `_include`, `_exclude` and `_since` to `options`, or `None` for an app whose settings come from the command line only; an app without `wiki` is refused by `collect`) |
 | `origins.py` | `ORIGINS`: the app's `Origin` subclasses, in processing and commit order |
 | `inputs.py` | `resolve(cfg, input_set, frozen_root)` -> {input attribute: path}; `static_roots(inputs)` -> {freeze label: (root, closed)} |
 | `vocab.py` | `WORDS`, `PATTERNS`: the strings its readers put in manifests and console lines |
-| `search.py` | optional: a search source (`SPEC` a `SourceIndex`, `HELP`, `add_arguments`, `run`; the query half can subclass `rawlayer/search/search.py`'s `SearchDriver`) for `manage.py search <label>`. A `DRIVER` that sets `key_col`, `container_col` and implements `chunk_units` can be embedded (`manage.py embed <label>`, `search --hybrid`: `rawlayer/search/dense.py`) |
+| `search.py` | optional: a search source (`SPEC` a `SourceIndex`, `HELP`, `add_arguments`, `run`; the query half can subclass `rawlayer/search/search.py`'s `SearchDriver`) for `manage.py search <label>`. A `DRIVER` that sets `key_col`, `container_col` and implements `chunk_units` can be embedded (`manage.py embed <label>`, `search --hybrid`: `rawlayer/search/dense.py`) and exported (`manage.py collect <label>`, with `wiki` in `apps.py`) |
 
 An origin is a class (`rawlayer/capture/origins.py`). It sets `name`, `kinds` and the optional `day_kinds`,
 `ok_statuses`, `complete_status`, `statuses`, `state_tables`, `fail_statuses`, `fail_default`, and

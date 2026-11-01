@@ -376,7 +376,8 @@ Gates, each on that command's own `rc=` line:
   `definition read back: as registered`. If install's rc is not 0, the other two results do not count: fix it
   (section 9) and repeat 5.8. Installing again replaces the task. A task still registered with the previous command name
   (`manage.py collect <app> --config <CFG>`) is
-  reported by status as `definition: outdated`, and by doctor as such: install it again, elevated.
+  reported by status as `definition: outdated`, and by doctor as such: install it again, elevated. That name is now
+  the wiki export (section 13), which refuses to run as SYSTEM, so such a task exports nothing in the meantime.
 - status: `rc=0`, with `schedule: \llm-wiki\<app>-capture registered (enabled)`, `definition: current (...)` and
   `last result:` `has not run yet` or `0 (ok)`.
 - run: `rc=0`, with `schedule: started \llm-wiki\<app>-capture once`. This SYSTEM smoke run proves that SYSTEM can
@@ -1212,14 +1213,16 @@ a change to query normalization, ranking or the embedder, only when the owner as
 
 The wiki layer on top of the ledgers is LLM Wiki, a desktop app (github.com/nashsu/llm_wiki) that watches its
 project's `raw\sources\` folder and ingests every new or changed file with the LLM the owner picks in it.
-`tools/wikiexport.py <app>` renders an app's index as Markdown sources under `<DATA_PARENT>\wiki\raw\sources\<app>\`.
-Discord, Mattermost and KakaoTalk get files per channel or room, and Gmail gets files of all its mail: closed months
-are packed into files of about 16,000 characters, each named after its first month. A month is written only once it
-is over. Notion gets one file per page. KakaoTalk only when the owner asks for it (AGENTS.md). The sources hold
-plaintext like the index, so the project stays
+`python -s -B manage.py collect <app>` (the pipeline's third step: source, fetch, archive, capture, ledger and index,
+collect, the wiki's `raw\sources\`, ingest in the app, wiki pages) renders an app's index as Markdown sources under
+`<DATA_PARENT>\wiki\raw\sources\<app>\`. Discord, Mattermost, KakaoTalk and Claude Code get files per channel, room or
+session, and Gmail gets files of all its mail: closed months are packed into files of about 16,000 characters, each
+named after its first month. A month is written only once it is over. Notion gets one file per page. KakaoTalk only
+when the owner asks for it (AGENTS.md). The sources hold plaintext like the index, so the project stays
 under `<DATA_PARENT>`. Ingest sends the sources' text to the LLM configured in the app: with a cloud provider,
-private messages leave the machine. That choice is the owner's. The tool prints counts only; run it only when the
-owner asks.
+private messages leave the machine. That choice is the owner's. The command prints counts only; run it only when the
+owner asks. It refuses to run as LocalSystem (exit 2, nothing read or written), so it can never be a SYSTEM task, and
+an app exports only when its `apps.py` declares `wiki` (CORE.md, "The app contract").
 
 **13.1 Install (owner).** From the release page, download `LLM.Wiki_<version>_x64_en-US.msi` into a new, empty
 folder under `$env:TEMP`. Compare its `Get-FileHash` with the SHA-256 digest the release page lists for that asset;
@@ -1239,25 +1242,25 @@ are both `True`.
 - Optional: semantic search through the OpenAI-compatible endpoint `http://127.0.0.1:11434/v1` with `bge-m3` (12.1).
 
 **13.4 Config.** Set `python -s -B tools/bootstrap.py config set <app> <p>_wiki_project '<DATA_PARENT>\wiki'`, where
-`<p>` is `dc`, `gm`, `mm` or `nt`. claudecode has no Wiki export support and is excluded from section 13.
-Two optional keys narrow what is written:
+`<p>` is `dc`, `gm`, `mm`, `nt` or `cc`, the prefix the app declares in `AppConfig.wiki`. A Claude Code session is one
+container, as a channel is, so claudecode exports like a chat app. Three optional keys narrow what is written:
 - `<p>_wiki_include`: substrings of the channel label (`team › channel`), page breadcrumb or mail
   `subject / sender`, casefolded, as a JSON list on stdin. An empty list keeps everything.
 - `<p>_wiki_exclude`: substrings to leave out, in the same form; an exclude wins over an include.
 - `<p>_wiki_since`: a first month, `YYYY-MM`. A chat or mail file is kept when its newest month is not before it, so
   moving it adds or drops whole files and never re-packs the files it keeps.
 
-kakaotalk's folder declares no wiki keys. Give its settings on the command line instead, with `--project`,
+kakaotalk's declaration has a layout (chat) but no prefix, so it has no wiki keys. Give its settings on the command line instead, with `--project`,
 `--include` and `--exclude` (repeat each for each substring) and `--since`; these flags also override any app's keys.
 
 Gate: exit 0.
 
-**13.5 Count.** Run `python -s -B tools/wikiexport.py <app> --dry-run`. Gate: exit 0 and a line
-`wikiexport: <app> dry-run files=N written=N unchanged=N held=N filtered=N orphans=N`. `files` is the number of
+**13.5 Count.** Run `python -s -B manage.py collect <app> --dry-run`. Gate: exit 0 and a line
+`collect: <app> dry-run files=N written=N unchanged=N held=N filtered=N orphans=N`. `files` is the number of
 ingests, `held` the records of open months and `filtered` those that include/since left out. Show the owner the
 counts before the first run: with a cloud LLM, every file costs tokens.
 
-**13.6 Export.** Run `python -s -B tools/wikiexport.py <app>`.
+**13.6 Export.** Run `python -s -B manage.py collect <app>`.
 
 Gate:
 - The command exits 0, and running it again prints `written=0`.
@@ -1274,12 +1277,13 @@ files: it measures the cost of one file. Narrow the large apps with `<p>_wiki_in
 
 Gate: one source is ingested again by the local model, for example after a Notion edit is captured and exported.
 
-**13.8 Daily export.** This is a task under the owner's account, with no elevation. Its actions run one after
-another. List only the apps whose `<p>_wiki_project` is set: the others exit 2. kakaotalk's action carries its
-flags in `-Argument` (13.4).
+**13.8 Daily export (optional, the owner's choice).** This may only be a task under the owner's account, with no
+elevation and never as SYSTEM: `manage.py collect` refuses as LocalSystem (exit 2). Its actions run one after another.
+List only the apps whose `<p>_wiki_project` is set: the others exit 2. kakaotalk's action carries its flags in
+`-Argument` (13.4).
 ```powershell
-$acts = 'discord','gmail','mattermost','notion' | ForEach-Object {
-  New-ScheduledTaskAction -Execute '<PY>' -Argument "-s -B tools\wikiexport.py $_" -WorkingDirectory '<PROJECT>' }
+$acts = 'claudecode','discord','gmail','mattermost','notion' | ForEach-Object {
+  New-ScheduledTaskAction -Execute '<PY>' -Argument "-s -B manage.py collect $_" -WorkingDirectory '<PROJECT>' }
 Register-ScheduledTask -TaskName 'llm-wiki-wiki-export' -Action $acts -Trigger (New-ScheduledTaskTrigger -Daily -At 04:30) `
   -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1))
 ```

@@ -352,6 +352,12 @@ An unquoted term with a Latin/digit run longer than 32,000 characters is refused
 32,768 bytes, so such a run would also match longer runs that start with it. Snippets mark matches with
 the same case folding the search uses, so `straße` marks `STRASSE`.
 
+## LLM Wiki export
+
+`kakaotalk/apps.py` declares `wiki = (None, "chat")`: `manage.py collect kakaotalk` (llm.md 13) can write each room's
+closed months as Markdown sources of an LLM Wiki project, but there are no `*_wiki_*` config keys, so `--project`,
+`--include`, `--exclude` and `--since` on the command line give its settings. Only when the owner asks for it.
+
 ## Scheduled task
 
 `AppConfig.schedule` in `kakaotalk/apps.py` defines `\llm-wiki\kakaotalk-capture`, run as SYSTEM

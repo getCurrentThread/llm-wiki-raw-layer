@@ -1,7 +1,6 @@
 from pathlib import Path
 from rawlayer.registry import AppConfig, Option
 from tools.archiveio import boolean, text, identifiers, nonnegative
-from tools.wikiexport import options as wiki_options
 
 EXCLUDED = ["SPAM", "TRASH", "DRAFT", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"]
 
@@ -20,7 +19,8 @@ class GmailConfig(AppConfig):
                Option("gm_token_file", "", text), Option("gm_exclude_labels", EXCLUDED, identifiers),
                Option("gm_volatile_labels", ["UNREAD"], identifiers),
                Option("gm_body_max_bytes", 131072, body_bytes),
-               Option("gm_partition_max_messages", 1000, nonnegative)) + wiki_options("gm")
+               Option("gm_partition_max_messages", 1000, nonnegative))
+    wiki = ("gm", "mail")
     schedule = {"task": r"\llm-wiki\gmail-capture", "start": "00:44",
                 "every_hours": 3, "limit_hours": 1,
                 "description": "Capture Gmail archive and update its search index"}
