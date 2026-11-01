@@ -25,7 +25,10 @@ them, and are the only way to give kakaotalk's (its app folder declares no wiki 
 Every run renders everything and rewrites only the files whose bytes changed (tmp + replace), so the wiki's
 SHA-256 ingest cache stays valid. The tool owns <project>/raw/sources/<app>/: a file there that the run did not
 produce (a renamed channel, a narrowed include, a purge) is counted as an orphan and kept, because deleting a source
-deletes its wiki pages; only --prune removes them. Output is counts only, never a label, a path or a text.
+deletes its wiki pages; only --prune removes them, and it refuses (exit 2, nothing deleted) when the index is not at
+the ledger's head or produced no file. A month that shrinks (deleted messages) can move the start of every later file
+of its stream, so their names change: the old names become orphans and --prune deletes them while the renamed files
+are ingested again. Output is counts only, never a label, a path or a text.
 
 Exit codes: 0 ok | 2 refused (config, project, app, index) | 75 busy | 1 error."""
 import argparse
@@ -226,8 +229,12 @@ def write(root, path, data, dry_run=False):
     return True
 
 
-def export(app, drv, con, project, include=(), since="", dry_run=False, prune=False, now=None, exclude=()):
-    """Render every container of the app's index into <project>/raw/sources/<app>/ -> the report (counts)."""
+def export(app, drv, con, project, include=(), since="", dry_run=False, prune=False, now=None, exclude=(), stale=False):
+    """Render every container of the app's index into <project>/raw/sources/<app>/ -> the report (counts). prune is
+    refused before anything is deleted on a stale index (stale=True), or when no file came out while orphans exist."""
+    if prune and not dry_run and stale:
+        raise Refused(f"--prune refused, nothing written or deleted: the index is not at the ledger's head -- run: "
+                      f"python -s -B manage.py collect {app}, then export again")
     kind = APPS[app][1]
     tz = common.parse_tz(TZ)
     now_month = common.fmt_ts(time.time() if now is None else now, tz, "%Y-%m")
@@ -241,6 +248,9 @@ def export(app, drv, con, project, include=(), since="", dry_run=False, prune=Fa
     produced = {(root / k).resolve() for k in files}
     orphans = [p for p in root.rglob("*.md") if p.resolve() not in produced] if root.is_dir() else []
     rep["orphans"] = len(orphans)
+    if prune and not dry_run and orphans and not files:
+        raise Refused(f"--prune refused, nothing deleted: the index produced no file ({len(orphans)} orphans) -- "
+                      f"check the index (manage.py check {app}) and the include/since settings")
     if prune and not dry_run:
         for p in orphans:
             p.unlink()
@@ -283,7 +293,7 @@ def main(argv=None):
         try:
             common.warn_if_stale(drv.spec, fresh)
             rep = export(a.app, drv, con, root, include=include, since=since, dry_run=a.dry_run, prune=a.prune,
-                         exclude=exclude)
+                         exclude=exclude, stale=fresh["stale"])
         finally:
             con.close()
     except (Refused, common.UsageError, registry.RegistryError) as e:

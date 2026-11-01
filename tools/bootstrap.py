@@ -4,7 +4,7 @@ that brings this project's apps into live operation. A developer and operator to
 core stays as it is); standard library only; it runs from any folder.
 
   doctor [--app APP ...] [--json] [--verify]
-      The machine (Python, git on the machine PATH, pwsh, the checkout, the core, the data parent) and every
+      The machine (Python, git on the machine PATH, pwsh, the checkout, the data parent) and every
       in-scope app: its config (placeholders left, refused or not, the sync option, what `schedule install` would
       refuse), its credential and source files (whether they are there; nothing is opened), its index (total,
       stale), its scheduled task (registered, last result; "unknown" from a prompt that is not elevated), the
@@ -223,7 +223,7 @@ def _check_app(app):
     if app in OFF_LIMITS or app in off:
         raise Refused(f"{app} is off-limits to this tool (llm.md rule 2)")
     if app not in apps:
-        raise Refused(f"no app {app!r} in this project (apps: {', '.join(apps)})")
+        raise Refused(f"no app of that name in this project (apps: {', '.join(apps)})")
 
 
 def _now():
@@ -812,11 +812,12 @@ def _validate(a, path, cfg):
 
 
 def _allowed(a, key, force):
+    # an unknown KEY is never echoed: it may be a value typed in the wrong place (a host name, a pattern)
     if not _KEY.fullmatch(key):
-        raise Refused(f"{key!r} is not a config key")
+        raise Refused("a KEY of the KEY VALUE pairs is not a config key")
     if key.startswith("sources."):
         if key[len("sources."):] not in a.source_keys:
-            raise Refused(f"{key}: {a.label} reads sources." + ", sources.".join(a.source_keys))
+            raise Refused(f"not a source key: {a.label} reads sources." + ", sources.".join(a.source_keys))
         return None
     if key in CORE_KEYS:
         if not force:
@@ -825,7 +826,7 @@ def _allowed(a, key, force):
     for op in a.options:
         if op.key == key:
             return op
-    raise Refused(f"{key} is not one of {a.label}'s options ({', '.join(op.key for op in a.options)})")
+    raise Refused(f"a KEY is not one of {a.label}'s options ({', '.join(op.key for op in a.options)})")
 
 
 def _set(cfg, key, value):
@@ -1002,7 +1003,7 @@ def checkpoint(a_):
         return 0
     if a_.action == "mark":
         if a_.gate not in GATES:
-            raise Refused(f"gate {a_.gate!r}: one of {', '.join(GATES)}")
+            raise Refused(f"not a gate: one of {', '.join(GATES)}")
         entry = {"at": _now()}
         entry.update(dict(_field(x) for x in a_.field or []))
         gates[a_.gate] = entry
@@ -1012,7 +1013,7 @@ def checkpoint(a_):
         elif a_.gate in gates:
             del gates[a_.gate]
         else:
-            raise Refused(f"no checkpoint {a_.gate!r} for {a_.app}")
+            raise Refused(f"no checkpoint of that gate for {a_.app}")
     f.parent.mkdir(exist_ok=True)
     tmp = f.with_name(CHECKPOINT + ".part")
     tmp.write_text(json.dumps({"v": 1, "app": a_.app, "gates": gates}, indent=1) + "\n", encoding="utf-8")

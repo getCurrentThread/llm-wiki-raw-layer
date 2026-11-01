@@ -400,6 +400,15 @@ class ConfigCommands(Temp):
                 self.assertIn("refused", err)
                 self.assertEqual(self.path.read_bytes(), before)
 
+    def test_a_refused_key_is_not_echoed(self):
+        """KEY and VALUE swapped: the value (here a host name) never reaches the console."""
+        for argv in (["https://chat.host.invalid", "fk_sync"], ["sources.chat_host_invalid", "1"],
+                     ["chat_host_invalid", "1"]):
+            with self.subTest(argv=argv):
+                rc, out, err = run("config", "set", "fake", *argv)
+                self.assertEqual(rc, 2, err)
+                self.assertNotIn("host", (out + err).replace("fake", ""))
+
     def test_defaults(self):
         def defaults(cfg, note):
             if cfg["sources"]["fk_archive"].startswith("<"):
@@ -510,6 +519,7 @@ class OffLimits(unittest.TestCase):
             rc, _out, err = run("config", "get", "nosuchapp")
         self.assertEqual(rc, 2)
         self.assertIn("no app", err)
+        self.assertNotIn("nosuchapp", err)                  # it may be a value typed in the app's place
 
     def test_discovery_leaves_it_out(self):
         apps, off = B.in_scope_apps()

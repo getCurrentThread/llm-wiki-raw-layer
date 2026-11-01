@@ -836,8 +836,8 @@ Steps:
    mattertok skipped some channels by default and this app skips none, so before the first sync set
    `mm_exclude_patterns` to mattertok's effective list: its `MM_EXCLUDE_CHANNELS` setting (comma-separated), or,
    when that is unset, the `DEFAULT_EXCLUDED_CHANNELS` tuple in mattertok's `src\mattertok\config.py`. The setting
-   sits in mattertok's `.env` beside its credentials: read that one line only
-   (`Select-String -Path '<mattertok>\.env' -Pattern '^MM_EXCLUDE_CHANNELS='`) or ask the owner. Without the list,
+   sits in mattertok's `.env` beside its credentials, and an agent never reads a `.env` file: ask the owner for
+   the list. Without the list,
    the channels mattertok skipped are downloaded.
 2. The sign-in above, then 5.4. Gate: `"status": "authenticated"`.
 3. Run 5.5 with `<N>` = 20; it bounds channels. A new archive downloads whole histories at four requests a
@@ -1285,6 +1285,9 @@ is 0. The task does not belong to `schedule`: `schedule status` does not report 
 llm-wiki-wiki-export` removes it.
 
 **13.9 Orphans.** `orphans=N` counts the files under `raw\sources\<app>\` that a run no longer produces. A renamed
-channel, a narrower include or a purge leaves them. They are kept, because LLM Wiki deletes a removed source's
-pages. `--prune` deletes them, and with them their wiki pages: run it only on the owner's explicit yes, after a
-`--prune --dry-run` that shows the count.
+channel, a narrower include or a purge leaves them, and so does an old month that shrank (deleted messages): files pack
+months from the oldest forward, so later files of that stream are renamed and ingested again. They are kept, because LLM
+Wiki deletes a removed source's pages. `--prune` deletes them, and with them their wiki pages: run it only on the
+owner's explicit yes, after a `--prune --dry-run` that shows the count. `--prune` refuses (exit 2, nothing deleted)
+while the index is stale or when the run produced no file: run collect first. When nothing should be exported any more
+(an include narrowed to nothing), the owner deletes the files by hand.

@@ -151,6 +151,35 @@ class Export(unittest.TestCase):
         self.assertTrue(other.exists())
         self.assertEqual(len(self.files("discord")), 2)
 
+    def test_prune_refuses_a_stale_or_empty_index(self):
+        self.run_export("discord", CHAT)
+        before = self.files("discord")
+        for data, kw in (({}, {}), (CHAT, {"stale": True})):
+            with self.subTest(stale=bool(kw)), self.assertRaisesRegex(W.Refused, "--prune"):
+                self.run_export("discord", data, prune=True, **kw)
+            self.assertEqual(self.files("discord"), before)
+        self.assertEqual(self.run_export("discord", {}, prune=True, dry_run=True)["orphans"], 2)
+        self.assertEqual(self.run_export("discord", {})["orphans"], 2)         # without --prune: kept, counted
+
+    def test_main_hands_the_index_freshness_to_export(self):
+        cfg = self.project / "config.json"
+        cfg.write_text("{}", encoding="utf-8")
+        seen = []
+
+        def export(*_a, **kw):
+            seen.append(kw["stale"])
+            raise W.Refused("stop")
+        for stale in (True, False):
+            with mock.patch.object(W.common, "load_data_root", return_value=self.project), \
+                    mock.patch.object(W.common, "open_search", return_value=(mock.Mock(), {}, {"stale": stale})), \
+                    mock.patch.object(W.common, "warn_if_stale"), \
+                    mock.patch.object(W, "settings", return_value=("p", (), (), "")), \
+                    mock.patch.object(W, "target", return_value=self.project), \
+                    mock.patch.object(W, "export", export), \
+                    mock.patch("sys.stderr"):
+                self.assertEqual(W.main(["discord", "--config", str(cfg), "--prune"]), W.common.EXIT_USAGE)
+        self.assertEqual(seen, [True, False])
+
     def test_dry_run_writes_nothing(self):
         rep = self.run_export("discord", CHAT, dry_run=True)
         self.assertEqual((rep["files"], rep["written"]), (2, 2))
