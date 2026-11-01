@@ -832,7 +832,7 @@ def add_search_arguments(p, modes, sender_help="substring of the sender name (or
                         "a query that matched nothing")
     p.add_argument("--hybrid", action="store_true",
                    help="also rank by meaning: fuse the keyword hits with the nearest chunks of the dense sidecar "
-                        "(manage.py embed); hits gain sources/rrf/context, and without embeddings this is a plain search")
+                        "(manage.py embed); hits gain sources/score/context, and without embeddings this is a plain search")
 
 
 def query_text(a):

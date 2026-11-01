@@ -84,7 +84,7 @@ class BruteStore(dense.Vec0):
 
         rows = [(dist(b), i) for i, b, lo, hi in con.execute("SELECT rowid, embedding, ts_lo, ts_hi FROM vec_chunks")
                 if (since is None or hi >= since) and (until is None or lo <= until) and (ids is None or i in ids)]
-        return [i for _, i in sorted(rows)[:k]]
+        return [(i, d) for d, i in sorted(rows)[:k]]
 
 
 # ------------------------------------------------------------------------------------------------ the fixture
@@ -261,7 +261,7 @@ class HybridEndToEnd(FixtureCase):
             self.assertTrue(r["key"].startswith("kakao:"))
             self.assertIn(r["key"], fixture_keys)
             self.assertIn("sources", r)
-            self.assertIn("rrf", r)
+            self.assertIn("score", r)
         self.assertTrue(any(r.get("context") for r in env["rows"]))  # a chunk's rows ride along as context
         dense.sidecar_path(self.fx.data_root, "kakaotalk").unlink()
         env, err = self.search("대화", "--hybrid")

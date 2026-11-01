@@ -34,16 +34,19 @@ sqlite-vec's vec0 (VEC_VERSION; the windows-x86_64 build's DLL under <DATA_PAREN
 VEC_SHA256), cosine distance, chunk time span as metadata so --since/--until filter inside the KNN.
 
 HYBRID
-Reciprocal rank fusion (RRF_K) of two lists, per chunk: the keyword ranking (top KW_N, exact-first as hits()) mapped
-to the chunk of each row (of the chunks holding it, the best-ranked semantic one), and the KNN of the query vector
-(SEM_K candidates; every other filter and the query's exclusions applied through the main index, top SEM_N kept).
-When those filters leave at most PREFILTER rows, the KNN runs over their chunks only, so a channel or a page keeps
-its own best chunks. When no row holds every term, the keyword list is first the windows' anchor rows at full
-weight (search.window_hits: chunks whose rows hold every term between them, "window": true); only without a window
-does it relax. A relaxed keyword list is weighted RELAXED_KW: OR-ed common words otherwise push the semantic hits
-down. A hit is the unit's anchor row (its best keyword row, else the chunk's row
-sharing the most query bigrams that no hit above shows) with "sources" (rank in each list), "rrf" and "context"
-(the chunk's rows).
+A convex combination of two lists, per chunk: CC_ALPHA times the semantic score plus the rest times the keyword
+score. The keyword list is the keyword ranking (top KW_N, exact-first as hits()) mapped to the chunk of each row (of
+the chunks holding it, the best-ranked semantic one), scored by rank (1 for the first, falling by 1/KW_N); the
+semantic list is the KNN of the query vector (SEM_K candidates; every other filter and the query's exclusions
+applied through the main index, top SEM_N kept), scored by distance scaled to 1 (nearest) .. 0 (farthest kept). When
+those filters leave at most PREFILTER rows, the KNN runs over their chunks only, so a channel or a page keeps its
+own best chunks. A low CC_ALPHA keeps the keyword order and lets meaning reorder neighbours and fill the rest (rank
+fusion let semantic-only chunks crowd out exact keyword hits). When no row holds every term, the keyword list is
+first the windows' anchor rows at full weight (search.window_hits: chunks whose rows hold every term between them,
+"window": true); only without a window does it relax. A relaxed keyword list is weighted RELAXED_KW: OR-ed common
+words otherwise push the semantic hits down. A hit is the unit's anchor row (its best keyword row, else the chunk's
+row sharing the most query bigrams that no hit above shows) with "sources" (rank in each list), "score" and
+"context" (the chunk's rows).
 """
 import argparse
 import array
@@ -74,7 +77,7 @@ CHUNKER = "pack-2"
 TARGET, OVERLAP, CAP, LABEL_CAP = 900, 150, 1600, 200
 BATCH = 16
 RETRY_WAITS = (2, 10)
-RRF_K, KW_N, SEM_N, SEM_K = 60, 30, 30, 300
+CC_ALPHA, KW_N, SEM_N, SEM_K = 0.15, 30, 30, 300
 RELAXED_KW = 0.1                     # a relaxed OR-ed keyword list fused at full weight drowns the semantic hits
 PREFILTER = 20000
 EMBED_TIMEOUT, QUERY_TIMEOUT = 300, 30
@@ -233,7 +236,8 @@ class Vec0:
 
     @staticmethod
     def knn(con, vec, k, since=None, until=None, ids=None):
-        """Chunk ids nearest first; a time window keeps the chunks whose span overlaps it, ids (a list) these only."""
+        """(chunk id, cosine distance) nearest first; a time window keeps the chunks whose span overlaps it, ids (a
+        list) these only."""
         where, params = ["embedding MATCH ?", "k = ?"], [_blob(vec), k]
         if ids is not None:
             where.append("rowid IN (SELECT value FROM json_each(?))")
@@ -244,8 +248,8 @@ class Vec0:
         if until is not None:
             where.append("ts_lo <= ?")
             params.append(until)
-        return [r[0] for r in con.execute("SELECT rowid FROM vec_chunks WHERE " + " AND ".join(where) +
-                                          " ORDER BY distance", params)]
+        return con.execute("SELECT rowid, distance FROM vec_chunks WHERE " + " AND ".join(where) +
+                           " ORDER BY distance", params).fetchall()
 
 
 STORE = Vec0
@@ -487,7 +491,7 @@ def _query_text(query):
 def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=False, kw_rows=None):
     """(res, info): fused hits, or (None, info) with info["reason"] when dense retrieval cannot run. relaxed: the
     keyword list is q OR-ed (weighted RELAXED_KW); kw_rows: the keyword list as given (the windows' rows)."""
-    info = {"available": False, "rrf_k": RRF_K}
+    info = {"available": False, "alpha": CC_ALPHA}
     path = sidecar_path(data_root, drv.name)
     if kw_rows is None:
         # keyword list: exact-first, as hits() orders
@@ -522,7 +526,8 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
             ids = None if cand is None else [r[0] for r in side.execute(
                 "SELECT DISTINCT chunk_id FROM chunk_rec WHERE rec_key IN (SELECT value FROM json_each(?))",
                 (json.dumps(cand),))]
-            sem_ids = STORE.knn(side, vec, SEM_K, flt.since, flt.until, ids) if ids != [] else []
+            sem_hits = STORE.knn(side, vec, SEM_K, flt.since, flt.until, ids) if ids != [] else []
+            sem_ids, sem_d = [i for i, _ in sem_hits], dict(sem_hits)
             members = {}
             for part in _parts(set(sem_ids) | {c for cs in chunks_of.values() for c in cs}):
                 for cid, key in side.execute(f"SELECT chunk_id, rec_key FROM chunk_rec WHERE chunk_id IN "
@@ -548,11 +553,15 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
         cid = next((c for c in cs if ("c", c) not in units), cs[0] if cs else None)
         units.setdefault(("r", key) if cid is None else ("c", cid), {"kw": rank, "sem": None, "anchor": r})
     for rank, cid in enumerate(sem, 1):
-        units.setdefault(("c", cid), {"kw": None, "sem": None, "anchor": None})["sem"] = rank
+        units.setdefault(("c", cid), {"kw": None, "sem": None, "anchor": None}).update(sem=rank, dist=sem_d[cid])
     w = RELAXED_KW if relaxed else 1.0
+    near, far = (min(sem_d[c] for c in sem), max(sem_d[c] for c in sem)) if sem else (0.0, 0.0)
 
     def score(d):
-        return (w / (RRF_K + d["kw"]) if d["kw"] else 0) + (1 / (RRF_K + d["sem"]) if d["sem"] else 0)
+        # the keyword rank scaled to (0, 1] (times w), the KNN distance min-max scaled over the semantic list
+        kw = w * (1 - (d["kw"] - 1) / KW_N) if d["kw"] else 0.0
+        s = 0.0 if not d["sem"] else 1.0 if far == near else (far - d["dist"]) / (far - near)
+        return CC_ALPHA * s + (1 - CC_ALPHA) * kw
 
     order = sorted(units.items(), key=lambda u: (-score(u[1]), u[1]["kw"] or KW_N + 1, u[1]["sem"] or SEM_N + 1))
     qtok = set(ti.ng_tokens(_query_text(query))) - {ti.SEP}
@@ -570,7 +579,8 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
             r = max(free, key=lambda x: len(qtok.intersection(x["ng"].split())))
         akey = drv.rec_key(r)
         shown.add(akey)
-        h = drv.hit(r, tz, q.marks, a.width) | {"sources": {"kw": d["kw"], "sem": d["sem"]}, "rrf": round(score(d), 6)}
+        h = drv.hit(r, tz, q.marks, a.width) | {"sources": {"kw": d["kw"], "sem": d["sem"]},
+                                                "score": round(score(d), 6)}
         if kind == "c":
             h["context"] = [{**drv.hit(rows[k], tz, q.marks, a.width), "hit": k == akey}
                             for k in members.get(ident, ()) if k in rows] or [{**drv.hit(r, tz, q.marks, a.width), "hit": True}]

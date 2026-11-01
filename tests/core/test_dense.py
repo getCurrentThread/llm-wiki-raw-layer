@@ -115,7 +115,7 @@ class BruteStore(dense.Vec0):
             return 1 - sum(x * y for x, y in zip(vec, w)) / math.sqrt(sum(x * x for x in vec) * sum(y * y for y in w))
         rows = [(dist(b), i) for i, b, lo, hi in con.execute("SELECT rowid, embedding, ts_lo, ts_hi FROM vec_chunks")
                 if (since is None or hi >= since) and (until is None or lo <= until) and (ids is None or i in ids)]
-        return [i for _, i in sorted(rows)[:k]]
+        return [(i, d) for d, i in sorted(rows)[:k]]
 
 
 # ------------------------------------------------------------------------------------------------ a synthetic app
@@ -473,10 +473,11 @@ class HybridEndToEnd(unittest.TestCase):
         env, _ = self.search("회의 일정", "--hybrid")
         h = env["hybrid"]
         self.assertTrue(h["available"])
-        self.assertEqual((h["model"], h["dims"], h["rrf_k"], h["vec_seq"], h["stale"]), ("fake", DIMS, 60, 1, False))
+        self.assertEqual((h["model"], h["dims"], h["alpha"], h["vec_seq"], h["stale"]),
+                         ("fake", DIMS, dense.CC_ALPHA, 1, False))
         top = env["rows"][0]
         self.assertEqual((top["key"], top["sources"]), ("a1", {"kw": 1, "sem": 1}))
-        self.assertAlmostEqual(top["rrf"], 2 / 61, places=6)
+        self.assertAlmostEqual(top["score"], 1.0, places=6)                # first on both lists
         self.assertEqual([(c["key"], c["hit"]) for c in top["context"]], [("a1", True), ("a2", False)])
         self.assertEqual(env["total"], 1)
         self.assertTrue(all(r["sources"]["kw"] is None for r in env["rows"][1:]))
@@ -495,8 +496,8 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual({c["key"] for r in kw for c in r["context"]}, {"a1", "a2", "b1", "b2"})
         for r in kw:                                                        # a relaxed list weighs less
             s = r["sources"]
-            self.assertAlmostEqual(r["rrf"], dense.RELAXED_KW / (60 + s["kw"]) + (1 / (60 + s["sem"]) if s["sem"] else 0),
-                                   places=6)
+            rest = r["score"] - (1 - dense.CC_ALPHA) * dense.RELAXED_KW * (1 - (s["kw"] - 1) / dense.KW_N)
+            self.assertTrue(-1e-6 <= rest <= dense.CC_ALPHA + 1e-6 if s["sem"] else abs(rest) < 1e-6, (s, rest))
         self.assertIn("(relaxed)", err)
         # filters and exclusions reach the semantic side through the main index
         env, _ = self.search("회의일정 -점심", "--hybrid")
@@ -525,7 +526,7 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual((env["total"], env["relaxed"], env["window"]), (1, False, True))
         top = env["rows"][0]
         self.assertEqual((top["key"], top["sources"]["kw"]), ("a1", 1))
-        self.assertAlmostEqual(top["rrf"], 1 / 61 + 1 / (60 + top["sources"]["sem"]), places=6)  # full keyword weight
+        self.assertGreaterEqual(top["score"], 1 - dense.CC_ALPHA)           # full keyword weight
         self.assertIn("(window)", err)
         for argv in (["회의 메뉴 -점심"], ["회의 메뉴", "--sender", "nobody"], ["회의 장애"], ["회의 OR 메뉴"],
                      ["회의 메뉴", "--literal"]):
@@ -543,6 +544,10 @@ class HybridEndToEnd(unittest.TestCase):
                 DRIVER.run(parser().parse_args(["--config", str(self.cfg), *argv]))
 
 
+def ids(hits):
+    return [i for i, _ in hits]
+
+
 @unittest.skipUnless(os.environ.get("RAWLAYER_TEST_SQLITE_VEC"), "set RAWLAYER_TEST_SQLITE_VEC to the vec0 DLL")
 class RealVec0(unittest.TestCase):
 
@@ -553,13 +558,13 @@ class RealVec0(unittest.TestCase):
             dense.Vec0.load(con)
         dense.Vec0.create(con, 4)
         dense.Vec0.insert(con, [(1, [1, 0, 0, 0], 10, 20), (2, [0.9, 0.1, 0, 0], 30, 40), (3, [0, 1, 0, 0], 50, 60)])
-        self.assertEqual(dense.Vec0.knn(con, [1, 0, 0, 0], 3), [1, 2, 3])
-        self.assertEqual(dense.Vec0.knn(con, [1, 0, 0, 0], 3, since=25), [2, 3])
-        self.assertEqual(dense.Vec0.knn(con, [1, 0, 0, 0], 3, until=25), [1])
-        self.assertEqual(dense.Vec0.knn(con, [1, 0, 0, 0], 3, ids=[3, 2]), [2, 3])
-        self.assertEqual(dense.Vec0.knn(con, [1, 0, 0, 0], 3, since=25, ids=[1, 2]), [2])
+        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3)), [1, 2, 3])
+        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, since=25)), [2, 3])
+        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, until=25)), [1])
+        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, ids=[3, 2])), [2, 3])
+        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, since=25, ids=[1, 2])), [2])
         dense.Vec0.delete(con, [1])
-        self.assertEqual(dense.Vec0.knn(con, [1, 0, 0, 0], 3), [2, 3])
+        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3)), [2, 3])
 
 
 if __name__ == "__main__":
