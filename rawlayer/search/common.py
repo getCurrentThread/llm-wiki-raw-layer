@@ -50,6 +50,12 @@ SOURCE PLUG-IN CONTRACT (see SourceIndex)
                            finish: full mode derives every row (called once, after the last manifest)
   stats(con)              -> {name: int} for reports
 The driver owns transactions, the meta and counts tables, the watermark and the swap.
+
+A source of the simple shape -- one content table folded from one origin's records, an FTS5 table <table>_fts
+over it, rows derived once per manifest -- subclasses SimpleIndex and SimpleApplier below instead of writing the
+plumbing: the record header check, end_manifest, create_tables / create_triggers and the rows / deleted stats are
+theirs, the app supplies the fold (record), the derivation (finish, and derive for a catch-up that is narrower
+than finish) and its schema.
 """
 import argparse
 import datetime as _dt
@@ -63,10 +69,12 @@ import sys
 import time
 import unicodedata
 import zlib
+from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
 from rawlayer.capture import fsio, ledger, paths
+from rawlayer.capture.model import OPS
 
 from . import textindex as ti
 
@@ -343,6 +351,77 @@ def bump_counts(con, counter):
 
 def read_counts(con):
     return dict(con.execute("SELECT k, n FROM counts ORDER BY k").fetchall())
+
+
+class SimpleApplier:
+    """The applier of a SimpleIndex: record() is the app's fold; it starts with `header`, sets `dirty` when a
+    record changed a row, and finish() derives every row (a full build calls it once, after the last manifest).
+    end_manifest() persists the counters and, for a catch-up, runs derive() when a record changed something
+    (derive defaults to finish(); an app that can derive only what the manifest touched overrides it)."""
+    origin = ""                     # the source's one origin
+
+    def __init__(self, con, full):
+        self.con, self.full = con, full
+        self.counts = Counter()
+        self.dirty = False
+
+    def header(self, rec):
+        """(key, kind, op, rev) of a record of this origin with an int revision in 1..2**63-1; any other record
+        is counted as bad_record and gives None (a total fold: odd values are counted, never raised)."""
+        if not isinstance(rec, dict) or rec.get("origin") != self.origin or rec.get("op") not in OPS                 or not is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
+            self.counts["bad_record"] += 1
+            return None
+        return rec.get("key"), rec.get("kind"), rec["op"], rec["rev"]
+
+    def end_manifest(self, seq):
+        bump_counts(self.con, self.counts)
+        self.counts.clear()
+        if not self.full:
+            self.derive()
+        self.dirty = False
+
+    def derive(self):
+        if self.dirty:
+            self.finish()
+
+    def finish(self):
+        raise NotImplementedError
+
+
+class SimpleIndex(SourceIndex):
+    """A SourceIndex for the simple shape (see the module docstring): `schema` (CREATE statements for the content
+    table `table` and its helper tables, no FTS table), `applier_class` (a SimpleApplier subclass), `title` when the
+    FTS5 table also indexes a tng title column, and `deleted` -- the SQL aggregate over the content table that the
+    stats report as "deleted". The origin is the applier's, the FTS5 table is <table>_fts."""
+    schema = ""
+    table = ""
+    applier_class = SimpleApplier
+    title = False
+    deleted = "coalesce(sum(deleted), 0)"
+
+    @property
+    def origins(self):
+        return frozenset({self.applier_class.origin})
+
+    @property
+    def fts_tables(self):
+        return (self.table + "_fts",)
+
+    def create_tables(self, con):
+        con.executescript(self.schema)
+        con.execute(ti.fts_ddl(self.table, title=self.title))
+        if self.title:
+            con.execute(ti.title_rank(self.table + "_fts"))
+
+    def create_triggers(self, con):
+        create_triggers(con, self.table, self.table + "_fts", title=self.title)
+
+    def applier(self, con, full):
+        return self.applier_class(con, full)
+
+    def stats(self, con):
+        rows, deleted = con.execute(f"SELECT count(*), {self.deleted} FROM {self.table}").fetchone()
+        return {"rows": rows, "deleted": deleted, **read_counts(con)}
 
 
 def _set_meta(con, **kv):
@@ -710,6 +789,12 @@ def fmt_ts(ts, tz, fmt="%Y-%m-%d %H:%M"):
         return _dt.datetime.fromtimestamp(ts, tz).strftime(fmt)
     except (OverflowError, OSError, ValueError):
         return "?"
+
+
+def day_span(first, last, tz):
+    """{"first", "last"}: the dates (YYYY-MM-DD in tz) of an earliest and a latest unix timestamp, '' for none."""
+    return {"first": fmt_ts(first, tz, "%Y-%m-%d") if first else "",
+            "last": fmt_ts(last, tz, "%Y-%m-%d") if last else ""}
 
 
 def month_sql(col, tz):

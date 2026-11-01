@@ -1,7 +1,6 @@
 """Ledger-only Discord FTS5 index and search."""
 import json
 import re
-from collections import Counter
 from rawlayer.search import common, search as drv, textindex as ti
 from .keys import snowflake_ms
 
@@ -68,18 +67,13 @@ def msg_text(native, counts=None):
     return (_s("\n".join(parts)), "files" if names else "forwarded") if parts else ("", "")
 
 
-class DiscordApplier:
-    def __init__(self, con, full):
-        self.con, self.full = con, full
-        self.counts = Counter()
-        self.dirty = False
+class DiscordApplier(common.SimpleApplier):
+    origin = ORIGIN
 
     def record(self, rec, seq):
-        if not isinstance(rec, dict) or rec.get("origin") != ORIGIN or rec.get("op") not in ("put", "absent", "purged") \
-                or not common.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
-            self.counts["bad_record"] += 1
+        if (head := self.header(rec)) is None:
             return
-        key, kind, rev, op = rec.get("key"), rec.get("kind"), rec["rev"], rec["op"]
+        key, kind, op, rev = head
         match = re.fullmatch(r"dc:(guild|ch|user):([^:]+)|dc:(msg):([^:]+):([^:]+)", key or "") if isinstance(key, str) else None
         if not match or kind != (match[1] or match[3]):
             self.counts["bad_key"] += 1
@@ -141,13 +135,6 @@ class DiscordApplier:
                                  (ident, rev, seq, held, _s(n.get("name")), json.dumps(n.get("nicks", {}))))
         self.dirty = True
 
-    def end_manifest(self, seq):
-        common.bump_counts(self.con, self.counts)
-        self.counts.clear()
-        if not self.full and self.dirty:
-            self.finish()
-        self.dirty = False
-
     def finish(self):
         con = self.con
         con.execute("UPDATE msgs SET " + _LABEL)
@@ -161,39 +148,13 @@ class DiscordApplier:
          FROM ch_src c LEFT JOIN ch_src p ON p.channel_id=c.parent_id LEFT JOIN guild_src g ON g.guild_id=c.guild_id""")
 
 
-class DiscordIndex(common.SourceIndex):
+class DiscordIndex(common.SimpleIndex):
     name = NAME
-    origins = frozenset({ORIGIN})
     schema_version = extractor_version = "discord-1"
-    fts_tables = ("msgs_fts",)
-
-    def create_tables(self, con):
-        con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("msgs"))
-
-    def create_triggers(self, con):
-        common.create_triggers(con, "msgs", "msgs_fts")
-
-    def applier(self, con, full):
-        return DiscordApplier(con, full)
-
-    def stats(self, con):
-        return {"rows": con.execute("SELECT count(*) FROM msgs").fetchone()[0],
-                "deleted": con.execute("SELECT coalesce(sum(deleted),0) FROM msgs").fetchone()[0],
-                **common.read_counts(con)}
+    schema, table, applier_class = SCHEMA, "msgs", DiscordApplier
 
 
 SPEC = DiscordIndex()
-
-
-def add_arguments(p):
-    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "channels"])
-    p.add_argument("--channel", action="append", default=[])
-    p.add_argument("--guild")
-    p.add_argument("--thread", metavar="MSG_ID")
-    p.add_argument("--list-channels", action="store_true")
-    p.add_argument("--before")
-    p.add_argument("--after")
 
 
 class Filters(drv.Filters):
@@ -226,10 +187,19 @@ class DiscordSearch(drv.SearchDriver):
     name, table, fts_table = NAME, "msgs", "msgs_fts"
     # Channel disambiguates duplicated parent/thread starter snowflakes for paging.
     sort_cols = ("ts_ms", "sid", "channel_id")
-    group_modes = {"senders": "t.user_id", "channels": "t.channel_id"}
+    group_modes = {"senders": drv.Group("t.user_id", "user_id", "users", "name"),
+                   "channels": drv.Group("t.channel_id", "channel_id", "channels", "label")}
+    cursor_form = "ts_ms.snowflake.channel_id"
     list_flag, in_page_key, page_group = "list_channels", "channels_in_page", "channel_id"
     hits_noun, browse_hint, Filters = "messages", "give a query or --channel/--guild/--sender/--since/--until", Filters
     key_col, container_col, container_src, chunk_gap_s = "key", "channel_id", "ch_src", 1800
+    context_col = "channel_id"
+
+    def arguments(self, p):
+        p.add_argument("--channel", action="append", default=[])
+        p.add_argument("--guild")
+        p.add_argument("--thread", metavar="MSG_ID")
+        p.add_argument("--list-channels", action="store_true")
 
     def chunk_units(self, con, container):
         rows = con.execute("SELECT key, ts, guild, channel, sender, user_id, message FROM msgs WHERE channel_id=? "
@@ -256,32 +226,6 @@ class DiscordSearch(drv.SearchDriver):
             "deleted": bool(r["deleted"]), "edited": bool(r["edited"]), "reference_id": r["reference_id"],
             "text": r["message"], "snippet": ti.highlight(r["message"], marks, width),
             "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
-
-    def context(self, con, r, n, a, tz):
-        hide = "" if a.include_deleted else " AND deleted=0"
-        args = (r["channel_id"], r["ts_ms"], r["sid"], n)
-        before = con.execute("SELECT * FROM msgs WHERE channel_id=? AND (ts_ms,sid)<(?,?)" + hide +
-                             " ORDER BY ts_ms DESC,sid DESC LIMIT ?", args).fetchall()
-        after = con.execute("SELECT * FROM msgs WHERE channel_id=? AND (ts_ms,sid)>(?,?)" + hide +
-                            " ORDER BY ts_ms,sid LIMIT ?", args).fetchall()
-        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in [*reversed(before), r, *after]]
-
-    def who(self, h):
-        return h.get("sender") or h.get("user_id") or "?"
-
-    def flags(self, h):
-        return " [deleted]" if h.get("deleted") else ""
-
-    def group_row(self, con, r, mode, tz):
-        table, column, label = ("users", "user_id", "name") if mode == "senders" else ("channels", "channel_id", "label")
-        row = con.execute(f"SELECT {label} FROM {table} WHERE {column}=?", (r["gid"],)).fetchone()
-        return {column: r["gid"], "label": (row[0] if row else "") or r["gid"], "n": r["n"],
-                "first": common.fmt_ts(r["f"], tz, "%Y-%m-%d") if r["f"] else "",
-                "last": common.fmt_ts(r["l"], tz, "%Y-%m-%d") if r["l"] else ""}
-
-    def group_label(self, r, mode):
-        col = "user_id" if mode == "senders" else "channel_id"
-        return r["label"], col + "=" + r[col]
 
     def list_all(self, con, a, tz):
         where, params = [], []
@@ -325,6 +269,10 @@ class DiscordSearch(drv.SearchDriver):
 
 
 DRIVER = DiscordSearch(SPEC)
+
+
+def add_arguments(p):
+    DRIVER.add_arguments(p)
 
 
 def run(a):

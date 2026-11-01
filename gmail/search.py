@@ -1,7 +1,6 @@
 """Ledger-only Gmail FTS5 with TEXT Gmail IDs and independent label state."""
 import json
 import re
-from collections import Counter
 from rawlayer.capture.canon import pk_text
 from rawlayer.search import common, search as drv, textindex as ti
 from .keys import gm_id, MAX_MS
@@ -28,17 +27,13 @@ def _s(value):
     return common.clean(value) if isinstance(value, str) else ""
 
 
-class GmailApplier:
-    def __init__(self, con, full):
-        self.con, self.full, self.counts, self.dirty = con, full, Counter(), False
+class GmailApplier(common.SimpleApplier):
+    origin = ORIGIN
 
     def record(self, rec, seq):
-        if not isinstance(rec, dict) or rec.get("origin") != ORIGIN \
-                or rec.get("op") not in ("put", "absent", "purged") \
-                or not common.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
-            self.counts["bad_record"] += 1
+        if (head := self.header(rec)) is None:
             return
-        key, kind, op, rev = rec.get("key"), rec.get("kind"), rec["op"], rec["rev"]
+        key, kind, op, rev = head
         match = re.fullmatch(r"gm:(msg|lbls|label):([^:]+)", key) if isinstance(key, str) else None
         if not match or kind != match[1] or (gm_id(match[2]) if kind != "label" else pk_text(match[2])) is None:
             self.counts["bad_key"] += 1
@@ -88,13 +83,6 @@ class GmailApplier:
                              (ident, rev, seq, held, _s(n.get("name")), int(bool(n.get("_removedAt")))))
         self.dirty = True
 
-    def end_manifest(self, seq):
-        common.bump_counts(self.con, self.counts)
-        self.counts.clear()
-        if not self.full and self.dirty:
-            self.finish()
-        self.dirty = False
-
     def finish(self):
         self.con.execute("DELETE FROM membership")
         for ident, labels in self.con.execute("SELECT msg_id,labels FROM states WHERE held=1"):
@@ -105,39 +93,13 @@ class GmailApplier:
           THEN 1 ELSE 0 END""")
 
 
-class GmailIndex(common.SourceIndex):
-    name, origins = NAME, frozenset({ORIGIN})
+class GmailIndex(common.SimpleIndex):
+    name = NAME
     schema_version = extractor_version = "gmail-2"
-    fts_tables = ("msgs_fts",)
-
-    def create_tables(self, con):
-        con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("msgs", title=True))
-        con.execute(ti.title_rank("msgs_fts"))
-
-    def create_triggers(self, con):
-        common.create_triggers(con, "msgs", "msgs_fts", title=True)
-
-    def applier(self, con, full):
-        return GmailApplier(con, full)
-
-    def stats(self, con):
-        return {"rows": con.execute("SELECT count(*) FROM msgs").fetchone()[0],
-                "deleted": con.execute("SELECT coalesce(sum(deleted),0) FROM msgs").fetchone()[0],
-                **common.read_counts(con)}
+    schema, table, applier_class, title = SCHEMA, "msgs", GmailApplier, True
 
 
 SPEC = GmailIndex()
-
-
-def add_arguments(p):
-    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "labels", "threads"])
-    p.add_argument("--label", action="append", default=[])
-    p.add_argument("--from", dest="from_address")
-    p.add_argument("--thread")
-    p.add_argument("--include-removed", action="store_true")
-    p.add_argument("--before")
-    p.add_argument("--after")
 
 
 class Filters(drv.Filters):
@@ -183,10 +145,19 @@ def mail_paragraphs(body):
 class GmailSearch(drv.SearchDriver):
     name, table, fts_table = NAME, "msgs", "msgs_fts"
     sort_cols = ("ts_ms", "msg_id")
-    group_modes = {"senders": "t.sender", "threads": "t.thread_id", "labels": "m.label_id"}
+    group_modes = {"senders": drv.Group("t.sender", "id"),
+                   "labels": drv.Group("m.label_id", "id", "labels", "name", "label_id", keep_empty=True),
+                   "threads": drv.Group("t.thread_id", "id")}
+    cursor_form = "ts_ms.hex_id"
     in_page_key, page_group = "threads_in_page", "thread_id"
     hits_noun, browse_hint, Filters = "messages", "give a query or --label/--from/--thread/--since/--until", Filters
-    key_col, container_col, container_src = "key", "msg_id", "states"
+    key_col, container_col, container_src, context_col = "key", "msg_id", "states", "thread_id"
+
+    def arguments(self, p):
+        p.add_argument("--label", action="append", default=[])
+        p.add_argument("--from", dest="from_address")
+        p.add_argument("--thread")
+        p.add_argument("--include-removed", action="store_true")
 
     def chunk_units(self, con, container):
         r = con.execute("SELECT key, ts, subject, sender, body_text, attachments FROM msgs WHERE msg_id=? AND deleted=0",
@@ -214,14 +185,6 @@ class GmailSearch(drv.SearchDriver):
             "deleted": bool(r["deleted"]), "text": r["message"], "snippet": ti.highlight(r["message"], marks, width),
             "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
 
-    def context(self, con, r, n, a, tz):
-        hide = "" if a.include_deleted else " AND deleted=0"
-        before = con.execute("SELECT * FROM msgs WHERE thread_id=? AND (ts_ms,msg_id)<(?,?)" + hide +
-                             " ORDER BY ts_ms DESC,msg_id DESC LIMIT ?", (r["thread_id"], r["ts_ms"], r["msg_id"], n)).fetchall()
-        after = con.execute("SELECT * FROM msgs WHERE thread_id=? AND (ts_ms,msg_id)>(?,?)" + hide +
-                            " ORDER BY ts_ms,msg_id LIMIT ?", (r["thread_id"], r["ts_ms"], r["msg_id"], n)).fetchall()
-        return [{**self.hit(v, tz, [], a.width), "hit": v["id"] == r["id"]} for v in [*reversed(before), r, *after]]
-
     def aggregate(self, con, a, q, flt, tz):
         if a.mode != "labels":
             return super().aggregate(con, a, q, flt, tz)
@@ -231,21 +194,12 @@ class GmailSearch(drv.SearchDriver):
         rows = con.execute(f"SELECT m.label_id AS gid,count(*) AS n,min(t.ts) AS f,max(t.ts) AS l {body} GROUP BY gid ORDER BY n DESC,gid LIMIT ?", params + [a.limit]).fetchall()
         return {"mode": "labels", "total": total, "rows": [self.group_row(con, r, "labels", tz) for r in rows]}
 
-    def group_row(self, con, r, mode, tz):
-        label = r["gid"]
-        if mode == "labels":
-            row = con.execute("SELECT name FROM labels WHERE label_id=?", (label,)).fetchone()
-            label = row[0] if row else label
-        return {"id": r["gid"], "label": label, "n": r["n"],
-                "first": common.fmt_ts(r["f"], tz, "%Y-%m-%d") if r["f"] else "",
-                "last": common.fmt_ts(r["l"], tz, "%Y-%m-%d") if r["l"] else ""}
-
-    def group_label(self, r, mode):
-        return r["label"], "id=" + r["id"]
-
-
 
 DRIVER = GmailSearch(SPEC)
+
+
+def add_arguments(p):
+    DRIVER.add_arguments(p)
 
 
 def run(a):

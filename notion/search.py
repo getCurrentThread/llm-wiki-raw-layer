@@ -1,6 +1,5 @@
 """Block-level Notion search. Derived labels/order/deletion use one SQL expression in both build modes."""
 import re
-from collections import Counter
 from rawlayer.search import common, search as drv, textindex as ti
 from .keys import nt_id, iso_ms
 
@@ -123,17 +122,17 @@ def parent_id(native):
     return nt_id(parent.get(typ)) or "" if isinstance(typ, str) else ""
 
 
-class NotionApplier:
+class NotionApplier(common.SimpleApplier):
+    origin = ORIGIN
+
     def __init__(self, con, full):
-        self.con, self.full = con, full
-        self.counts, self.touched = Counter(), set()
+        super().__init__(con, full)
+        self.touched = set()            # pages a catch-up must derive again
 
     def record(self, rec, seq):
-        if not isinstance(rec, dict) or rec.get("origin") != ORIGIN or rec.get("op") not in ("put", "absent", "purged") \
-                or not common.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
-            self.counts["bad_record"] += 1
+        if (head := self.header(rec)) is None:
             return
-        key, kind, rev, op = rec.get("key"), rec.get("kind"), rec["rev"], rec["op"]
+        key, kind, op, rev = head
         parts = key.split(":") if isinstance(key, str) else []
         if len(parts) not in (3, 4) or parts[0] != "nt" or parts[1] != kind \
                 or kind not in ("page", "block", "comment", "user", "ds") \
@@ -183,7 +182,8 @@ class NotionApplier:
                 else:
                     self.con.execute("UPDATE users SET rev=?,seq=?,held=0,name=CASE WHEN ?='purged' THEN '' ELSE name END WHERE user_id=?",
                                      (rev, seq, op, ident))
-                self.touched.update(r[0] for r in self.con.execute("SELECT DISTINCT page_id FROM nrows WHERE user_id=?", (ident,)))
+                if not self.full:
+                    self.touched.update(r[0] for r in self.con.execute("SELECT DISTINCT page_id FROM nrows WHERE user_id=?", (ident,)))
                 return
             else:
                 if op == "put":
@@ -220,14 +220,12 @@ class NotionApplier:
              user_id=excluded.user_id,own_deleted=excluded.own_deleted,message=excluded.message,ng=excluded.ng,
              tng=excluded.tng,btype=excluded.btype""",
                              (key, kind, ident, pid, rev, seq, held, ts_ms // 1000, ts_ms, uid, own_deleted, text, ng, tng, btype))
-        self.touched.add(pid)
-
-    def end_manifest(self, seq):
-        common.bump_counts(self.con, self.counts)
-        self.counts.clear()
         if not self.full:
-            for pid in sorted(self.touched):
-                self._derive(pid)
+            self.touched.add(pid)
+
+    def derive(self):
+        for pid in sorted(self.touched):
+            self._derive(pid)
         self.touched.clear()
 
     def _derive(self, pid):
@@ -242,39 +240,13 @@ class NotionApplier:
             self._derive(pid)
 
 
-class NotionIndex(common.SourceIndex):
+class NotionIndex(common.SimpleIndex):
     name = NAME
-    origins = frozenset({ORIGIN})
     schema_version = extractor_version = "notion-2"
-    fts_tables = ("nrows_fts",)
-
-    def create_tables(self, con):
-        con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("nrows", title=True))
-        con.execute(ti.title_rank("nrows_fts"))
-
-    def create_triggers(self, con):
-        common.create_triggers(con, "nrows", "nrows_fts", title=True)
-
-    def applier(self, con, full):
-        return NotionApplier(con, full)
-
-    def stats(self, con):
-        return {"rows": con.execute("SELECT count(*) FROM nrows").fetchone()[0],
-                "deleted": con.execute("SELECT coalesce(sum(deleted),0) FROM nrows").fetchone()[0],
-                **common.read_counts(con)}
+    schema, table, applier_class, title = SCHEMA, "nrows", NotionApplier, True
 
 
 SPEC = NotionIndex()
-
-
-def add_arguments(p):
-    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "pages"])
-    p.add_argument("--page", action="append", default=[])
-    p.add_argument("--page-text", metavar="PAGE_ID")
-    p.add_argument("--list-pages", action="store_true")
-    p.add_argument("--before")
-    p.add_argument("--after")
 
 
 class Filters(drv.Filters):
@@ -302,10 +274,17 @@ class Filters(drv.Filters):
 class NotionSearch(drv.SearchDriver):
     name, table, fts_table = NAME, "nrows", "nrows_fts"
     sort_cols = ("ts_ms", "key")
-    group_modes = {"senders": "t.user_id", "pages": "t.page_id"}
+    group_modes = {"senders": drv.Group("t.user_id", "user_id", "users", "name"),
+                   "pages": drv.Group("t.page_id", "page_id", "pages", "title")}
+    cursor_form = "ts_ms.nt:key"
     list_flag, in_page_key, page_group = "list_pages", "pages_in_page", "page_id"
     hits_noun, browse_hint, Filters = "rows", "give a query or --page/--sender/--since/--until", Filters
     key_col, container_col, container_src = "key", "page_id", "page_src"
+
+    def arguments(self, p):
+        p.add_argument("--page", action="append", default=[])
+        p.add_argument("--page-text", metavar="PAGE_ID")
+        p.add_argument("--list-pages", action="store_true")
 
     def chunk_units(self, con, container):
         rows = con.execute("SELECT key, ts, message, btype FROM nrows WHERE page_id=? AND deleted=0 AND message!='' "
@@ -341,23 +320,6 @@ class NotionSearch(drv.SearchDriver):
         if r["kind"] != "block":
             rows = [r, *rows]
         return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in rows]
-
-    def who(self, h):
-        return h.get("sender") or h.get("user_id") or "?"
-
-    def flags(self, h):
-        return " [deleted]" if h.get("deleted") else ""
-
-    def group_row(self, con, r, mode, tz):
-        table, col, label = ("users", "user_id", "name") if mode == "senders" else ("pages", "page_id", "title")
-        row = con.execute(f"SELECT {label} FROM {table} WHERE {col}=?", (r["gid"],)).fetchone()
-        return {col: r["gid"], "label": (row[0] if row else "") or r["gid"], "n": r["n"],
-                "first": common.fmt_ts(r["f"], tz, "%Y-%m-%d") if r["f"] else "",
-                "last": common.fmt_ts(r["l"], tz, "%Y-%m-%d") if r["l"] else ""}
-
-    def group_label(self, r, mode):
-        col = "user_id" if mode == "senders" else "page_id"
-        return r["label"], col + "=" + r[col]
 
     def breadcrumb(self, con, pid):
         # UNION (not UNION ALL) terminates malformed parent cycles.
@@ -404,6 +366,10 @@ class NotionSearch(drv.SearchDriver):
 
 
 DRIVER = NotionSearch(SPEC)
+
+
+def add_arguments(p):
+    DRIVER.add_arguments(p)
 
 
 def run(a):

@@ -1,5 +1,4 @@
 """Ledger-only Claude Code FTS5 index and session search."""
-from collections import Counter
 from rawlayer.search import common, search as drv, textindex as ti
 from .keys import cc_id, iso_ms
 
@@ -35,20 +34,15 @@ def _body(row):
     return "\n".join(v for v in (row["message"], row["tools"]) if v)
 
 
-class ClaudeCodeApplier:
-    def __init__(self, con, full):
-        self.con, self.full = con, full
-        self.counts = Counter()
-        self.dirty = False
+class ClaudeCodeApplier(common.SimpleApplier):
+    origin = ORIGIN
 
     def record(self, rec, seq):
-        if not isinstance(rec, dict) or rec.get("origin") != ORIGIN or rec.get("op") not in ("put", "absent", "purged") \
-                or not common.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
-            self.counts["bad_record"] += 1
+        if (head := self.header(rec)) is None:
             return
-        key, rev, op = rec.get("key"), rec["rev"], rec["op"]
+        key, kind, op, rev = head
         parts = key.split(":") if isinstance(key, str) else []
-        if len(parts) != 4 or parts[:2] != ["cc", "msg"] or rec.get("kind") != "msg" \
+        if len(parts) != 4 or parts[:2] != ["cc", "msg"] or kind != "msg" \
                 or cc_id(parts[2]) is None or cc_id(parts[3]) is None or _s(key) != key:
             self.counts["bad_key"] += 1
             return
@@ -86,13 +80,6 @@ class ClaudeCodeApplier:
              branch=excluded.branch,model=excluded.model,tools=excluded.tools,message=excluded.message,ng=excluded.ng""", values)
         self.dirty = True
 
-    def end_manifest(self, seq):
-        common.bump_counts(self.con, self.counts)
-        self.counts.clear()
-        if not self.full and self.dirty:
-            self.finish()
-        self.dirty = False
-
     def finish(self):
         self.con.execute("DELETE FROM sessions")
         self.con.execute("""INSERT INTO sessions SELECT session_id,
@@ -103,40 +90,14 @@ class ClaudeCodeApplier:
          FROM msgs m WHERE held=1 GROUP BY session_id""")
 
 
-class ClaudeCodeIndex(common.SourceIndex):
+class ClaudeCodeIndex(common.SimpleIndex):
     name = NAME
-    origins = frozenset({ORIGIN})
     schema_version = extractor_version = "claudecode-1"
-    fts_tables = ("msgs_fts",)
-
-    def create_tables(self, con):
-        con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("msgs"))
-
-    def create_triggers(self, con):
-        common.create_triggers(con, "msgs", "msgs_fts")
-
-    def applier(self, con, full):
-        return ClaudeCodeApplier(con, full)
-
-    def stats(self, con):
-        return {"rows": con.execute("SELECT count(*) FROM msgs").fetchone()[0],
-                "deleted": con.execute("SELECT count(*) FROM msgs WHERE held=0").fetchone()[0],
-                **common.read_counts(con)}
+    schema, table, applier_class = SCHEMA, "msgs", ClaudeCodeApplier
+    deleted = "coalesce(sum(held = 0), 0)"
 
 
 SPEC = ClaudeCodeIndex()
-
-
-def add_arguments(p):
-    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "sessions", "projects"],
-                                sender_help="substring of the role: user, assistant or prompt")
-    p.add_argument("--project", action="append", default=[], help="substring of the working folder")
-    p.add_argument("--role", choices=("user", "assistant", "prompt"))
-    p.add_argument("--session", metavar="ID", help="show the whole session, including subagents, in order")
-    p.add_argument("--list-sessions", action="store_true")
-    p.add_argument("--before", help="page before ts_ms.sid.container")
-    p.add_argument("--after", help="page after ts_ms.sid.container")
 
 
 class Filters(drv.Filters):
@@ -165,10 +126,19 @@ class Filters(drv.Filters):
 class ClaudeCodeSearch(drv.SearchDriver):
     name, table, fts_table = NAME, "search_msgs", "msgs_fts"
     sort_cols = ("ts_ms", "sid", "container")
-    group_modes = {"senders": "t.role", "sessions": "t.session_id", "projects": "t.project"}
+    group_modes = {"senders": drv.Group("t.role", "role"),
+                   "sessions": drv.Group("t.session_id", "session_id", "sessions", "label"),
+                   "projects": drv.Group("t.project", "project")}
+    sender_help, cursor_form = "substring of the role: user, assistant or prompt", "ts_ms.sid.container"
     list_flag, in_page_key, page_group = "list_sessions", "sessions_in_page", "session_id"
     hits_noun, browse_hint, Filters = "messages", "give a query or --project/--role/--sender/--since/--until", Filters
-    key_col, container_col = "key", "session_id"
+    key_col, container_col, context_col = "key", "session_id", "session_id"
+
+    def arguments(self, p):
+        p.add_argument("--project", action="append", default=[], help="substring of the working folder")
+        p.add_argument("--role", choices=("user", "assistant", "prompt"))
+        p.add_argument("--session", metavar="ID", help="show the whole session, including subagents, in order")
+        p.add_argument("--list-sessions", action="store_true")
 
     def body(self, q, flt, extra_where=(), extra_params=()):
         # Literal verification must see the same tool summaries as the n-gram index.
@@ -215,35 +185,6 @@ class ClaudeCodeSearch(drv.SearchDriver):
             "text": r["message"], "tools": r["tools"], "snippet": ti.highlight(_body(r), marks, width),
             "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
 
-    def context(self, con, r, n, a, tz):
-        hide = "" if a.include_deleted else " AND held=1"
-        args = (r["session_id"], r["ts_ms"], r["sid"], r["container"], n)
-        before = con.execute("SELECT * FROM msgs WHERE session_id=? AND (ts_ms,sid,container)<(?,?,?)" + hide +
-                             " ORDER BY ts_ms DESC,sid DESC,container DESC LIMIT ?", args).fetchall()
-        after = con.execute("SELECT * FROM msgs WHERE session_id=? AND (ts_ms,sid,container)>(?,?,?)" + hide +
-                            " ORDER BY ts_ms,sid,container LIMIT ?", args).fetchall()
-        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in [*reversed(before), r, *after]]
-
-    def who(self, h):
-        return h["role"]
-
-    def flags(self, h):
-        return ""
-
-    def group_row(self, con, r, mode, tz):
-        col = {"senders": "role", "sessions": "session_id", "projects": "project"}[mode]
-        label = r["gid"]
-        if mode == "sessions":
-            session = con.execute("SELECT label FROM sessions WHERE session_id=?", (r["gid"],)).fetchone()
-            label = (session[0] if session else "") or label
-        return {col: r["gid"], "label": label, "n": r["n"],
-                "first": common.fmt_ts(r["f"], tz, "%Y-%m-%d") if r["f"] else "",
-                "last": common.fmt_ts(r["l"], tz, "%Y-%m-%d") if r["l"] else ""}
-
-    def group_label(self, r, mode):
-        col = {"senders": "role", "sessions": "session_id", "projects": "project"}[mode]
-        return r["label"], col + "=" + r[col]
-
     def list_all(self, con, a, tz):
         flt = self.filters(a, tz)
         body, ps = self.body(None, flt)
@@ -268,6 +209,10 @@ class ClaudeCodeSearch(drv.SearchDriver):
 
 
 DRIVER = ClaudeCodeSearch(SPEC)
+
+
+def add_arguments(p):
+    DRIVER.add_arguments(p)
 
 
 def run(a):

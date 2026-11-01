@@ -362,6 +362,26 @@ class Arguments(unittest.TestCase):
             self.assertIn(f, flags)
 
 
+class AggregateModes(unittest.TestCase):
+    def test_the_literal_follows_the_drivers_of_every_installed_app(self):
+        """The server imports no app, so its mode enum is a literal: count, timeline, then every group mode an
+        installed app's driver declares, in app order (the first app to declare a mode places it)."""
+        import importlib
+        from rawlayer import registry
+        registry.on_path()
+        want = ["count", "timeline"]
+        for name in registry.discover():
+            try:
+                mod = importlib.import_module(name + ".search")
+            except ModuleNotFoundError as e:
+                if e.name != name + ".search":
+                    raise
+                continue                                    # an app without a search source
+            want += [m for m in mod.DRIVER.modes if m not in ("hits", *want)]
+        self.assertGreater(len(want), 2)
+        self.assertEqual(M.AGGREGATE_MODES, tuple(want))
+
+
 class Shaping(unittest.TestCase):
     def env(self, n=30, stale=False):
         rows = [{"id": i, "text": "t" * 400, "snippet": "s" * 50, "context": [{"text": "c" * 400, "snippet": "c"}]}

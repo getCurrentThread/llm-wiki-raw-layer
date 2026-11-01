@@ -49,6 +49,7 @@ import sys
 from collections import Counter
 
 from rawlayer.capture.canon import as_int
+from rawlayer.capture.model import OPS
 from rawlayer.search import common
 from rawlayer.search import search as drv
 from rawlayer.search import textindex as ti
@@ -57,7 +58,6 @@ from rawlayer.search.common import UsageError
 NAME = "mattermost"
 HELP = "search Mattermost posts (index: <data_root>/index/mattermost.sqlite)"
 ORIGIN = "mm_archive"
-OPS = ("put", "absent", "purged")
 _I64 = 2 ** 63
 _KEY = re.compile(r"^mm:(post|file|ch|user|blob):(.+)$", re.S)
 _CURSOR = re.compile(r"^([0-9]{1,15})\.(\S{1,128})$")
@@ -110,8 +110,6 @@ CREATE TABLE channels(
   n_system INTEGER NOT NULL, n_gone INTEGER NOT NULL) WITHOUT ROWID;
 """
 
-TRIGGERS = common.fts_triggers("matter", "matter_fts")
-
 # labels of a row from the user / channel records as they are now (both build modes use exactly this)
 _LABELS = ("sender = coalesce((SELECT u.username FROM users u WHERE u.user_id = matter.user_id), ''), "
            "channel = coalesce((SELECT c.label FROM ch_src c WHERE c.channel_id = matter.channel_id), ''), "
@@ -121,13 +119,9 @@ _LABELS = ("sender = coalesce((SELECT u.username FROM users u WHERE u.user_id = 
 _POST_COLS = ("rev", "seq", "held", "channel_id", "ts", "ts_ms", "user_id", "type", "body_from", "root_id",
               "reply_count", "file_ids", "files", "edited", "deleted", "system", "gone")
 
-_is_int = common.is_int
-_clean = common.clean
-
-
 def _s(v):
     """A stripped str, or '' for anything that is not a str."""
-    return _clean(v.strip()) if isinstance(v, str) else ""
+    return common.clean(v.strip()) if isinstance(v, str) else ""
 
 
 def file_names(native):
@@ -147,7 +141,7 @@ def post_text(native, counts=None):
     msg = native.get("message")
     if isinstance(msg, str):
         if msg.strip():
-            return _clean(msg.strip()), "message"
+            return common.clean(msg.strip()), "message"
     elif msg is not None and counts is not None:
         counts["body_other"] += 1
     parts = []
@@ -165,7 +159,7 @@ def post_text(native, counts=None):
             if isinstance(fld, dict):
                 v = " ".join(str(fld.get(k) or "").strip() for k in ("title", "value")).strip()
                 if v:
-                    parts.append(_clean(v))
+                    parts.append(common.clean(v))
     if parts:
         return "\n".join(parts), "attachment"
     names = file_names(native)
@@ -177,14 +171,14 @@ def post_text(native, counts=None):
 def _ts_ms(ts_ms, create_at):
     """create_at in ms when it is a plausible epoch (2001..2286), else 0."""
     for v in (ts_ms, as_int(create_at)):
-        if _is_int(v) and 1_000_000_000_000 <= v < 10_000_000_000_000:
+        if common.is_int(v) and 1_000_000_000_000 <= v < 10_000_000_000_000:
             return v
     return 0
 
 
 def _ident(v):
     """An id field (channel_id, user_id, root_id): a str, else ''."""
-    return _clean(v) if isinstance(v, str) else ""
+    return common.clean(v) if isinstance(v, str) else ""
 
 
 def _jlist(items):
@@ -213,14 +207,14 @@ class MatterApplier:
             self.counts["bad_record"] += 1
             return
         origin, op, rev, key = rec.get("origin"), rec.get("op"), rec.get("rev"), rec.get("key")
-        if origin != ORIGIN or op not in OPS or not _is_int(rev) or not isinstance(key, str):
+        if origin != ORIGIN or op not in OPS or not common.is_int(rev) or not isinstance(key, str):
             self.counts["bad_record"] += 1
             return
         m = _KEY.fullmatch(key)
         if m is None or rec.get("kind") != m.group(1):
             self.counts["bad_key"] += 1
             return
-        kind, ident = m.group(1), _clean(m.group(2))
+        kind, ident = m.group(1), common.clean(m.group(2))
         if kind == "post":
             self._post(rec, seq, op, rev, ident)
         elif kind == "ch":
@@ -269,7 +263,7 @@ class MatterApplier:
             rc = as_int(native.get("reply_count"))
             rc = rc if rc is not None and 0 <= rc < _I64 else 0
             fids = native.get("file_ids")
-            fids = [_clean(f) for f in fids if isinstance(f, str)] if isinstance(fids, list) else []
+            fids = [common.clean(f) for f in fids if isinstance(f, str)] if isinstance(fids, list) else []
             names = file_names(native)
             edit_at, delete_at = as_int(native.get("edit_at")), as_int(native.get("delete_at"))
             if edit_at is not None and edit_at > 0:
@@ -471,22 +465,6 @@ def _place(h):
 
 
 
-def add_arguments(p):
-    common.add_search_arguments(p, ["hits", "count", "timeline", "senders", "channels"])
-    p.add_argument("--channel", action="append", default=[], metavar="C",
-                   help="substring of the channel label or URL name, or an exact channel id (repeat for several)")
-    p.add_argument("--team", help="substring of the team name")
-    p.add_argument("--include-system", action="store_true",
-                   help="also show system posts (joins, leaves, header changes; hidden by default)")
-    p.add_argument("--thread", metavar="POST_ID",
-                   help="the whole thread containing this post: the root, then every reply in time order "
-                        "(query and selection filters do not apply)")
-    p.add_argument("--before", metavar="CUR", help="browse: the page older than this cursor (<ts_ms>.<post_id>)")
-    p.add_argument("--after", metavar="CUR", help="browse: the page newer than this cursor")
-    p.add_argument("--list-channels", action="store_true",
-                   help="channels by post count (with --channel / --team: matching ones)")
-
-
 class _Filters(drv.Filters):
     range_col = "ts_ms"
     range_scale = 1000
@@ -534,7 +512,11 @@ class MatterSearch(drv.SearchDriver):
     table = "matter"
     fts_table = "matter_fts"
     sort_cols = ("ts_ms", "post_id")
-    group_modes = {"senders": "t.user_id", "channels": "t.channel_id"}
+    group_modes = {"senders": drv.Group("t.user_id", "user_id", "users", "username",
+                                        extra=(("name", "name"), ("nickname", "nickname")), fallback=(None, "?")),
+                   "channels": drv.Group("t.channel_id", "channel_id", "channels", "label",
+                                         extra=(("team", "team"),), fallback=(None, "?"))}
+    cursor_form = "<ts_ms>.<post_id>"
     list_flag = "list_channels"
     in_page_key = "channels_in_page"
     page_group = "channel_id"
@@ -543,6 +525,18 @@ class MatterSearch(drv.SearchDriver):
                    "or --thread / --list-channels")
     Filters = _Filters
     key_col, container_col, container_src, chunk_gap_s = "post_id", "channel_id", "ch_src", 1800
+
+    def arguments(self, p):
+        p.add_argument("--channel", action="append", default=[], metavar="C",
+                       help="substring of the channel label or URL name, or an exact channel id (repeat for several)")
+        p.add_argument("--team", help="substring of the team name")
+        p.add_argument("--include-system", action="store_true",
+                       help="also show system posts (joins, leaves, header changes; hidden by default)")
+        p.add_argument("--thread", metavar="POST_ID",
+                       help="the whole thread containing this post: the root, then every reply in time order "
+                            "(query and selection filters do not apply)")
+        p.add_argument("--list-channels", action="store_true",
+                       help="channels by post count (with --channel / --team: matching ones)")
 
     def chunk_units(self, con, container):
         rows = con.execute("SELECT post_id, ts, team, channel, sender, user_id, message FROM matter WHERE channel_id=? "
@@ -613,17 +607,6 @@ class MatterSearch(drv.SearchDriver):
             out += f" [+{len(files)} file{'s' if len(files) > 1 else ''}]"
         return out
 
-    def group_row(self, con, r, mode, tz):
-        span = {"first": common.fmt_ts(r["f"], tz, "%Y-%m-%d") if r["f"] else "",
-                "last": common.fmt_ts(r["l"], tz, "%Y-%m-%d") if r["l"] else ""}
-        if mode == "senders":
-            u = con.execute("SELECT username, name, nickname FROM users WHERE user_id=?", (r["gid"],)).fetchone()
-            return {"user_id": r["gid"], "label": (u["username"] if u else "") or r["gid"] or "?",
-                    "name": u["name"] if u else "", "nickname": u["nickname"] if u else "", "n": r["n"], **span}
-        c = con.execute("SELECT label, team FROM channels WHERE channel_id=?", (r["gid"],)).fetchone()
-        return {"channel_id": r["gid"], "label": (c["label"] if c else "") or r["gid"] or "?",
-                "team": c["team"] if c else "", "n": r["n"], **span}
-
     def group_label(self, r, mode):
         if mode == "senders":
             extra = " / ".join(x for x in (r["name"], r["nickname"]) if x)
@@ -653,8 +636,7 @@ class MatterSearch(drv.SearchDriver):
              "team": r["team"], "type": r["ch_type"], "n": r["n"], "senders": r["senders"],
              "n_deleted": r["n_deleted"],
              "n_system": r["n_system"], "n_gone": r["n_gone"],
-             "first": common.fmt_ts(r["first_ts"], tz, "%Y-%m-%d") if r["first_ts"] else "",
-             "last": common.fmt_ts(r["last_ts"], tz, "%Y-%m-%d") if r["last_ts"] else ""} for r in rows]}
+             **common.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
 
     def extra_result(self, con, a, extra, query, tz):
         """The thread holding post a.thread: its root first, then every reply by (create_at, post_id). Selection
@@ -761,6 +743,10 @@ class MatterSearch(drv.SearchDriver):
 
 
 DRIVER = MatterSearch(SPEC)
+
+
+def add_arguments(p):
+    DRIVER.add_arguments(p)
 
 
 def run(a):

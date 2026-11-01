@@ -8,13 +8,15 @@ instance; the fold/index half stays where it was, in the module's SourceIndex su
       Filters, hit(), context(), ...           # the source's row shape
   DRIVER = KakaoSearch(SPEC)                   # SPEC: the module's SourceIndex
 
-What the base owns is what the apps had as copies: the run() skeleton (argument checks, query build, keyset
-cursor, dispatch, the JSON envelope), the hits/browse/aggregate queries, the time-window and --include-deleted
-filters, and the count/timeline/senders text output. An app overrides the hooks its row model needs and adds
-its own dispatch (mattermost's --thread) through check_args/extra_result."""
+What the base owns is what the apps had as copies: the shared arguments (--mode from group_modes, --before and
+--after), the run() skeleton (argument checks, query build, keyset cursor, dispatch, the JSON envelope), the
+hits/browse/aggregate queries, the time-window and --include-deleted filters, the group rows of the aggregate
+modes (group_modes: one Group per mode) and the count/timeline/group text output. An app overrides the hooks its
+row model needs and adds its own dispatch (mattermost's --thread) through check_args/extra_result."""
 import json
 import sqlite3
 import sys
+from typing import NamedTuple
 
 from . import common
 from . import dense
@@ -55,13 +57,30 @@ class Filters:
                 "include_deleted": bool(a.include_deleted)}
 
 
+class Group(NamedTuple):
+    """One aggregate mode (--mode senders / rooms / ...): what its rows group by, and how a group is named."""
+    col: str                         # the grouping column of the hits query, e.g. "t.author_id"
+    key: str                         # the group's id field in a JSON row, e.g. "author_id"
+    table: str = ""                  # the table that names a group ("" = the id is its own label)
+    label: str = ""                  # its label column
+    id_col: str = ""                 # its id column (default: key)
+    extra: tuple = ()                # more columns of it shown on the row, as (JSON key, column) pairs
+    fallback: tuple = (None,)        # an empty label becomes the first of these that is not empty (None: the id)
+    keep_empty: bool = False         # an existing row's empty label stays; the fallback is for a missing row only
+    tag: str = ""                    # the text output shows "<tag>=<id>" (default: key)
+
+
 class SearchDriver:
     """Base of an app's search command. Class attributes are the source's facts; the rest is hooks."""
     name = ""                        # the source name: headers, the JSON envelope's "source"
     table = ""                       # the content table (aliased t)
     fts_table = ""                   # its FTS5 shadow table
     sort_cols = ()                   # the keyset sort key, outermost first; the cursor joins a row's values
-    group_modes = {}                 # mode -> id column, e.g. {"senders": "t.author_id", "rooms": "t.chat_id"}
+    group_modes = {}                 # mode -> Group; the aggregate modes of --mode, after hits / count / timeline
+    sender_help = "substring of the sender name (or an exact user id)"       # what --sender matches here
+    cursor_form = ""                 # the shape of a --before/--after cursor, for --help: "<ts_ms>.<post_id>"
+    context_col = ""                 # --context shows the neighbours of a hit in this column (a session, a thread)
+    Filters = Filters                # the WHERE parts of --since / --until / --include-deleted; an app subclasses it
     list_flag = ""                   # the --list-... argparse attr, "" when the source has no list mode
     in_page_key = ""                 # browse JSON key: how many groups the page spans (rooms_in_page, ...)
     page_group = ""                  # the hit field that names the group (chat_id / channel_id)
@@ -77,7 +96,23 @@ class SearchDriver:
     def __init__(self, spec):
         self.spec = spec             # the module's SourceIndex (open_search/warn_if_stale stamp against it)
 
+    @property
+    def modes(self):
+        """The --mode choices: hits, count, timeline, then the source's group modes."""
+        return ("hits", "count", "timeline", *self.group_modes)
+
     # ---- arguments and validation
+    def add_arguments(self, p):
+        """The search subcommand's arguments: the shared ones, the source's own (arguments()), then the cursors."""
+        common.add_search_arguments(p, self.modes, sender_help=self.sender_help)
+        self.arguments(p)
+        p.add_argument("--before", metavar="CURSOR",
+                       help=f"browse: the page older than this cursor ({self.cursor_form}, printed with each page)")
+        p.add_argument("--after", metavar="CURSOR", help="browse: the page newer than this cursor")
+
+    def arguments(self, p):
+        """The source's own flags (its label filters, list and extra modes)."""
+
     def check_args(self, a):
         """The app's own incompatibilities (UsageError) and its extra dispatch mode: None, or a name
         extra_result() handles (mattermost: 'thread')."""
@@ -96,25 +131,37 @@ class SearchDriver:
         raise NotImplementedError
 
     def context(self, con, r, n, a, tz):
-        """n rows before and after a hit (--context), the hit itself marked."""
-        raise NotImplementedError
+        """n rows before and after a hit (--context) within its context_col by the sort key, the hit itself marked
+        (a source whose neighbours are not a window of its sort key writes its own)."""
+        cols, marks = ", ".join(self.sort_cols), ", ".join("?" for _ in self.sort_cols)
+        hide = "" if a.include_deleted else " AND " + self.Filters.deleted_sql
+        near = (f"SELECT t.* FROM {self.table} t WHERE t.{self.context_col}=? AND ({cols}) %s ({marks}){hide} "
+                f"ORDER BY %s LIMIT ?")
+        args = [r[self.context_col], *(r[c] for c in self.sort_cols), n]
+        before = con.execute(near % ("<", ", ".join(f"t.{c} DESC" for c in self.sort_cols)), args).fetchall()
+        after = con.execute(near % (">", ", ".join(f"t.{c}" for c in self.sort_cols)), args).fetchall()
+        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in [*reversed(before), r, *after]]
 
     def placeholder(self, r):
         raise NotImplementedError
 
-    def who(self, row):
-        raise NotImplementedError
-
-    def flags(self, h):
-        raise NotImplementedError
-
     def group_row(self, con, r, mode, tz):
-        """One --mode senders/rooms(channels) row: the label lookup of a (gid, n, first, last) group."""
-        raise NotImplementedError
+        """One --mode senders/rooms(channels) row of a (gid, n, first, last) group, named from its Group's table."""
+        g, gid = self.group_modes[mode], r["gid"]
+        found = con.execute(f"SELECT {', '.join([g.label, *(c for _, c in g.extra)])} FROM {g.table} "
+                            f"WHERE {g.id_col or g.key}=?", (gid,)).fetchone() if g.table else None
+        label = found[0] if found else None
+        if label is None or (not label and not g.keep_empty):
+            for label in (gid if f is None else f for f in g.fallback):
+                if label:
+                    break
+        return {g.key: gid, "label": label, **{k: found[c] if found else "" for k, c in g.extra}, "n": r["n"],
+                **common.day_span(r["f"], r["l"], tz)}
 
     def group_label(self, r, mode):
         """(label, ident) of a group row for the text output."""
-        raise NotImplementedError
+        g = self.group_modes[mode]
+        return r["label"], f"{g.tag or g.key}={r[g.key]}"
 
     def list_all(self, con, a, tz):
         """The --list-... mode."""
@@ -358,7 +405,7 @@ class SearchDriver:
                                f"GROUP BY bucket ORDER BY bucket", params).fetchall()
             kept, omitted = common.clip_buckets([{"bucket": r["bucket"], "n": r["n"]} for r in rows], a.limit)
             return {"mode": "timeline", "total": total, "rows": kept, "omitted_buckets": omitted}
-        col = self.group_modes[a.mode]
+        col = self.group_modes[a.mode].col
         rows = con.execute(f"SELECT {col} AS gid, count(*) AS n, MIN(CASE WHEN t.ts > 0 THEN t.ts END) AS f, "
                            f"MAX(CASE WHEN t.ts > 0 THEN t.ts END) AS l {body} GROUP BY {col} ORDER BY n DESC, gid "
                            f"LIMIT ?", params + [a.limit]).fetchall()
