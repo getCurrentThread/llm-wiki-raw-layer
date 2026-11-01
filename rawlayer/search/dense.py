@@ -63,8 +63,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import common, textindex as ti
-from .common import Busy, UsageError
+from . import fts, index
+from .index import Busy, UsageError
 
 VEC_VERSION = "v0.1.9"
 VEC_SHA256 = "fcf98662a7ad9dce394b96a88f91032047823831b951c76636787c312a6476e6"   # vec0.dll, windows-x86_64
@@ -167,7 +167,7 @@ def _server_message(e):
         msg = json.loads(e.read(2048)).get("error")
     except (OSError, ValueError, AttributeError, http.client.HTTPException):
         return ""
-    return f": {common.flat(msg)[:160]}" if isinstance(msg, str) and msg.strip() else ""
+    return f": {index.flat(msg)[:160]}" if isinstance(msg, str) and msg.strip() else ""
 
 
 def embed_retrying(emb, texts):
@@ -256,7 +256,7 @@ STORE = Vec0
 
 
 def sidecar_path(data_root, name):
-    return common.index_dir(data_root) / (name + ".vec.sqlite")
+    return index.index_dir(data_root) / (name + ".vec.sqlite")
 
 
 def chunker_id(drv):
@@ -276,19 +276,19 @@ def _in(n):
 
 def pack(label, units, gap_s=None, tz=None):
     """One container's chunks: [(rec_keys, ts_lo, ts_hi, text)] (see the module docstring)."""
-    tz = tz or common.parse_tz(common.DEFAULT_TZ)
-    label = label if len(label) <= LABEL_CAP else common.flat(label)[:LABEL_CAP]
+    tz = tz or index.parse_tz(index.DEFAULT_TZ)
+    label = label if len(label) <= LABEL_CAP else index.flat(label)[:LABEL_CAP]
     out, cur, prev = [], [], None
 
     def emit():
         keys = list(dict.fromkeys(k for k, _, _ in cur))
         tss = [t for _, t, _ in cur if t > 0]
         lo, hi = (min(tss), max(tss)) if tss else (0, 0)
-        head = f"{label} | {common.fmt_ts(lo, tz, '%Y-%m-%d')}" if lo else label
+        head = f"{label} | {index.fmt_ts(lo, tz, '%Y-%m-%d')}" if lo else label
         out.append((keys, lo, hi, head + "\n" + "\n".join(p for _, _, p in cur)))
 
     for key, ts, text, brk in units:
-        text = common.clean(text or "").strip()
+        text = index.clean(text or "").strip()
         if not text:
             continue
         pieces = [text[i:i + CAP] for i in range(0, len(text) - OVERLAP, CAP - OVERLAP)] if len(text) > CAP else [text]
@@ -341,11 +341,11 @@ def embed(data_root, drv, a, clock=time.time, progress=None):
         raise UsageError(f"{drv.name} has no chunk hooks (SearchDriver.container_col / chunk_units)")
     t0 = clock()
     path = sidecar_path(data_root, drv.name)
-    with common.IndexLock(common.index_dir(data_root), drv.name + ".vec"):
+    with index.IndexLock(index.index_dir(data_root), drv.name + ".vec"):
         if a.rebuild and not a.dry_run:
             for p in (path, path.with_name(path.name + "-journal")):
                 p.unlink(missing_ok=True)
-        side = common.open_ro(path) if path.exists() and a.dry_run else common._writer(path) if not a.dry_run else None
+        side = index.open_ro(path) if path.exists() and a.dry_run else index._writer(path) if not a.dry_run else None
         try:
             if side is not None:
                 STORE.load(side)
@@ -358,7 +358,7 @@ def embed(data_root, drv, a, clock=time.time, progress=None):
             if old and any(old.get(k) != v for k, v in want_stamp.items()):
                 raise UsageError(f"the {drv.name} embeddings were made with model={old.get('model')} dims={old.get('dims')} "
                                  f"vec={old.get('vec')}: pass --rebuild to replace them")
-            con, mmeta, _fresh = common.open_search(data_root, drv.spec)
+            con, mmeta, _fresh = index.open_search(data_root, drv.spec)
             try:
                 stamp = json.dumps(drv.spec.stamp(), sort_keys=True)
                 # another chunker, index version or rebuilt index (its seqs may start over) re-chunks every
@@ -423,7 +423,7 @@ def embed(data_root, drv, a, clock=time.time, progress=None):
 
 
 def _parser():
-    ap = common.Parser(prog="manage.py embed", description="Embed an app's index into its dense sidecar "
+    ap = index.Parser(prog="manage.py embed", description="Embed an app's index into its dense sidecar "
                        "(<data_root>/index/<app>.vec.sqlite) for search --hybrid. Needs Ollama on this machine and "
                        "sqlite-vec (llm.md 12).")
     ap.add_argument("app")
@@ -443,7 +443,7 @@ def main(argv):
     """manage.py embed <app> ...: 0 ok (also with chunks left by --limit) | 2 usage or no sqlite-vec | 75 busy or
     the embedding server failed (retry later; what was embedded is kept) | 1 error."""
     from .. import registry  # noqa: PLC0415 -- the app modules import this module
-    common.setup_stdio()
+    index.setup_stdio()
     try:
         a = _parser().parse_args(argv)
         if a.limit < 0 or (a.dims is not None and not 0 < a.dims <= 8192):
@@ -458,26 +458,26 @@ def main(argv):
                 last[0] = time.time()
                 print(f"embed: {n}/{total} chunks", file=sys.stderr, flush=True)
 
-        rep = embed(common.load_data_root(a.config), mod.DRIVER, a, progress=progress)
+        rep = embed(index.load_data_root(a.config), mod.DRIVER, a, progress=progress)
     except UsageError as e:
         print(f"embed: {e}", file=sys.stderr)
-        return common.EXIT_USAGE
+        return index.EXIT_USAGE
     except Unavailable as e:
         print(f"embed: {e}", file=sys.stderr)
-        return common.EXIT_USAGE
+        return index.EXIT_USAGE
     except Busy:
         print("embed: another embed run holds the lock (or the index is being rebuilt)", file=sys.stderr)
-        return common.EXIT_BUSY
+        return index.EXIT_BUSY
     except EmbedError as e:
         print(f"embed: {e}; what was embedded is kept, run again to resume", file=sys.stderr)
-        return common.EXIT_BUSY
+        return index.EXIT_BUSY
     except KeyboardInterrupt:
         return 130
     except Exception as e:  # noqa: BLE001
         print(f"embed: error {type(e).__name__}: {e}", file=sys.stderr)
-        return common.EXIT_ERR
-    print(common.dumps(rep) if a.json else "embed: " + " ".join(f"{k}={v}" for k, v in rep.items()))
-    return common.EXIT_OK
+        return index.EXIT_ERR
+    print(index.dumps(rep) if a.json else "embed: " + " ".join(f"{k}={v}" for k, v in rep.items()))
+    return index.EXIT_OK
 
 
 # ------------------------------------------------------------------------------------------------ hybrid search
@@ -504,7 +504,7 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
     try:
         if not path.exists():
             raise Unavailable(f"no embeddings yet -- run: python -s -B manage.py embed {drv.name}")
-        side = common.open_ro(path)
+        side = index.open_ro(path)
         try:
             STORE.load(side)
             meta = _meta(side)
@@ -564,7 +564,7 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
         return CC_ALPHA * s + (1 - CC_ALPHA) * kw
 
     order = sorted(units.items(), key=lambda u: (-score(u[1]), u[1]["kw"] or KW_N + 1, u[1]["sem"] or SEM_N + 1))
-    qtok = set(ti.ng_tokens(_query_text(query))) - {ti.SEP}
+    qtok = set(fts.ng_tokens(_query_text(query))) - {fts.SEP}
     out, shown, kw_set = [], set(), set(kw_keys)
     for (kind, ident), d in order:
         if len(out) >= a.limit:

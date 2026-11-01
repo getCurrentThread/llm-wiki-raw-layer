@@ -2,7 +2,7 @@ import json
 import sqlite3
 import unittest
 from contextlib import closing
-from rawlayer.search import common
+from rawlayer.search import index
 from notion.search import SPEC, DRIVER, NotionApplier
 from .fixtures import Fixture, PID, BID, UID, OTHER, page, block
 from tests.core import appfix as h
@@ -13,7 +13,7 @@ class SearchTests(unittest.TestCase):
         self.fx = Fixture()
         self.addCleanup(h.force_rmtree, self.fx.base)
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
 
     def query(self, *args):
         rc, out, err = h.run_rawsearch(["notion", "--config", self.fx.config_path, "--json", *args])
@@ -21,14 +21,14 @@ class SearchTests(unittest.TestCase):
         return json.loads(out)
 
     def snapshot(self):
-        with closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
+        with closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
                     for t in ("nrows", "page_src", "page_order", "ds_src", "users", "pages", "counts")}
 
     def test_incremental_equals_rebuild_rounds_order_trash_restore_rename(self):
         edited = {BID: block(text="edited deployment"), OTHER: block(OTHER, "inserted")}
         h.rounds(self.fx, [page(), page(blocks=edited), page(blocks=edited, order=[[OTHER, 0, None], [BID, 1, OTHER]])])
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         for trash in (True, False):
             value = page(blocks={BID: block(text="edited deployment"), OTHER: block(OTHER, "inserted")},
                          order=[[OTHER, 0, None], [BID, 1, OTHER]])
@@ -36,9 +36,9 @@ class SearchTests(unittest.TestCase):
             self.fx.write(value)
             self.fx.save("users.json", {UID: {"id": UID, "name": "Renamed"}})
             self.assertEqual(h.capture(self.fx), 0)
-            common.update(self.fx.data_root, SPEC)
+            index.update(self.fx.data_root, SPEC)
             incremental = self.snapshot()
-            common.update(self.fx.data_root, SPEC, rebuild=True)
+            index.update(self.fx.data_root, SPEC, rebuild=True)
             self.assertEqual(incremental, self.snapshot())
         result = self.query("--page-text", PID)
         self.assertEqual([r["native_id"] for r in result["rows"] if r["kind"] == "block"], [OTHER, BID])
@@ -59,7 +59,7 @@ class SearchTests(unittest.TestCase):
         value["page"]["parent"] = {"type": "page_id", "page_id": PID}
         self.fx.write(value)
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         result = self.query("deployment", "--page", OTHER, "--context", "1")
         self.assertEqual(len(result["rows"][0]["context"]), 2)
         result = self.query("--page-text", OTHER)
@@ -71,12 +71,12 @@ class SearchTests(unittest.TestCase):
     def test_deleted_missing_order_and_gone(self):
         self.fx.write(page(order=[]))
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         self.assertEqual(self.query("deployment")["total"], 0)
         self.assertEqual(self.query("deployment", "--include-deleted")["total"], 1)
         self.fx.write(page(_gone_at="2024-10-02T00:00:00Z"))
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         self.assertEqual(self.query("--list-pages")["total"], 0)
         self.assertEqual(self.query("--list-pages", "--include-deleted")["total"], 1)
 
@@ -91,9 +91,9 @@ class SearchTests(unittest.TestCase):
     def test_page_title_match_ranks_first_and_block_type(self):
         self.fx.write(page(title="예산 계획", blocks={BID: block(text="예산 예산 예산 정리")}))
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         self.assertEqual([r["kind"] for r in self.query("예산")["rows"]], ["page", "block"])
-        with closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
+        with closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
             self.assertEqual(con.execute("SELECT kind, btype, tng != '' FROM nrows ORDER BY kind").fetchall(),
                              [("block", "paragraph", 0), ("page", "", 1)])
 
@@ -102,8 +102,8 @@ class SearchTests(unittest.TestCase):
         heading["heading_2"] = heading.pop("paragraph")
         self.fx.write(page(blocks={OTHER: heading, BID: block()}, order=[[OTHER, 0, None], [BID, 1, OTHER]]))
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
-        con, _meta, _fresh = common.open_search(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
+        con, _meta, _fresh = index.open_search(self.fx.data_root, SPEC)
         self.addCleanup(con.close)
         self.assertEqual(DRIVER.changed_containers(con, 0), [PID])
         label, units = DRIVER.chunk_units(con, PID)
@@ -131,7 +131,7 @@ class SearchTests(unittest.TestCase):
         for full in (False, True):
             con = sqlite3.connect(":memory:")
             self.addCleanup(con.close)
-            con.executescript(common.META_DDL)
+            con.executescript(index.META_DDL)
             SPEC.create_tables(con)
             app = NotionApplier(con, full)
             for seq, rec in enumerate(recs, 1):

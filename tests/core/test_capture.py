@@ -11,7 +11,7 @@ from unittest import mock
 
 from rawlayer.management.commands import capture
 from rawlayer.capture import paths
-from rawlayer.search import common
+from rawlayer.search import index
 from tests.core import toyfix as T
 from tests.core.toyapp import search as toy
 from tests.core.toyapp2 import search as toy2
@@ -123,10 +123,10 @@ class TestIndexAfterSkipped(T.ToyCase):
             return capture.main(["toy", "--config", str(self.fx.config_path)])
 
     def heads(self):
-        ledger_seq = len(common.LedgerView(self.fx.data_root).manifests())
+        ledger_seq = len(index.LedgerView(self.fx.data_root).manifests())
         out = {}
         for spec in (toy.SPEC, toy2.SPEC):
-            con = common.open_ro(common.index_path(self.fx.data_root, spec))
+            con = index.open_ro(index.index_path(self.fx.data_root, spec))
             try:
                 out[spec.name] = int(dict(con.execute("SELECT k, v FROM meta").fetchall())["head_seq"])
             finally:

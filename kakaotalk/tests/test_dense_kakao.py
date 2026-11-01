@@ -15,7 +15,7 @@ import threading
 import unittest
 from unittest import mock
 
-from rawlayer.search import common, dense, textindex as ti
+from rawlayer.search import dense, fts, index
 from kakaotalk import search as kakao
 from kakaotalk.tests import ledgerfix as L
 from kakaotalk.tests.fixtures import Fixture
@@ -28,8 +28,8 @@ T0 = L.kst(2024, 10, 1, 9)
 def fake_vector(text, dims=DIMS):
     """A deterministic bag of bigrams: texts that share bigrams point the same way."""
     v = [0.0] * dims
-    for tok in ti.ng_tokens(text):
-        if tok != ti.SEP:
+    for tok in fts.ng_tokens(text):
+        if tok != fts.SEP:
             v[int(hashlib.md5(tok.encode()).hexdigest(), 16) % dims] += 1.0
     return v if any(v) else [1.0] + [0.0] * (dims - 1)
 
@@ -122,7 +122,7 @@ def build(rounds=1):
 
 
 def parser():
-    p = common.Parser(prog="manage.py search kakaotalk")
+    p = index.Parser(prog="manage.py search kakaotalk")
     kakao.add_arguments(p)
     return p
 
@@ -131,8 +131,8 @@ class FixtureCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fx = build()
-        cls.con, _meta, _fresh = common.open_search(cls.fx.data_root, kakao.SPEC)
-        cls.tz = common.parse_tz(common.DEFAULT_TZ)
+        cls.con, _meta, _fresh = index.open_search(cls.fx.data_root, kakao.SPEC)
+        cls.tz = index.parse_tz(index.DEFAULT_TZ)
 
     @classmethod
     def tearDownClass(cls):
@@ -181,7 +181,7 @@ class RowsByKey(FixtureCase):
 
     def test_round_trip_honours_room_sender_and_excluded_term(self):
         keys = [u[0] for c in (ROOM, OTHER, NAMED) for u in kakao.DRIVER.chunk_units(self.con, c)[1]]
-        q = ti.build_fts_query("대화 -두번째")
+        q = fts.build_fts_query("대화 -두번째")
         flt = kakao.DRIVER.Filters(self.args(), self.tz)
         self.assertEqual(sorted(kakao.DRIVER.rows_by_key(self.con, keys, q, flt)),
                          sorted(set(keys) - {f"kakao:11:msg:2"}))
@@ -201,7 +201,7 @@ class ChangedContainers(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fx = build(rounds=2)
-        cls.con, _meta, _fresh = common.open_search(cls.fx.data_root, kakao.SPEC)
+        cls.con, _meta, _fresh = index.open_search(cls.fx.data_root, kakao.SPEC)
 
     @classmethod
     def tearDownClass(cls):

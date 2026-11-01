@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Korean query normalization: a user query rewritten into another query of the same language (textindex's), so
-that what it matches is still defined by textindex's truth -- this module only changes the string. Standard library
+"""Korean query normalization: a user query rewritten into another query of the same language (fts's), so
+that what it matches is still defined by fts's truth -- this module only changes the string. Standard library
 only; it replaces a morphological analyser (the RAG tutorial's Kiwi) on the query side alone.
 
 The index matches Korean as substrings (bigram phrases), so a term's stem matches every form that contains it:
@@ -15,14 +15,14 @@ cutting a particle or an ending off a term only widens what it finds, and nothin
                they are written out) the stems alone are used. Excluded terms are left as typed (widening them
                would hide more rows) and go last.
   relax(q)     the positive terms OR-ed (a zero-hit fallback), exclusions kept; a term that can only be matched
-               literally (quoted, one character, punctuation) is dropped, since textindex refuses literal terms
+               literally (quoted, one character, punctuation) is dropped, since fts refuses literal terms
                next to OR. None when that changes nothing: one term, or already all OR-ed.
 
 Both return a query whose matches are a superset of the original's."""
 import itertools
 import math
 
-from . import textindex as ti
+from . import fts
 
 PARTICLES = ("에서는", "으로는", "에게서", "에서", "에게", "한테", "으로", "까지", "부터", "보다", "처럼", "이랑", "하고",
              "에는", "에도", "이나", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만", "와", "과", "로", "랑")
@@ -92,7 +92,7 @@ def _show(op, is_phrase, text):
 def _parts(query):
     """([[(is_phrase, text), ...] per OR-group], [excluded term strings]) of a query."""
     groups, excluded = [[]], []
-    for op, is_phrase, text in ti._split_terms(query):
+    for op, is_phrase, text in fts._split_terms(query):
         if op == "NOT":
             excluded.append(_show(op, is_phrase, text))
             continue
@@ -136,7 +136,7 @@ def relax(query):
     for g in groups:
         for is_phrase, text in g:
             bare = text[:-1] if not is_phrase and text.endswith("*") else text     # a prefix term is not literal
-            if is_phrase or ti._loses_characters(bare) or ti.is_weak_term(bare):
+            if is_phrase or fts._loses_characters(bare) or fts.is_weak_term(bare):
                 dropped = True
             elif text not in terms:
                 terms.append(text)

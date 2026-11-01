@@ -1,5 +1,5 @@
 """Ledger-only Claude Code FTS5 index and session search."""
-from rawlayer.search import common, search as drv, textindex as ti
+from rawlayer.search import driver as drv, fts, index
 from .keys import cc_id, iso_ms
 
 NAME = "claudecode"
@@ -21,11 +21,11 @@ CREATE VIEW search_msgs AS SELECT *, message || char(10) || tools AS search_text
 
 
 def _s(value):
-    return common.clean(value) if isinstance(value, str) else ""
+    return index.clean(value) if isinstance(value, str) else ""
 
 
 def tool_text(value):
-    return "\n".join(f"{common.flat(_s(v.get('name')))}: {common.flat(_s(v.get('summary')))}"
+    return "\n".join(f"{index.flat(_s(v.get('name')))}: {index.flat(_s(v.get('summary')))}"
                      for v in value if isinstance(v, dict)) \
         if isinstance(value, list) else ""
 
@@ -34,7 +34,7 @@ def _body(row):
     return "\n".join(v for v in (row["message"], row["tools"]) if v)
 
 
-class ClaudeCodeApplier(common.SimpleApplier):
+class ClaudeCodeApplier(index.SimpleApplier):
     origin = ORIGIN
 
     def record(self, rec, seq):
@@ -64,14 +64,14 @@ class ClaudeCodeApplier(common.SimpleApplier):
             if ts_ms is None or not -(2 ** 63) <= ts_ms < 2 ** 63:
                 self.counts["ts_unknown"] += 1
                 return
-            if not common.is_int(sid) or not 0 <= sid < 2 ** 63 or cc_id(n.get("session")) is None \
+            if not index.is_int(sid) or not 0 <= sid < 2 ** 63 or cc_id(n.get("session")) is None \
                     or n.get("uuid") != parts[3]:
                 self.counts["bad_native"] += 1
                 return
             text, tools = _s(n.get("text")), tool_text(n.get("tools"))
             values = (key, parts[2], _s(n["session"]), _s(n.get("agent")), parts[3], sid, rev, seq, 1,
                       ts_ms // 1000, ts_ms, _s(n.get("role")), _s(n.get("cwd")), _s(n.get("branch")),
-                      _s(n.get("model")), tools, text, ti.ng_text("\n".join((text, tools))))
+                      _s(n.get("model")), tools, text, fts.ng_text("\n".join((text, tools))))
             self.con.execute("""INSERT INTO msgs(key,container,session_id,agent,uuid,sid,rev,seq,held,ts,ts_ms,
              role,project,branch,model,tools,message,ng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(key) DO UPDATE SET container=excluded.container,session_id=excluded.session_id,
@@ -90,7 +90,7 @@ class ClaudeCodeApplier(common.SimpleApplier):
          FROM msgs m WHERE held=1 GROUP BY session_id""")
 
 
-class ClaudeCodeIndex(common.SimpleIndex):
+class ClaudeCodeIndex(index.SimpleIndex):
     name = NAME
     schema_version = extractor_version = "claudecode-1"
     schema, table, applier_class = SCHEMA, "msgs", ClaudeCodeApplier
@@ -108,14 +108,14 @@ class Filters(drv.Filters):
         super().__init__(a, tz)
         self.selector |= bool(a.project or a.role)
         if a.project:
-            clauses = [common.like("t.project", value) for value in a.project]
+            clauses = [index.like("t.project", value) for value in a.project]
             self.where.append("(" + " OR ".join(sql for sql, _ in clauses) + ")")
             self.params += [p for _, ps in clauses for p in ps]
         if a.role:
             self.where.append("t.role=?")
             self.params.append(a.role)
         if a.sender:
-            sql, ps = common.like("t.role", a.sender)
+            sql, ps = index.like("t.role", a.sender)
             self.where.append(sql)
             self.params += ps
 
@@ -145,7 +145,7 @@ class ClaudeCodeSearch(drv.SearchDriver):
         if q is None:
             frm, where, params = f"{self.table} t", [], []
         else:
-            frm, where, params = ti.sql_parts(q, self.table, self.fts_table, text_col="search_text")
+            frm, where, params = fts.sql_parts(q, self.table, self.fts_table, text_col="search_text")
         where = list(where) + flt.where + list(extra_where)
         return f"FROM {frm} WHERE " + (" AND ".join(where) or "1"), list(params) + flt.params + list(extra_params)
 
@@ -168,22 +168,22 @@ class ClaudeCodeSearch(drv.SearchDriver):
     def check_args(self, a):
         if a.session is not None:
             if cc_id(a.session) is None or a.list_sessions:
-                raise common.UsageError("--session needs a valid id and cannot be combined with --list-sessions")
+                raise index.UsageError("--session needs a valid id and cannot be combined with --list-sessions")
             return "session"
 
     def parse_cursor(self, value, flag, before=True):
         parts = (value or "").split(".", 2)
         if len(parts) != 3 or not all(len(p) <= 19 and p.isascii() and p.isdecimal() for p in parts[:2]) \
                 or cc_id(parts[2]) is None:
-            raise common.UsageError(f"{flag}: expected ts_ms.sid.container")
+            raise index.UsageError(f"{flag}: expected ts_ms.sid.container")
         if any(int(p) >= 2 ** 63 for p in parts[:2]):
-            raise common.UsageError(f"{flag}: cursor out of range")
+            raise index.UsageError(f"{flag}: cursor out of range")
         return int(parts[0]), int(parts[1]), parts[2]
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "session_id", "agent", "role", "project", "branch", "model", "ts", "ts_ms")} | {
-            "text": r["message"], "tools": r["tools"], "snippet": ti.highlight(_body(r), marks, width),
-            "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
+            "text": r["message"], "tools": r["tools"], "snippet": fts.highlight(_body(r), marks, width),
+            "date": index.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
 
     def list_all(self, con, a, tz):
         flt = self.filters(a, tz)
@@ -200,9 +200,9 @@ class ClaudeCodeSearch(drv.SearchDriver):
         rows = con.execute("SELECT * FROM msgs WHERE session_id=?" + hide + " ORDER BY ts_ms,sid,container",
                            (a.session,)).fetchall()
         if not rows:
-            raise common.UsageError("session not in Claude Code index")
+            raise index.UsageError("session not in Claude Code index")
         if query or a.project or a.role or a.sender or a.since or a.until or a.before or a.after or a.mode != "hits":
-            common.note("query and selection filters are not applied to --session")
+            index.note("query and selection filters are not applied to --session")
         return {"mode": "session", "session_id": a.session, "total": len(rows),
                 "rows": [self.hit(r, tz, [], a.width) for r in rows]}
 

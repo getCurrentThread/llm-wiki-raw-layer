@@ -345,7 +345,7 @@ punctuation still separate, and `가나다` still does not match `가나 나다`
 
 In addition, excluded terms use the same match rule as positive ones (`-api` no longer drops messages
 containing `rapid`), and `OR` next to an excluded term is refused instead of being silently ignored. A
-property test in `tests/core/test_textindex.py` checks the index against an independent model of these rules on
+property test in `tests/core/test_fts.py` checks the index against an independent model of these rules on
 thousands of random queries.
 
 An unquoted term with a Latin/digit run longer than 32,000 characters is refused: SQLite FTS5 cuts tokens at

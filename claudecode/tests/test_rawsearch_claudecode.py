@@ -2,7 +2,7 @@ import json
 import sqlite3
 import unittest
 from contextlib import closing
-from rawlayer.search import common, dense, textindex as ti
+from rawlayer.search import dense, fts, index
 from claudecode.search import SPEC, DRIVER, ClaudeCodeApplier, add_arguments, tool_text
 from .fixtures import Fixture, CID, MID, row
 from tests.core import appfix as h
@@ -13,7 +13,7 @@ class SearchTests(unittest.TestCase):
         self.fx = Fixture()
         self.addCleanup(h.force_rmtree, self.fx.base)
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
 
     def query(self, *args):
         rc, out, err = h.run_rawsearch(["claudecode", "--config", self.fx.config_path, "--json", *args])
@@ -23,19 +23,19 @@ class SearchTests(unittest.TestCase):
     def update(self, containers):
         self.fx.write(containers)
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
 
     def snapshot(self):
-        with closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
+        with closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall() for t in ("msgs", "sessions", "counts")}
 
     def test_incremental_equals_rebuild_several_rounds(self):
         texts = ("synthetic deployment", "edited deployment", "synthetic deployment")
         h.rounds(self.fx, [{CID: [[row(text=t)]]} for t in texts])
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         self.update({CID: [[row()], [row("reply", text="deployed", role="assistant", n=1)]]})
         incremental = self.snapshot()
-        common.update(self.fx.data_root, SPEC, rebuild=True)
+        index.update(self.fx.data_root, SPEC, rebuild=True)
         self.assertEqual(incremental, self.snapshot())
 
     def test_every_mode_envelope_and_text(self):
@@ -122,7 +122,7 @@ class SearchTests(unittest.TestCase):
         self.update({CID: [[row(), row("later", text="second", n=2, ts="2024-10-01T00:00:02Z")]],
                      CID + ".agent": [[row("tool", text="", agent="agent", n=1, ts="2024-10-01T00:00:01Z",
                                            tools=[{"name": "Read", "summary": "synthetic.py"}])]]})
-        con, _, _ = common.open_search(self.fx.data_root, SPEC)
+        con, _, _ = index.open_search(self.fx.data_root, SPEC)
         self.addCleanup(con.close)
         label, units = DRIVER.chunk_units(con, CID)
         self.assertTrue(label)
@@ -144,8 +144,8 @@ class SearchTests(unittest.TestCase):
         con = sqlite3.connect(":memory:")
         self.addCleanup(con.close)
         con.row_factory = sqlite3.Row
-        ti.register_functions(con)
-        con.executescript(common.META_DDL)
+        fts.register_functions(con)
+        con.executescript(index.META_DDL)
         SPEC.create_tables(con)
         if not full:
             SPEC.create_triggers(con)
@@ -163,11 +163,11 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(held["message"], "synthetic deployment")
         self.assertEqual(DRIVER.chunk_units(con, CID)[1], [])
         self.assertEqual(con.execute("SELECT count(*) FROM sessions").fetchone()[0], 0)
-        parser = common.Parser()
+        parser = index.Parser()
         add_arguments(parser)
         for flags, expected in (([], 0), (["--include-deleted"], 1)):
             args = parser.parse_args(["--config", str(self.fx.config_path), "--role", "user", *flags])
-            body, params = DRIVER.body(ti.build_fts_query("deployment"), DRIVER.filters(args, common.parse_tz("+00:00")))
+            body, params = DRIVER.body(fts.build_fts_query("deployment"), DRIVER.filters(args, index.parse_tz("+00:00")))
             self.assertEqual(con.execute(f"SELECT count(*) {body}", params).fetchone()[0], expected)
         app.record(dict(rec, op="purged", rev=3, native=None), 3)
         app.end_manifest(3)

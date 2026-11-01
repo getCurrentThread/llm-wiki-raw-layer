@@ -352,10 +352,10 @@ class Arguments(unittest.TestCase):
 
     def test_the_typed_arguments_are_the_search_parser_s(self):
         # the flags the tools set themselves exist in every app's parser (kakaotalk's is not opened here)
-        from rawlayer.search import common
+        from rawlayer.search import index
         import argparse
         p = argparse.ArgumentParser()
-        common.add_search_arguments(p, ("hits", "count", "timeline", "senders"))
+        index.add_search_arguments(p, ("hits", "count", "timeline", "senders"))
         flags = {s for a in p._actions for s in a.option_strings}
         for f in ("--query", "--sender", "--since", "--until", "--tz", "--mode", "--context", "--limit", "--width",
                   "--include-deleted", "--json"):

@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.core import toyfix as T
-from rawlayer.search import common, dense, search as drv, textindex as ti
+from rawlayer.search import dense, driver as drv, fts, index
 
 DIMS = 64
 H = 3600
@@ -30,8 +30,8 @@ T0 = 1_700_000_000
 def fake_vector(text, dims=DIMS):
     """A deterministic bag of bigrams: texts that share bigrams point the same way."""
     v = [0.0] * dims
-    for tok in ti.ng_tokens(text):
-        if tok != ti.SEP:
+    for tok in fts.ng_tokens(text):
+        if tok != fts.SEP:
             v[int(hashlib.md5(tok.encode()).hexdigest(), 16) % dims] += 1.0
     return v if any(v) else [1.0] + [0.0] * (dims - 1)
 
@@ -120,7 +120,7 @@ class BruteStore(dense.Vec0):
 
 # ------------------------------------------------------------------------------------------------ a synthetic app
 
-class DtIndex(common.SourceIndex):
+class DtIndex(index.SourceIndex):
     name = "dt"
     origins = frozenset({"dt"})
     schema_version = extractor_version = "dt-1"
@@ -168,32 +168,32 @@ ROWS = [  # key, room, ts, message
 
 
 def build_index(root, rows=ROWS, head=1, built_at="2026-01-01T00:00:00Z"):
-    path = common.index_path(root, SPEC)
+    path = index.index_path(root, SPEC)
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path)) as con:
-        con.executescript(common.META_DDL)
+        con.executescript(index.META_DDL)
         con.execute("CREATE TABLE rows(id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, room TEXT NOT NULL, "
                     "ts INTEGER NOT NULL, seq INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, "
                     "message TEXT NOT NULL, ng TEXT NOT NULL)")
-        con.execute(ti.fts_ddl("rows"))
-        common.create_triggers(con, "rows", "rows_fts")
+        con.execute(fts.fts_ddl("rows"))
+        index.create_triggers(con, "rows", "rows_fts")
         con.executemany("INSERT INTO rows(key, room, ts, seq, message, ng) VALUES(?,?,?,1,?,?)",
-                        [(k, r, ts, m, ti.ng_text(m)) for k, r, ts, m in rows])
-        common._set_meta(con, **SPEC.stamp(), head_seq=head, built_at=built_at)
+                        [(k, r, ts, m, fts.ng_text(m)) for k, r, ts, m in rows])
+        index._set_meta(con, **SPEC.stamp(), head_seq=head, built_at=built_at)
         con.commit()
 
 
 def change(root, sql, params, head):
     """Fold a change into the synthetic index: run sql (it sets seq) and move head_seq."""
-    with contextlib.closing(sqlite3.connect(common.index_path(root, SPEC))) as con:
+    with contextlib.closing(sqlite3.connect(index.index_path(root, SPEC))) as con:
         con.execute(sql, params)
-        common._set_meta(con, head_seq=head)
+        index._set_meta(con, head_seq=head)
         con.commit()
 
 
 def parser():
-    p = common.Parser()
-    common.add_search_arguments(p, ["hits", "count"])
+    p = index.Parser()
+    index.add_search_arguments(p, ["hits", "count"])
     p.add_argument("--before")
     p.add_argument("--after")
     return p
@@ -215,7 +215,7 @@ class UrlAndClient(unittest.TestCase):
         for bad in ("https://127.0.0.1:1", "http://localhost:1", "http://10.0.0.1:1", "http://0.0.0.0:1",
                     "http://user@127.0.0.1:1", "http://127.0.0.1:1/api", "http://127.0.0.1:99999", "ftp://127.0.0.1",
                     "", None, "http://127.0.0.1:1?x=1", "http://example.com"):
-            with self.subTest(url=bad), self.assertRaises(common.UsageError):
+            with self.subTest(url=bad), self.assertRaises(index.UsageError):
                 dense.check_url(bad)
 
     def test_embed_request_and_checks(self):
@@ -308,7 +308,7 @@ class Pack(unittest.TestCase):
     def test_a_long_label_is_flattened_and_cut(self):
         label = "상위 페이지 제목\n" * 300               # a breadcrumb alone past Ollama's 2048 tokens
         self.assertEqual(dense.pack(label, [("k", 0, "본문", False)])[0][3],
-                         common.flat(label)[:dense.LABEL_CAP] + "\n본문")
+                         index.flat(label)[:dense.LABEL_CAP] + "\n본문")
         self.assertEqual(dense.pack("짧은\n제목", [("k", 0, "본문", False)])[0][3], "짧은\n제목\n본문")
 
     def test_sha_is_stable_and_per_container(self):
@@ -351,7 +351,7 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual((rep["embedded"], rep["pending"], rep["src_seq"]), (3, 0, 1))
         self.assertEqual(self.side("SELECT count(*) FROM vec_chunks"), [(3,)])
         self.assertEqual(self.embed()["embedded"], 0)                      # nothing changed: nothing re-embedded
-        change(self.root, "UPDATE rows SET message=?, ng=?, seq=2 WHERE key='b2'", ("장애 원인은 메모리", ti.ng_text("장애 원인은 메모리")), 2)
+        change(self.root, "UPDATE rows SET message=?, ng=?, seq=2 WHERE key='b2'", ("장애 원인은 메모리", fts.ng_text("장애 원인은 메모리")), 2)
         rep = self.embed()
         self.assertEqual((rep["containers"], rep["embedded"], rep["removed"], rep["src_seq"]), (1, 1, 1, 2))
         change(self.root, "UPDATE rows SET message='', ng='', seq=3 WHERE key='a3'", (), 3)    # a purge
@@ -359,7 +359,7 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertEqual((rep["embedded"], rep["removed"]), (0, 1))
         self.assertEqual(self.side("SELECT count(*) FROM chunk_rec WHERE rec_key='a3'"), [(0,)])
         self.assertEqual(self.side("SELECT count(*) FROM chunks"), self.side("SELECT count(*) FROM vec_chunks"))
-        with self.assertRaisesRegex(common.UsageError, "--rebuild"):
+        with self.assertRaisesRegex(index.UsageError, "--rebuild"):
             self.embed(model="other")
         rep = self.embed(model="other", rebuild=True, limit=1)            # resumable: the watermark waits
         self.assertEqual((rep["embedded"], rep["pending"], rep["src_seq"]), (1, 1, 0))
@@ -397,7 +397,7 @@ class HybridEndToEnd(unittest.TestCase):
         env, err = self.search("회의 일정", "--hybrid")
         self.assertEqual((env["hybrid"]["vec_seq"], env["index"]["seq"], env["hybrid"]["stale"]), (1, 5, False))
         self.assertNotIn("behind the index", err)
-        change(self.root, "UPDATE rows SET message=?, ng=?, seq=6 WHERE key='b2'", ("장애 원인은 메모리", ti.ng_text("장애 원인은 메모리")), 6)
+        change(self.root, "UPDATE rows SET message=?, ng=?, seq=6 WHERE key='b2'", ("장애 원인은 메모리", fts.ng_text("장애 원인은 메모리")), 6)
         env, err = self.search("회의 일정", "--hybrid")
         self.assertTrue(env["hybrid"]["stale"])
         self.assertIn("behind the index", err)
@@ -409,10 +409,10 @@ class HybridEndToEnd(unittest.TestCase):
         self.assertTrue(self.search("회의 일정", "--hybrid")[0]["hybrid"]["stale"])
 
     def test_a_rebuilt_index_is_embedded_from_scratch(self):
-        common.index_path(self.root, SPEC).unlink()
+        index.index_path(self.root, SPEC).unlink()
         build_index(self.root, head=9)
         self.assertEqual(self.embed()["src_seq"], 9)
-        common.index_path(self.root, SPEC).unlink()                    # a re-created ledger: seq starts over
+        index.index_path(self.root, SPEC).unlink()                    # a re-created ledger: seq starts over
         build_index(self.root, [("c1", "C", T0, "새 원장의 첫 메시지"), ("c2", "C", T0 + 60, "두 번째 메시지")],
                     head=2, built_at="2026-02-01T00:00:00Z")
         self.assertTrue(self.search("메시지", "--hybrid")[0]["hybrid"]["stale"])
@@ -432,7 +432,7 @@ class HybridEndToEnd(unittest.TestCase):
 
     def test_a_keyword_hit_in_an_overlap_stays_a_hit(self):
         fill = "".join(chr(0xAC00 + (i * 37) % 9000) for i in range(846))      # unrelated bigrams
-        common.index_path(self.root, SPEC).unlink()
+        index.index_path(self.root, SPEC).unlink()
         build_index(self.root, [("x1", "R", T0, fill), ("k", "R", T0 + 60, "배포 완료했어요 여러분 감사합니다 오늘도 수고"),
                                 ("j", "R", T0 + 120, "배포 일정 공유"), ("y", "R", T0 + 180, "점심 먹으러 가요"),
                                 ("o1", "O", T0 + 50 * H, "주간 보고 작성")])
@@ -455,7 +455,7 @@ class HybridEndToEnd(unittest.TestCase):
     def test_a_long_row_is_one_hit(self):
         long = "서버 장애 대응 절차 " * 400                                  # several windows of one row
         change(self.root, "INSERT INTO rows(key, room, ts, seq, message, ng) VALUES('c1', 'C', ?, 2, ?, ?)",
-               (T0 + 20 * H, long, ti.ng_text(long)), 2)
+               (T0 + 20 * H, long, fts.ng_text(long)), 2)
         self.embed()
         self.assertGreater(len(self.side("SELECT chunk_id FROM chunk_rec WHERE rec_key='c1'")), 2)
         env, _ = self.search("장애 대응 절차", "--hybrid")
@@ -540,7 +540,7 @@ class HybridEndToEnd(unittest.TestCase):
     def test_hybrid_usage(self):
         for argv in (["--hybrid", "--mode", "count", "회의"], ["--hybrid", "--since", "2020"],
                      ["--hybrid", "회의", "--before", "1.2.3"]):
-            with self.subTest(argv=argv), self.assertRaisesRegex(common.UsageError, "--hybrid"):
+            with self.subTest(argv=argv), self.assertRaisesRegex(index.UsageError, "--hybrid"):
                 DRIVER.run(parser().parse_args(["--config", str(self.cfg), *argv]))
 
 

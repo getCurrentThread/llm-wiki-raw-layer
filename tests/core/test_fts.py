@@ -1,4 +1,4 @@
-"""Tokenizer + query compiler (rawsearch.textindex): regressions and a randomized property test.
+"""Tokenizer + query compiler (rawlayer.search.fts): regressions and a randomized property test.
 
 Every search here runs against a real in-memory FTS5 external-content table built exactly like
 the rawsearch index (fts_ddl + ng_text) and applies the Query the way the search does
@@ -11,27 +11,27 @@ import sqlite3
 import unicodedata
 import unittest
 
-from rawlayer.search import textindex as ti
-from rawlayer.search.textindex import QueryError, build_fts_query
+from rawlayer.search import fts
+from rawlayer.search.fts import QueryError, build_fts_query
 
 
 def make_db(bodies, titles=None):
     """titles: one per body -> a title index (tng column, title_rank) like gmail's and notion's."""
     con = sqlite3.connect(":memory:")
-    ti.register_functions(con)
+    fts.register_functions(con)
     con.execute("CREATE TABLE docs(id INTEGER PRIMARY KEY, message TEXT NOT NULL, ng TEXT NOT NULL, tng TEXT NOT NULL)")
-    con.execute(ti.fts_ddl("docs", title=titles is not None))
+    con.execute(fts.fts_ddl("docs", title=titles is not None))
     if titles is not None:
-        con.execute(ti.title_rank("docs_fts"))
-    ngs = [ti.ng_text(b) for b in bodies]
+        con.execute(fts.title_rank("docs_fts"))
+    ngs = [fts.ng_text(b) for b in bodies]
     con.executemany("INSERT INTO docs(id, message, ng, tng) VALUES(?,?,?,?)",
-                    [(i + 1, b, ng, ti.title_ng(titles[i], ng) if titles else "") for i, (b, ng) in enumerate(zip(bodies, ngs))])
+                    [(i + 1, b, ng, fts.title_ng(titles[i], ng) if titles else "") for i, (b, ng) in enumerate(zip(bodies, ngs))])
     con.execute("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
     return con
 
 
 def run_query(con, q):
-    frm, where, params = ti.sql_parts(q, "docs")
+    frm, where, params = fts.sql_parts(q, "docs")
     sql = f"SELECT t.id FROM {frm} WHERE {' AND '.join(where) or '1'}"
     return {r[0] for r in con.execute(sql, params)}
 
@@ -47,7 +47,7 @@ def hits(bodies, query):
 
 
 # --------------------------------------------------------------------------------------------
-# Independent reference implementation of the TRUTH in the textindex docstring.
+# Independent reference implementation of the TRUTH in the fts docstring.
 # --------------------------------------------------------------------------------------------
 
 def t_norm(s):
@@ -260,44 +260,44 @@ class KbBehaviour(unittest.TestCase):
         against documents whose runs are cut."""
         rng = random.Random(7)
         base = "".join(rng.choice("abcdefghij") for _ in range(40000))
-        for n in (ti.MAX_TERM_RUN + 1, 32768, 40000):
+        for n in (fts.MAX_TERM_RUN + 1, 32768, 40000):
             for q in (base[:n], base[:n] + "*", "회의 -" + base[:n], "회의 " + base[:n] + "에서"):
                 with self.subTest(n=n, q=q[:12]), self.assertRaises(QueryError):
                     build_fts_query(q)
-        cut = base[:ti.MAX_TERM_RUN]
+        cut = base[:fts.MAX_TERM_RUN]
         bodies = [cut, cut + "zz", "zz" + cut, cut[:-1], base, base[:32768] + "q", "다른 " + cut + "에서"]
         self.assertEqual(hits(bodies, cut), {cut, "다른 " + cut + "에서"})
         self.assertEqual(hits(bodies, cut + "*"), {cut, cut + "zz", base, base[:32768] + "q", "다른 " + cut + "에서"})
         self.assertEqual(hits(bodies, f'"{base[:32768]}"'), {base, base[:32768] + "q"})   # literal: rs_contains
 
     def test_api_surface(self):
-        self.assertNotEqual(ti.TOKENIZER_VERSION, "ngram-1")
-        self.assertTrue(ti.SCHEMA_VERSION)
+        self.assertNotEqual(fts.TOKENIZER_VERSION, "ngram-1")
+        self.assertTrue(fts.SCHEMA_VERSION)
         q = build_fts_query("송금")
         self.assertEqual(q._fields, ("fts", "verify", "exclude", "weak", "marks", "exclude_fts"))
-        self.assertTrue(ti.is_weak_term("돈"))
-        self.assertFalse(ti.is_weak_term("송금"))
-        self.assertEqual(ti.ng_text("오늘 송금을"), "오늘 늘송 송금 금을")
-        self.assertEqual(ti.ng_text("오늘, 송금"), f"오늘 {ti.SEP} 송금")
-        self.assertEqual(ti.ng_text("a 가나"), f"a {ti.SEP} 가나")
-        self.assertEqual(ti.ng_text("10월에"), "10 월 월에")
-        self.assertEqual(ti.ng_text(""), "")
-        self.assertIn("tokenize='ascii'", ti.fts_ddl("item"))
+        self.assertTrue(fts.is_weak_term("돈"))
+        self.assertFalse(fts.is_weak_term("송금"))
+        self.assertEqual(fts.ng_text("오늘 송금을"), "오늘 늘송 송금 금을")
+        self.assertEqual(fts.ng_text("오늘, 송금"), f"오늘 {fts.SEP} 송금")
+        self.assertEqual(fts.ng_text("a 가나"), f"a {fts.SEP} 가나")
+        self.assertEqual(fts.ng_text("10월에"), "10 월 월에")
+        self.assertEqual(fts.ng_text(""), "")
+        self.assertIn("tokenize='ascii'", fts.fts_ddl("item"))
 
     def test_title_ng_only_when_contiguous(self):
-        ng = ti.ng_text("회의록 정리\n본문 API문서")
-        self.assertEqual(ti.title_ng("회의록 정리", ng), ti.ng_text("회의록 정리"))
-        self.assertEqual(ti.title_ng("API문서", ng), "api 문 문서")
+        ng = fts.ng_text("회의록 정리\n본문 API문서")
+        self.assertEqual(fts.title_ng("회의록 정리", ng), fts.ng_text("회의록 정리"))
+        self.assertEqual(fts.title_ng("API문서", ng), "api 문 문서")
         for title in ("정리 회의록", "회의 정리", "", "!!", "가", "문서 api"):   # not one run of ng
-            self.assertEqual(ti.title_ng(title, ng), "", title)
-        self.assertEqual(ti.title_ng("a", ti.ng_text("ab")), "")
+            self.assertEqual(fts.title_ng(title, ng), "", title)
+        self.assertEqual(fts.title_ng("a", fts.ng_text("ab")), "")
 
     def test_title_column_ranks_title_hits_first(self):
         bodies = ["예산 예산 예산 회의\n다른 내용", "예산안 검토\n본문", "본문만 예산 이야기 예산"]
         titles = ["다른 제목", "예산안 검토", "x"]
         for con, first in ((make_db(bodies), 1), (make_db(bodies, titles), 2)):
             try:
-                frm, where, params = ti.sql_parts(build_fts_query("예산"), "docs")
+                frm, where, params = fts.sql_parts(build_fts_query("예산"), "docs")
                 ids = [r[0] for r in con.execute(f"SELECT t.id FROM {frm} WHERE {' AND '.join(where)} "
                                                  "ORDER BY docs_fts.rank, t.id", params)]
                 self.assertEqual(sorted(ids), [1, 2, 3])
@@ -306,12 +306,12 @@ class KbBehaviour(unittest.TestCase):
                 con.close()
 
     def test_title_triggers_keep_the_index_consistent(self):
-        from rawlayer.search import common
+        from rawlayer.search import index
         con = make_db(["회의 안건", "잡담"], ["회의 안건", "잡담"])
         try:
-            common.create_triggers(con, "docs", "docs_fts", title=True)
-            ng = ti.ng_text("예산 회의")
-            con.execute("INSERT INTO docs(message, ng, tng) VALUES(?,?,?)", ("예산 회의", ng, ti.title_ng("예산", ng)))
+            index.create_triggers(con, "docs", "docs_fts", title=True)
+            ng = fts.ng_text("예산 회의")
+            con.execute("INSERT INTO docs(message, ng, tng) VALUES(?,?,?)", ("예산 회의", ng, fts.title_ng("예산", ng)))
             con.execute("UPDATE docs SET message='', ng='', tng='' WHERE id=1")
             con.execute("DELETE FROM docs WHERE id=2")
             con.execute("INSERT INTO docs_fts(docs_fts, rank) VALUES('integrity-check', 1)")
@@ -323,25 +323,25 @@ class KbBehaviour(unittest.TestCase):
 
     def test_tokens_have_no_dropped_characters(self):
         for s in ["a,b", "가!나", "  x  ", "\U0001F600", "é가", "C++ 2.0"]:
-            toks = ti.ng_tokens(s)
-            self.assertTrue(all(tok == ti.SEP or tok.isalnum() for tok in toks), s)
+            toks = fts.ng_tokens(s)
+            self.assertTrue(all(tok == fts.SEP or tok.isalnum() for tok in toks), s)
             self.assertTrue(all(len(tok) <= 2 or tok.isascii() for tok in toks), s)
 
     def test_highlight(self):
-        out = ti.highlight("오늘 송금을 했어요", ["송금"])
+        out = fts.highlight("오늘 송금을 했어요", ["송금"])
         self.assertEqual(out, "오늘 [송금]을 했어요")
-        self.assertEqual(ti.highlight("", ["x"]), "")
+        self.assertEqual(fts.highlight("", ["x"]), "")
 
     def test_highlight_finds_what_casefold_matching_found(self):
         """Review finding: matching casefolds (ß/SS, capital sharp s, ligatures) but the snippet only lowercased, so
         such hits were not marked and a long message's snippet could miss the match entirely."""
-        self.assertEqual(ti.highlight("STRASSE 주소", ["straße"]), "[STRASSE] 주소")
-        self.assertEqual(ti.highlight("Straße 주소", ["STRASSE"]), "[Straße] 주소")
-        self.assertEqual(ti.highlight("ﬁle 업로드", ["file"]), "[ﬁle] 업로드")
-        self.assertEqual(ti.highlight("ẞ 표기", ["ss"]), "[ẞ] 표기")          # capital sharp s
-        far = ti.highlight("x" * 300 + " STRASSE 끝", ["straße"], width=40)
+        self.assertEqual(fts.highlight("STRASSE 주소", ["straße"]), "[STRASSE] 주소")
+        self.assertEqual(fts.highlight("Straße 주소", ["STRASSE"]), "[Straße] 주소")
+        self.assertEqual(fts.highlight("ﬁle 업로드", ["file"]), "[ﬁle] 업로드")
+        self.assertEqual(fts.highlight("ẞ 표기", ["ss"]), "[ẞ] 표기")          # capital sharp s
+        far = fts.highlight("x" * 300 + " STRASSE 끝", ["straße"], width=40)
         self.assertTrue(far.startswith("…") and "[STRASSE] 끝" in far, far)
-        self.assertEqual(ti.highlight("가나다 나다", ["나다", "가나다"]), "[가나다] [나다]")    # no nested marks
+        self.assertEqual(fts.highlight("가나다 나다", ["나다", "가나다"]), "[가나다] [나다]")    # no nested marks
         for body, term in (("STRASSE 주소", "straße"), ("ﬁle 업로드", "file")):
             self.assertEqual(hits([body], term), {body})                  # and the search does find them
 

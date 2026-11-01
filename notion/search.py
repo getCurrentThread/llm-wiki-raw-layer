@@ -1,6 +1,6 @@
 """Block-level Notion search. Derived labels/order/deletion use one SQL expression in both build modes."""
 import re
-from rawlayer.search import common, search as drv, textindex as ti
+from rawlayer.search import driver as drv, fts, index
 from .keys import nt_id, iso_ms
 
 NAME = "notion"
@@ -40,7 +40,7 @@ _LABELS = """sender=coalesce((SELECT name FROM users WHERE user_id=nrows.user_id
 
 
 def _s(value):
-    return common.clean(value) if isinstance(value, str) else ""
+    return index.clean(value) if isinstance(value, str) else ""
 
 
 def rich_text(value):
@@ -122,7 +122,7 @@ def parent_id(native):
     return nt_id(parent.get(typ)) or "" if isinstance(typ, str) else ""
 
 
-class NotionApplier(common.SimpleApplier):
+class NotionApplier(index.SimpleApplier):
     origin = ORIGIN
 
     def __init__(self, con, full):
@@ -166,7 +166,7 @@ class NotionApplier(common.SimpleApplier):
                         order = []
                     for ord_, item in enumerate(order):
                         if not isinstance(item, list) or len(item) != 3 or nt_id(item[0]) is None \
-                                or not common.is_int(item[1]) or not 0 <= item[1] < 2 ** 63:
+                                or not index.is_int(item[1]) or not 0 <= item[1] < 2 ** 63:
                             self.counts["bad_order"] += 1
                             continue
                         self.con.execute("INSERT OR IGNORE INTO page_order VALUES(?,?,?,?,?)",
@@ -211,8 +211,8 @@ class NotionApplier(common.SimpleApplier):
             if not text and cur and n.get("_removed_at"):
                 text = cur[1]
             own_deleted = int(bool(n.get("_removed_at") or n.get("in_trash") or n.get("archived")))
-            ng = ti.ng_text(text)
-            tng = ti.title_ng(page_title(n), ng) if kind == "page" else ""
+            ng = fts.ng_text(text)
+            tng = fts.title_ng(page_title(n), ng) if kind == "page" else ""
             btype = _s(n.get("type")) if kind == "block" else ""
             self.con.execute("""INSERT INTO nrows(key,kind,native_id,page_id,rev,seq,held,ts,ts_ms,user_id,
              own_deleted,message,ng,tng,btype) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET
@@ -240,7 +240,7 @@ class NotionApplier(common.SimpleApplier):
             self._derive(pid)
 
 
-class NotionIndex(common.SimpleIndex):
+class NotionIndex(index.SimpleIndex):
     name = NAME
     schema_version = extractor_version = "notion-2"
     schema, table, applier_class, title = SCHEMA, "nrows", NotionApplier, True
@@ -258,12 +258,12 @@ class Filters(drv.Filters):
         if a.page:
             ors = []
             for value in a.page:
-                sql, ps = common.like("t.page_title", value)
+                sql, ps = index.like("t.page_title", value)
                 ors.append(f"({sql} OR t.page_id=?)")
                 self.params += ps + [nt_id(value) or value]
             self.where.append("(" + " OR ".join(ors) + ")")
         if a.sender:
-            sql, ps = common.like("t.sender", a.sender)
+            sql, ps = index.like("t.sender", a.sender)
             self.where.append(f"({sql} OR t.user_id=?)")
             self.params += ps + [nt_id(a.sender) or a.sender]
 
@@ -296,20 +296,20 @@ class NotionSearch(drv.SearchDriver):
     def check_args(self, a):
         if a.page_text is not None:
             if a.list_pages or nt_id(a.page_text) is None:
-                raise common.UsageError("--page-text needs a UUID and cannot be combined with --list-pages")
+                raise index.UsageError("--page-text needs a UUID and cannot be combined with --list-pages")
             return "page-text"
 
     def parse_cursor(self, value, flag, before=True):
         parts = (value or "").split(".", 1)
         if len(parts) != 2 or len(parts[0]) > 19 or not parts[0].isascii() or not parts[0].isdecimal() or int(parts[0]) >= 2 ** 63 \
                 or not re.fullmatch(r"nt:(page|block|comment):[0-9a-f:-]+", parts[1]):
-            raise common.UsageError(f"{flag}: expected ts_ms.nt:key")
+            raise index.UsageError(f"{flag}: expected ts_ms.nt:key")
         return int(parts[0]), parts[1]
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "kind", "native_id", "page_id", "page_title", "ord", "depth", "user_id", "sender", "ts", "ts_ms")} | {
-            "deleted": bool(r["deleted"]), "text": r["message"], "snippet": ti.highlight(r["message"], marks, width),
-            "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
+            "deleted": bool(r["deleted"]), "text": r["message"], "snippet": fts.highlight(r["message"], marks, width),
+            "date": index.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
 
     def context(self, con, r, n, a, tz):
         if r["ord"] is None:
@@ -342,7 +342,7 @@ class NotionSearch(drv.SearchDriver):
         if a.page:
             ors = []
             for value in a.page:
-                sql, ps = common.like("title", value)
+                sql, ps = index.like("title", value)
                 ors.append(f"({sql} OR page_id=?)")
                 params += ps + [nt_id(value) or value]
             where.append("(" + " OR ".join(ors) + ")")
@@ -354,12 +354,12 @@ class NotionSearch(drv.SearchDriver):
     def extra_result(self, con, a, extra, query, tz):
         pid = nt_id(a.page_text)
         if con.execute("SELECT 1 FROM page_src WHERE page_id=?", (pid,)).fetchone() is None:
-            raise common.UsageError("page not in Notion index")
+            raise index.UsageError("page not in Notion index")
         hide = "" if a.include_deleted else " AND deleted=0"
         rows = con.execute("SELECT * FROM nrows WHERE page_id=?" + hide +
                            " ORDER BY CASE kind WHEN 'page' THEN 0 WHEN 'block' THEN 1 ELSE 2 END,ord,key", (pid,)).fetchall()
         if query or a.page or a.sender or a.since or a.until or a.before or a.after or a.mode != "hits":
-            common.note("query and selection filters are not applied to --page-text")
+            index.note("query and selection filters are not applied to --page-text")
         return {"mode": "page-text", "page_id": pid, "breadcrumb": self.breadcrumb(con, pid),
                 "total": len(rows), "rows": [self.hit(r, tz, [], a.width) for r in rows]}
 

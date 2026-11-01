@@ -16,14 +16,14 @@ import argparse
 import sys
 
 from .. import registry
-from . import common
-from .common import Busy, LedgerDefect, UsageError
+from . import index
+from .index import Busy, LedgerDefect, UsageError
 
 _SEVERITY = {0: 0, 2: 1, 75: 2, 1: 3}
 
 
 def _parser(mods):
-    ap = common.Parser(prog="manage.py", description="Full-text search over the raw ledger, one index per app.")
+    ap = index.Parser(prog="manage.py", description="Full-text search over the raw ledger, one index per app.")
     sub = ap.add_subparsers(dest="command", required=True, metavar="{index,search}")
     ix = sub.add_parser("index", help="build or catch up the search indexes")
     ix.add_argument("--config", required=True, help="config file (only data_root is read)")
@@ -67,33 +67,33 @@ def _fmt_report(name, r):
 
 
 def cmd_index(a, mods):
-    data_root = common.load_data_root(a.config)
+    data_root = index.load_data_root(a.config)
     names = tuple(mods) if a.source == "all" else (a.source,)
-    reports, rc = {}, common.EXIT_OK
+    reports, rc = {}, index.EXIT_OK
     if not names and not a.json:
         print("index: the app has no search source")
     for name in names:
         mod = mods[name]
         try:
             if a.status:
-                r = common.status(data_root, mod.SPEC)
+                r = index.status(data_root, mod.SPEC)
             else:
-                r = common.update(data_root, mod.SPEC, rebuild=a.rebuild)
+                r = index.update(data_root, mod.SPEC, rebuild=a.rebuild)
         except Busy:
             r = {"source": name, "action": "busy", "reason": "another index update holds the lock"}
-            rc = _worst(rc, common.EXIT_BUSY)
+            rc = _worst(rc, index.EXIT_BUSY)
         except LedgerDefect:
             r = {"source": name, "action": "failed", "reason": "a committed ledger file cannot be read"}
-            rc = _worst(rc, common.EXIT_ERR)
+            rc = _worst(rc, index.EXIT_ERR)
         except Exception as e:  # noqa: BLE001 -- one source's failure must not keep the other from catching up
             r = {"source": name, "action": "failed", "reason": f"error {type(e).__name__}: {e}"}
             print(f"search: {name}: error {type(e).__name__}: {e}", file=sys.stderr)
-            rc = _worst(rc, common.EXIT_ERR)
+            rc = _worst(rc, index.EXIT_ERR)
         if r.get("blocked") == "defect":
-            rc = _worst(rc, common.EXIT_ERR)
+            rc = _worst(rc, index.EXIT_ERR)
         reports[name] = r
     if a.json:
-        print(common.dumps(reports))
+        print(index.dumps(reports))
     else:
         for name, r in reports.items():
             print(_fmt_report(name, r))
@@ -102,7 +102,7 @@ def cmd_index(a, mods):
 
 def main(argv=None):
     """argv: index ... | search <label> ..."""
-    common.setup_stdio()
+    index.setup_stdio()
     try:
         mods = dict(registry.search_modules())
         a = _parser(mods).parse_args(argv)
@@ -110,21 +110,21 @@ def main(argv=None):
             return cmd_index(a, mods)
         return mods[a.source].run(a)
     except SystemExit as e:                 # --help
-        return e.code if isinstance(e.code, int) else common.EXIT_USAGE
+        return e.code if isinstance(e.code, int) else index.EXIT_USAGE
     except UsageError as e:
         print(f"search: {e}", file=sys.stderr)
-        return common.EXIT_USAGE
+        return index.EXIT_USAGE
     except Busy:
         print("search: the index is being updated by another process (lock busy)", file=sys.stderr)
-        return common.EXIT_BUSY
+        return index.EXIT_BUSY
     except LedgerDefect as e:
         print(f"search: ledger defect: {e}", file=sys.stderr)
-        return common.EXIT_ERR
+        return index.EXIT_ERR
     except KeyboardInterrupt:
         return 130
     except Exception as e:  # noqa: BLE001
-        if common.is_locked(e):         # a query statement waited out an index write
+        if index.is_locked(e):         # a query statement waited out an index write
             print("search: the index is being updated by another process (lock busy)", file=sys.stderr)
-            return common.EXIT_BUSY
+            return index.EXIT_BUSY
         print(f"search: error {type(e).__name__}: {e}", file=sys.stderr)
-        return common.EXIT_ERR
+        return index.EXIT_ERR

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The search index driver (rawlayer.search.common) on the toy index, built from a real three-round toy ledger:
+"""The search index driver (rawlayer.search.index) on the toy index, built from a real three-round toy ledger:
 reports, incremental catch-up == full rebuild, ledger reset / genesis redone / a non-capture manifest / a large
 catch-up (rebuilds), mid-commit (stops, then resumes), defects (stop with exit 1, roll back), crashes and a killed
 catch-up (hot journal), the version gate, the stale warning, status, the writer lock, several indexes in one project
@@ -393,7 +393,7 @@ class TestLedgerChanges(Scenario):
 
 class TestLocks(Scenario):
     def hold(self, dr, name):
-        code = ("import sys; from rawlayer.search.common import IndexLock; "
+        code = ("import sys; from rawlayer.search.index import IndexLock; "
                 f"l = IndexLock({str(dr / 'index')!r}, {name!r}); print('locked', flush=True); sys.stdin.read()")
         holder = subprocess.Popen([sys.executable, "-s", "-B", "-c", code], cwd=T.REPO, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, text=True)
@@ -421,7 +421,7 @@ class TestLocks(Scenario):
 
     def test_index_write_transaction_is_busy_not_damaged(self):
         """A read that waits out an index write transaction exits 75 (busy), not 2 ("damaged ... --rebuild-index")."""
-        from rawlayer.search import common
+        from rawlayer.search import index
         cfg, dr = self.clone()
         writer = sqlite3.connect(ipath(dr), isolation_level=None)
         writer.execute("BEGIN EXCLUSIVE")
@@ -429,7 +429,7 @@ class TestLocks(Scenario):
         def quick(path):                    # open_ro without its 15 s wait
             return sqlite3.connect(fsio.ro_uri(path, immutable=False), uri=True, timeout=0.05)
         try:
-            with mock.patch.object(common, "open_ro", quick):
+            with mock.patch.object(index, "open_ro", quick):
                 rc, _, err = run_search("search", "toy", "--config", cfg, "--json", "배포")
                 self.assertEqual(rc, 75, err)
                 self.assertNotIn("damaged", err)

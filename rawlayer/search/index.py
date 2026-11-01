@@ -24,7 +24,7 @@ scratch give the same rows. Nothing else is read: no source database, no config 
   redone), and the index is rebuilt from scratch. A new manifest whose type is not 'capture' (a future
   'purge', SPEC 12, rewrites old segments) also forces a full rebuild, as does a catch-up larger than the
   source's full_rebuild_records.
-* Version gate. meta stores schema_version, tokenizer (textindex.TOKENIZER_VERSION) and extractor_version.
+* Version gate. meta stores schema_version, tokenizer (fts.TOKENIZER_VERSION) and extractor_version.
   `index` rebuilds an index whose stamps differ; a search refuses it (exit 2, "run manage.py capture
   --rebuild-index").
 * Crash safety. A full rebuild writes <name>.sqlite.new, checks it (FTS5 'integrity-check' against the content
@@ -76,7 +76,7 @@ from typing import NamedTuple
 from rawlayer.capture import fsio, ledger, paths
 from rawlayer.capture.model import OPS
 
-from . import textindex as ti
+from . import fts as ti      # not `fts`: the trigger helpers below call their table argument fts
 
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_BUSY = 0, 1, 2, 75
 COMMON_SCHEMA = "1"                 # the meta / counts tables below and the meta keys the driver writes

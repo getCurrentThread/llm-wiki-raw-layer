@@ -59,9 +59,9 @@ from collections import Counter
 
 from rawlayer.capture.canon import as_int, as_str
 from rawlayer.capture.model import OPS
-from rawlayer.search import common
-from rawlayer.search import search as drv
-from rawlayer.search import textindex as ti
+from rawlayer.search import index
+from rawlayer.search import driver as drv
+from rawlayer.search import fts
 
 NAME = "kakaotalk"
 HELP = "search KakaoTalk messages (index: <data_root>/index/kakaotalk.sqlite)"
@@ -133,7 +133,7 @@ def _text_hash(text):
 
 
 def _ts(ts_ms, send_at):
-    if common.is_int(ts_ms) and 1_000_000_000_000 <= ts_ms < 10_000_000_000_000:
+    if index.is_int(ts_ms) and 1_000_000_000_000 <= ts_ms < 10_000_000_000_000:
         return ts_ms // 1000
     s = as_int(send_at)
     return s if s is not None and 1_000_000_000 <= s < 10_000_000_000 else 0
@@ -220,7 +220,7 @@ class KakaoApplier:
             self.counts["bad_record"] += 1
             return
         kind, origin, op, rev, key = rec.get("kind"), rec.get("origin"), rec.get("op"), rec.get("rev"), rec.get("key")
-        if origin not in RANK or op not in OPS or not common.is_int(rev) or not isinstance(key, str):
+        if origin not in RANK or op not in OPS or not index.is_int(rev) or not isinstance(key, str):
             self.counts["bad_record"] += 1
             return
         if kind == "msg":
@@ -245,7 +245,7 @@ class KakaoApplier:
         if not m:
             self.counts["bad_key"] += 1
             return
-        mid = self._mid(m.group(1), common.clean(m.group(2)))
+        mid = self._mid(m.group(1), index.clean(m.group(2)))
         rank = RANK[origin]
         cur = self.con.execute("SELECT rev, held, th, deleted, ts, author_id, type, edited FROM ksrc "
                                "WHERE mid=? AND origin=?", (mid, rank)).fetchone()
@@ -270,12 +270,12 @@ class KakaoApplier:
             text = None
             if isinstance(body, str):
                 if not tomb and body.strip():
-                    text = common.clean(body)
+                    text = index.clean(body)
             elif body is not None and not (isinstance(body, dict) and "$b64" in body):
                 self.counts["body_other"] += 1
             ts = _ts(rec.get("ts_ms"), native.get("sendAt"))
             author = as_str(native.get("authorId"))
-            author = common.clean(author) if author else None
+            author = index.clean(author) if author else None
             if text is not None:
                 h = _text_hash(text)
                 self.con.execute("INSERT OR IGNORE INTO texts(h, message) VALUES(?, ?)", (h, text))
@@ -286,7 +286,7 @@ class KakaoApplier:
             if origin in NAME_RANK and author is not None:
                 s = derived.get("sender")
                 if isinstance(s, str):
-                    s = common.clean(s.strip())
+                    s = index.clean(s.strip())
                     if s and not s.isdigit():
                         self._name(author, s, (ts, seq, NAME_RANK[origin], key))
             held = 1
@@ -323,7 +323,7 @@ class KakaoApplier:
         if op == "put":
             d = rec.get("derived")
             t = d.get("title") if isinstance(d, dict) else None
-            title = common.clean(t.strip()) if isinstance(t, str) else ""
+            title = index.clean(t.strip()) if isinstance(t, str) else ""
         elif op == "purged":
             title = ""
         self.con.execute("INSERT OR REPLACE INTO room_src(chat_id, origin, rev, seq, held, title) VALUES(?,?,?,?,?,?)",
@@ -333,7 +333,7 @@ class KakaoApplier:
 
     # ---- derive
     def end_manifest(self, seq):
-        common.bump_counts(self.con, self.counts)
+        index.bump_counts(self.con, self.counts)
         self.counts.clear()
         if self.full:
             return
@@ -397,7 +397,7 @@ class KakaoApplier:
                 d["origins"], d["source"], d["edited"], d["deleted"], d["gone"])
         sets = ", ".join(c + "=?" for c in _ROW_COLS.split(", "))
         if self.full or old_msg != msg:
-            con.execute(f"UPDATE kakao SET {sets}, message=?, ng=? WHERE id=?", vals + (msg, ti.ng_text(msg), mid))
+            con.execute(f"UPDATE kakao SET {sets}, message=?, ng=? WHERE id=?", vals + (msg, fts.ng_text(msg), mid))
         else:
             con.execute(f"UPDATE kakao SET {sets} WHERE id=?", vals + (mid,))
 
@@ -412,7 +412,7 @@ class KakaoApplier:
                     "VALUES(?,?,?,?,?,?,?,?)", (chat, labels.title(chat), n, senders, first, last, nd, ngone))
 
 
-class KakaoIndex(common.SourceIndex):
+class KakaoIndex(index.SourceIndex):
     name = NAME
     origins = frozenset(PRECEDENCE)
     schema_version = "kakao-4"        # kakao-4: the kakatok exports (merged_out/live_out/decrypted_live) left
@@ -421,10 +421,10 @@ class KakaoIndex(common.SourceIndex):
 
     def create_tables(self, con):
         con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("kakao"))
+        con.execute(fts.fts_ddl("kakao"))
 
     def create_triggers(self, con):
-        common.create_triggers(con, "kakao", "kakao_fts")
+        index.create_triggers(con, "kakao", "kakao_fts")
 
     def applier(self, con, full):
         return KakaoApplier(con, full)
@@ -435,7 +435,7 @@ class KakaoIndex(common.SourceIndex):
         out = {"rows": rows, "deleted": deleted, "gone": gone,
                "rooms": con.execute("SELECT count(*) FROM rooms").fetchone()[0],
                "authors": con.execute("SELECT count(*) FROM authors").fetchone()[0]}
-        out.update(common.read_counts(con))
+        out.update(index.read_counts(con))
         return out
 
 
@@ -468,7 +468,7 @@ class _Filters(drv.Filters):
         if a.room:
             ors = []
             for r in a.room:
-                sql, ps = common.like("t.room", r)
+                sql, ps = index.like("t.room", r)
                 if r.strip().isdigit():
                     ors.append(f"(t.chat_id = ? OR {sql})")
                     self.params += [r.strip()] + ps
@@ -477,7 +477,7 @@ class _Filters(drv.Filters):
                     self.params += ps
             self.where.append("(" + " OR ".join(ors) + ")")
         if a.sender:
-            sql, ps = common.like("t.sender", a.sender)
+            sql, ps = index.like("t.sender", a.sender)
             self.where.append(f"({sql} OR t.author_id = ?)")
             self.params += ps + [a.sender.strip()]
 
@@ -523,7 +523,7 @@ class KakaoSearch(drv.SearchDriver):
         for key in keys:
             m = _MSG_KEY.fullmatch(key) if isinstance(key, str) else None
             if m:
-                vals += [m.group(1), common.clean(m.group(2))]
+                vals += [m.group(1), index.clean(m.group(2))]
         if not vals:
             return "1=0", []
         return ("(t.chat_id, t.log_id) IN (VALUES " + ",".join(["(?,?)"] * (len(vals) // 2)) + ")"), vals
@@ -564,12 +564,12 @@ class KakaoSearch(drv.SearchDriver):
     def hit(self, r, tz, marks, width):
         msg = r["message"]
         return {"id": r["id"], "key": rec_key(r["chat_id"], r["log_id"]), "chat_id": r["chat_id"],
-                "log_id": r["log_id"], "ts": r["ts"], "date": common.fmt_ts(r["ts"], tz), "room": r["room"],
+                "log_id": r["log_id"], "ts": r["ts"], "date": index.fmt_ts(r["ts"], tz), "room": r["room"],
                 "sender": r["sender"], "author_id": r["author_id"], "type": r["type"],
                 "type_name": type_name(r["type"]),
                 "origins": origin_names(r["origins"]), "source": r["source"], "deleted": bool(r["deleted"]),
                 "gone": bool(r["gone"]), "edited": bool(r["edited"]), "cursor": self.cursor(r),
-                "snippet": ti.highlight(msg, marks, width) if msg else self.placeholder(r), "text": msg}
+                "snippet": fts.highlight(msg, marks, width) if msg else self.placeholder(r), "text": msg}
 
     def context(self, con, r, n, a, tz):
         """n rows before and after a hit in its room, by (ts, log_no, id) keyset; the hit itself marked."""
@@ -583,9 +583,9 @@ class KakaoSearch(drv.SearchDriver):
             f"{hide} ORDER BY ts, log_no, id LIMIT ?", key + (n,)).fetchall()
         out = []
         for c in list(reversed(before)) + [r] + list(after):
-            text = common.flat(c["message"]) or self.placeholder(c)
-            out.append({"id": c["id"], "log_id": c["log_id"], "ts": c["ts"], "date": common.fmt_ts(c["ts"], tz),
-                        "sender": c["sender"], "author_id": c["author_id"], "text": common.clip(text, a.width),
+            text = index.flat(c["message"]) or self.placeholder(c)
+            out.append({"id": c["id"], "log_id": c["log_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
+                        "sender": c["sender"], "author_id": c["author_id"], "text": index.clip(text, a.width),
                         "deleted": bool(c["deleted"]), "gone": bool(c["gone"]), "hit": c["id"] == r["id"]})
         return out
 
@@ -601,7 +601,7 @@ class KakaoSearch(drv.SearchDriver):
     def list_all(self, con, a, tz):
         where, params = [], []
         for r in a.room:
-            sql, ps = common.like("title", r)
+            sql, ps = index.like("title", r)
             if r.strip().isdigit():
                 where.append(f"(chat_id = ? OR {sql})")
                 params += [r.strip()] + ps
@@ -614,7 +614,7 @@ class KakaoSearch(drv.SearchDriver):
         return {"mode": "list", "total": total, "rows": [
             {"chat_id": r["chat_id"], "label": r["title"] or "(untitled)", "title": r["title"], "n": r["n"],
              "senders": r["senders"], "n_deleted": r["n_deleted"], "n_gone": r["n_gone"],
-             **common.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
+             **index.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
 
     def render_rest(self, res, a, tz):
         mode, rows, total = res["mode"], res["rows"], res["total"]
@@ -623,7 +623,7 @@ class KakaoSearch(drv.SearchDriver):
             out(f"=== {NAME}: {total} room(s) by message count ===\n")
             for r in rows:
                 span = f"{r['first']}..{r['last']}" if r["first"] else ""
-                out(f"  {r['n']:7,}  {common.pad(r['label'], 40)} {span:22} id={r['chat_id']}\n")
+                out(f"  {r['n']:7,}  {index.pad(r['label'], 40)} {span:22} id={r['chat_id']}\n")
             return
         if mode == "browse":
             page = res["page"]
@@ -634,9 +634,9 @@ class KakaoSearch(drv.SearchDriver):
             else:
                 out("  (no messages)\n")
             for h in rows:
-                where = f" | {common.pad(h['room'] or h['chat_id'], 20)}" if multi else ""
-                text = common.flat(h["text"]) if h["text"] else h["snippet"]
-                out(f"{h['date']:16} | {common.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['log_id']}\n")
+                where = f" | {index.pad(h['room'] or h['chat_id'], 20)}" if multi else ""
+                text = index.flat(h["text"]) if h["text"] else h["snippet"]
+                out(f"{h['date']:16} | {index.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['log_id']}\n")
             return
         shown = len(rows)
         head = f"=== {NAME}: {total} match(es)"
@@ -647,13 +647,13 @@ class KakaoSearch(drv.SearchDriver):
             out("  (no matches)\n")
         prefix = f"[{NAME}] "
         for h in rows:
-            out(f"{prefix}{h['date']:16} | {common.pad(self.who(h), 18)} | {common.pad(h['room'] or '(untitled)', 26)} "
+            out(f"{prefix}{h['date']:16} | {index.pad(self.who(h), 18)} | {index.pad(h['room'] or '(untitled)', 26)} "
                 f":: {h['snippet']}{self.flags(h)}\n")
             out(f"{' ' * len(prefix)}chat={h['chat_id']} log={h['log_id']} cursor={h['cursor']} "
                 f"origins={','.join(h['origins']) or '-'}\n")
             for c in h.get("context", []):
                 arrow = ">>" if c["hit"] else "  "
-                out(f"     {arrow} {c['date'][5:]:11} {common.pad(self.who(c), 14)} {c['text']}{self.flags(c)}\n")
+                out(f"     {arrow} {c['date'][5:]:11} {index.pad(self.who(c), 14)} {c['text']}{self.flags(c)}\n")
             if h.get("context"):
                 out("\n")
 

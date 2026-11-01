@@ -1,12 +1,12 @@
 """Korean query normalization (rawlayer.search.normalize): the rewrite table, and the superset rule -- a rewritten
-or relaxed query returns every row the original returns -- against a real in-memory index (test_textindex's).
+or relaxed query returns every row the original returns -- against a real in-memory index (test_fts's).
 All data is synthesised in code."""
 import random
 import unittest
 
 from rawlayer.search import normalize as N
-from rawlayer.search.textindex import QueryError, build_fts_query
-from tests.core.test_textindex import make_db, run_query
+from rawlayer.search.fts import QueryError, build_fts_query
+from tests.core.test_fts import make_db, run_query
 
 
 class Rewrite(unittest.TestCase):

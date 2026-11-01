@@ -18,7 +18,7 @@ from rawlayer import collect as W
 from rawlayer import registry
 from rawlayer.capture import run as capture_run
 from rawlayer.management.commands import collect as command
-from rawlayer.search import common
+from rawlayer.search import index
 from tests.core import toyfix as T
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -257,8 +257,8 @@ class Command(Project):
         out, err = io.StringIO(), io.StringIO()
         with registry.use([pkg]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
                 mock.patch.object(search, "DRIVER", Driver(data), create=True), \
-                mock.patch.object(common, "open_search", return_value=(mock.Mock(), {}, {"stale": stale})), \
-                mock.patch.object(common, "warn_if_stale"), \
+                mock.patch.object(index, "open_search", return_value=(mock.Mock(), {}, {"stale": stale})), \
+                mock.patch.object(index, "warn_if_stale"), \
                 mock.patch.object(W, "export", lambda *a, **kw: export(*a, now=NOW, **kw)), \
                 mock.patch.object(capture_run, "is_system", return_value=system):
             rc = command.main([label] + (["--config", str(self.config)] if config else []) + list(argv))

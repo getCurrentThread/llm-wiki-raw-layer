@@ -16,9 +16,9 @@ from pathlib import Path
 from unittest import mock
 
 from rawlayer.capture import fsio
-from rawlayer.search import common
+from rawlayer.search import index
 from kakaotalk import search as kakao
-from rawlayer.search import textindex as ti
+from rawlayer.search import fts
 from kakaotalk.tests import ledgerfix as L
 from kakaotalk.tests.edbfix import sidecar
 from kakaotalk.tests.fixtures import TEST_PARENT, Fixture
@@ -301,7 +301,7 @@ class TestSearch(Scenario):
         self.assertIsInstance(env["rows"][0]["log_id"], str)
         env = search(self.cfg, '"가나, 다라" -마바')         # the separator token is shown as <S>, as in --explain
         self.assertEqual((env["fts"], env["exclude_fts"]), ('"가나 <S> 다라"', '"마바"'))
-        self.assertNotIn(common.ti.SEP, json.dumps(env, ensure_ascii=False))
+        self.assertNotIn(fts.SEP, json.dumps(env, ensure_ascii=False))
 
     def test_filters(self):
         self.assertEqual(keys(search(self.cfg, "메시지", "--room", "스터디")), [k(101, L.BIG)])
@@ -511,7 +511,7 @@ class TestApplier(unittest.TestCase):
 
     def setUp(self):
         self.con = sqlite3.connect(":memory:", isolation_level=None)
-        self.con.executescript(common.META_DDL)
+        self.con.executescript(index.META_DDL)
         kakao.SPEC.create_tables(self.con)
         kakao.SPEC.create_triggers(self.con)
         self.app = kakao.SPEC.applier(self.con, full=False)
@@ -540,7 +540,7 @@ class TestApplier(unittest.TestCase):
                                                                            native={"message": 5, "type": 2 ** 70})):
             self.app.record(bad, 2)
         self.app.end_manifest(2)
-        counts = common.read_counts(self.con)
+        counts = index.read_counts(self.con)
         self.assertEqual(counts["stale_rev"], 1)
         self.assertEqual(counts["bad_record"], 5)
         self.assertEqual(counts["bad_key"], 1)
@@ -583,14 +583,14 @@ class TestApplier(unittest.TestCase):
         self.app.end_manifest(2)
         r = self.con.execute("SELECT message, source, origins, edited, deleted FROM kakao").fetchone()
         self.assertEqual(r, ("약속은 4시로 변경", "backup_decrypted", EDB | BACKUP, 1, 1))
-        q = ti.build_fts_query("변경")
-        frm, where, params = ti.sql_parts(q, "kakao", "kakao_fts", alias="t")
-        ti.register_functions(self.con)
+        q = fts.build_fts_query("변경")
+        frm, where, params = fts.sql_parts(q, "kakao", "kakao_fts", alias="t")
+        fts.register_functions(self.con)
         self.assertEqual(self.con.execute(f"SELECT count(*) FROM {frm} WHERE {' AND '.join(where)}",
                                           params).fetchone()[0], 1)
         # the same ledger through a full build gives the same row
         con = sqlite3.connect(":memory:", isolation_level=None)
-        con.executescript(common.META_DDL)
+        con.executescript(index.META_DDL)
         kakao.SPEC.create_tables(con)
         app = kakao.SPEC.applier(con, full=True)
         for seq, recs in ((1, [self.rec(o, key, 1, native={"message": "약속은 3시", "type": 1})

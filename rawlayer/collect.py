@@ -44,7 +44,7 @@ from pathlib import Path
 
 from .capture import paths
 from .registry import Option, RegistryError, identifiers, text
-from .search import common
+from .search import index
 
 LAYOUTS = ("chat", "mail", "page")
 TZ = "+09:00"
@@ -130,11 +130,11 @@ def plan(kind, items, tz, include, since, now_month, exclude=()):
         keep = (not include or any(s.casefold() in folded for s in include)) and \
             not any(s.casefold() in folded for s in exclude)
         if kind == "page":
-            parts = {common.fmt_ts(max(u[1] for u in units), tz, "%Y-%m"): units}
+            parts = {index.fmt_ts(max(u[1] for u in units), tz, "%Y-%m"): units}
         else:
             parts = {}
             for u in units:
-                parts.setdefault(common.fmt_ts(u[1], tz, "%Y-%m"), []).append(u)
+                parts.setdefault(index.fmt_ts(u[1], tz, "%Y-%m"), []).append(u)
         for period, part in parts.items():
             if not keep or (kind == "page" and since and period < since):
                 filtered += len(part)
@@ -166,7 +166,7 @@ def plan(kind, items, tz, include, since, now_month, exclude=()):
 
 
 def _period(units, tz):
-    first, last = (common.fmt_ts(f(u[1] for u in units), tz, "%Y-%m") for f in (min, max))
+    first, last = (index.fmt_ts(f(u[1] for u in units), tz, "%Y-%m") for f in (min, max))
     return first if first == last else f"{first}..{last}"
 
 
@@ -178,28 +178,28 @@ def _front(**kv):
 def render(app, kind, key, entries, tz):
     """One source file's Markdown."""
     units = [u for _, _, us in entries for u in us]
-    span = dict(records=len({u[0] for u in units}), first=common.fmt_ts(min(u[1] for u in units), tz),
-                last=common.fmt_ts(max(u[1] for u in units), tz))
+    span = dict(records=len({u[0] for u in units}), first=index.fmt_ts(min(u[1] for u in units), tz),
+                last=index.fmt_ts(max(u[1] for u in units), tz))
     period = _period(units, tz)
     if kind == "mail":
         out = [_front(title=f"{app} {period}", source_app=app, period=period, **span), f"# {app} {period}\n"]
         for _, label, us in sorted(entries, key=lambda e: (e[2][0][1], str(e[0]))):
-            out.append(f"\n## {' '.join(label.split())} ({common.fmt_ts(us[0][1], tz)})\n")
+            out.append(f"\n## {' '.join(label.split())} ({index.fmt_ts(us[0][1], tz)})\n")
             out += [f"\n{u[2]}\n" for u in us]
         return "".join(out)
     c, label = entries[0][0], entries[-1][1]        # a chat file's months: one channel, its newest label
     if kind == "page":
-        period = common.fmt_ts(max(u[1] for u in units), tz, "%Y-%m")
+        period = index.fmt_ts(max(u[1] for u in units), tz, "%Y-%m")
         out = [_front(title=label, source_app=app, container=str(c), period=period, **span), f"# {label}\n"]
         out += [f"\n## {' '.join(t.split())}\n" if brk else f"\n{t}\n" for _, _, t, brk in units]
         return "".join(out)
     out, day = [_front(title=f"{label} {period}", source_app=app, container=str(c), period=period, **span),
                 f"# {label} {period}\n"], None
     for _, ts, t, _ in units:
-        if common.fmt_ts(ts, tz, "%Y-%m-%d") != day:
-            day = common.fmt_ts(ts, tz, "%Y-%m-%d")
+        if index.fmt_ts(ts, tz, "%Y-%m-%d") != day:
+            day = index.fmt_ts(ts, tz, "%Y-%m-%d")
             out.append(f"\n## {day}\n\n")
-        out.append(f"- {common.fmt_ts(ts, tz, '%H:%M')} {t.strip().replace(chr(10), chr(10) + '  ')}\n")
+        out.append(f"- {index.fmt_ts(ts, tz, '%H:%M')} {t.strip().replace(chr(10), chr(10) + '  ')}\n")
     return "".join(out)
 
 
@@ -241,8 +241,8 @@ def export(app, kind, drv, con, project, include=(), since="", dry_run=False, pr
     if prune and not dry_run and stale:
         raise Refused(f"--prune refused, nothing written or deleted: the index is not at the ledger's head -- run: "
                       f"python -s -B manage.py capture {app}, then collect again")
-    tz = common.parse_tz(TZ)
-    now_month = common.fmt_ts(time.time() if now is None else now, tz, "%Y-%m")
+    tz = index.parse_tz(TZ)
+    now_month = index.fmt_ts(time.time() if now is None else now, tz, "%Y-%m")
     items = ((c, *drv.chunk_units(con, c)) for c in drv.changed_containers(con, 0))
     files, held, filtered = plan(kind, items, tz, include, since, now_month, exclude)
     root = Path(project, "raw", "sources", app)

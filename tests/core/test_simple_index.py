@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""common.SimpleIndex / SimpleApplier against the hand-written plumbing they replace. A toy index of the simple shape
+"""index.SimpleIndex / SimpleApplier against the hand-written plumbing they replace. A toy index of the simple shape
 (one content table folded from one origin, an FTS5 table, a derived table) is built twice from the same toy ledger:
 once on the core classes and once on a reference that spells out the record header check, end_manifest, create_*
 and stats the way each app did before. The two must leave the same rows, FTS index, schema, counters, version stamp
@@ -9,8 +9,8 @@ import unittest
 from collections import Counter
 
 from rawlayer.capture import fsio
-from rawlayer.search import common
-from rawlayer.search import textindex as ti
+from rawlayer.search import index
+from rawlayer.search import fts
 from tests.core import toyfix as T
 from tests.core.test_search_driver import ToyRounds
 
@@ -39,8 +39,8 @@ def fold(con, counts, head, rec, seq, title):
         if not isinstance(v, str):
             counts["bad_value"] += 1
             v = ""
-        ng = ti.ng_text(v)
-        con.execute(UPSERT, (key, rec["origin"], rev, seq, v, ng, ti.title_ng(v[:6], ng) if title else ""))
+        ng = fts.ng_text(v)
+        con.execute(UPSERT, (key, rec["origin"], rev, seq, v, ng, fts.title_ng(v[:6], ng) if title else ""))
     elif op == "absent":
         con.execute("UPDATE msgs SET rev=?, seq=?, held=0, deleted=1 WHERE key=?", (rev, seq, key))
     else:
@@ -55,7 +55,7 @@ def finish(con):
 
 
 def make_simple(title):
-    class Applier(common.SimpleApplier):
+    class Applier(index.SimpleApplier):
         origin = ORIGIN
 
         def record(self, rec, seq):
@@ -66,7 +66,7 @@ def make_simple(title):
         def finish(self):
             finish(self.con)
 
-    class Index(common.SimpleIndex):
+    class Index(index.SimpleIndex):
         name = "toysimple"
         schema_version = extractor_version = "toysimple-1"
         schema, table, applier_class = SCHEMA, "msgs", Applier
@@ -85,14 +85,14 @@ def make_reference(title):
 
         def record(self, rec, seq):
             if not isinstance(rec, dict) or rec.get("origin") != ORIGIN or rec.get("op") not in ("put", "absent", "purged") \
-                    or not common.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
+                    or not index.is_int(rec.get("rev")) or not 0 < rec["rev"] < 2 ** 63:
                 self.counts["bad_record"] += 1
                 return
             head = rec.get("key"), rec.get("kind"), rec["op"], rec["rev"]
             self.dirty |= fold(self.con, self.counts, head, rec, seq, title)
 
         def end_manifest(self, seq):
-            common.bump_counts(self.con, self.counts)
+            index.bump_counts(self.con, self.counts)
             self.counts.clear()
             if not self.full and self.dirty:
                 self.finish()
@@ -101,7 +101,7 @@ def make_reference(title):
         def finish(self):
             finish(self.con)
 
-    class Index(common.SourceIndex):
+    class Index(index.SourceIndex):
         name = "toyref"
         origins = frozenset({ORIGIN})
         schema_version = extractor_version = "toysimple-1"
@@ -109,12 +109,12 @@ def make_reference(title):
 
         def create_tables(self, con):
             con.executescript(SCHEMA)
-            con.execute(ti.fts_ddl("msgs", title=title))
+            con.execute(fts.fts_ddl("msgs", title=title))
             if title:
-                con.execute(ti.title_rank("msgs_fts"))
+                con.execute(fts.title_rank("msgs_fts"))
 
         def create_triggers(self, con):
-            common.create_triggers(con, "msgs", "msgs_fts", title=title)
+            index.create_triggers(con, "msgs", "msgs_fts", title=title)
 
         def applier(self, con, full):
             return Applier(con, full)
@@ -122,14 +122,14 @@ def make_reference(title):
         def stats(self, con):
             return {"rows": con.execute("SELECT count(*) FROM msgs").fetchone()[0],
                     "deleted": con.execute("SELECT coalesce(sum(deleted),0) FROM msgs").fetchone()[0],
-                    **common.read_counts(con)}
+                    **index.read_counts(con)}
 
     return Index()
 
 
 def dump(data_root, spec):
     """Every table (the FTS5 shadow tables too), the schema, the version stamp and the stats of an index."""
-    con = sqlite3.connect(fsio.ro_uri(common.index_path(data_root, spec), immutable=False), uri=True)
+    con = sqlite3.connect(fsio.ro_uri(index.index_path(data_root, spec), immutable=False), uri=True)
     try:
         out = {"sql": sorted(r[0] or "" for r in con.execute("SELECT sql FROM sqlite_master"))}
         for (name,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall():
@@ -154,7 +154,7 @@ class BuiltTheSameWay(T.ToyCase):
         simple, ref = make_simple(title), make_reference(title)
         for rnd in (1, 2, 3):
             self.assertEqual(sc.next_round(), 0)
-            a, b = ({k: v for k, v in common.update(dr, spec).items() if k not in ("source", "seconds")}
+            a, b = ({k: v for k, v in index.update(dr, spec).items() if k not in ("source", "seconds")}
                     for spec in (simple, ref))
             self.assertEqual(a, b, f"round {rnd}")
             self.assertEqual(dump(dr, simple), dump(dr, ref), f"round {rnd}")
@@ -166,7 +166,7 @@ class BuiltTheSameWay(T.ToyCase):
                 dr, simple, ref = self.build(title)
                 incremental = dump(dr, simple)
                 for spec in (simple, ref):
-                    self.assertEqual(common.update(dr, spec, rebuild=True)["action"], "rebuilt")
+                    self.assertEqual(index.update(dr, spec, rebuild=True)["action"], "rebuilt")
                 self.assertEqual(dump(dr, simple), dump(dr, ref))
                 self.assertEqual(dump(dr, simple)["msgs"], incremental["msgs"])
                 self.assertEqual(dump(dr, simple)["tally"], incremental["tally"])
@@ -176,13 +176,13 @@ class BuiltTheSameWay(T.ToyCase):
         d = dump(dr, simple)
         self.assertEqual(d["stats"], {"rows": 5, "deleted": 0, "bad_value": 1})
         self.assertEqual(d["tally"], [repr((ORIGIN, 5))])
-        con = sqlite3.connect(fsio.ro_uri(common.index_path(dr, simple), immutable=False), uri=True)
+        con = sqlite3.connect(fsio.ro_uri(index.index_path(dr, simple), immutable=False), uri=True)
         self.addCleanup(con.close)
         rows = {r[0]: r[1:] for r in con.execute("SELECT key, origin, rev, seq, held, deleted, message FROM msgs")}
         self.assertEqual(rows["toy:toy_a:2"], (ORIGIN, 2, 2, 1, 0, "가나 나다 라마"))   # edited in round 2
         self.assertEqual(rows["toy:toy_a:4"], (ORIGIN, 1, 1, 1, 0, ""))                # the non-str value: counted
-        self.assertEqual(d["meta"], {"head_seq": "3", "schema_version": common.COMMON_SCHEMA + ".toysimple-1",
-                                     "tokenizer": ti.TOKENIZER_VERSION, "extractor_version": "toysimple-1"})
+        self.assertEqual(d["meta"], {"head_seq": "3", "schema_version": index.COMMON_SCHEMA + ".toysimple-1",
+                                     "tokenizer": fts.TOKENIZER_VERSION, "extractor_version": "toysimple-1"})
         self.assertEqual(simple.stamp()["source"], "toysimple")
         self.assertEqual((simple.origins, simple.fts_tables), (frozenset({ORIGIN}), ("msgs_fts",)))
         self.assertIn("CREATE TRIGGER msgs_ai", "\n".join(d["sql"]))
@@ -194,7 +194,7 @@ class TheRecordHeader(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         self.addCleanup(self.con.close)
-        self.con.executescript(common.META_DDL)
+        self.con.executescript(index.META_DDL)
         self.spec = make_simple(False)
         self.spec.create_tables(self.con)
 
@@ -224,13 +224,13 @@ class TheRecordHeader(unittest.TestCase):
             app.end_manifest(1)
             app.end_manifest(2)                         # nothing changed since: no second derivation
             self.assertEqual(calls, expect)             # a full build derives only in finish(), called by the driver
-            self.assertEqual(common.read_counts(self.con).get("bad_record"), 1 if not full else 2)
+            self.assertEqual(index.read_counts(self.con).get("bad_record"), 1 if not full else 2)
             self.assertFalse(app.counts)
 
     def test_derive_can_be_narrower_than_finish(self):
         done = []
 
-        class Narrow(common.SimpleApplier):
+        class Narrow(index.SimpleApplier):
             origin = ORIGIN
 
             def derive(self):

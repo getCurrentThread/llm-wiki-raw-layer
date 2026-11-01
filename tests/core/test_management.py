@@ -12,7 +12,7 @@ from unittest import mock
 
 from rawlayer import management, registry
 from rawlayer.capture import cli, ledger, paths
-from rawlayer.search import common
+from rawlayer.search import index
 from tests.core import toyfix as T
 from tests.core.projectfix import Project, app_files
 
@@ -158,11 +158,11 @@ class TestOwnership(T.ToyCase):
                         rc = cli.main([command, "--config", str(self.fx.config_path), *extra])
                     self.assertEqual(rc, 2)
                     self.assertIn("refused", out.getvalue())
-            with self.assertRaisesRegex(common.UsageError, "belongs to another app"):
-                common.load_data_root(self.fx.config_path)
+            with self.assertRaisesRegex(index.UsageError, "belongs to another app"):
+                index.load_data_root(self.fx.config_path)
         self.assertEqual(T.names(raw / "manifests"), before)
         self.assertEqual(T.cli_main(self.fx, "replay", "--check"), 0)
-        self.assertEqual(common.load_data_root(self.fx.config_path), self.fx.data_root)
+        self.assertEqual(index.load_data_root(self.fx.config_path), self.fx.data_root)
 
 
 class TestSetup(unittest.TestCase):

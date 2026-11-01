@@ -17,7 +17,7 @@ from unittest import mock
 from rawlayer import registry
 from rawlayer.capture import cli, paths, precheck, run
 from rawlayer.capture.config import Config, ConfigError, InputSet
-from rawlayer.search import common
+from rawlayer.search import index
 from tests.core import toyfix as T
 from tests.core.toyfix import capture, cli_main, manifests
 
@@ -219,8 +219,8 @@ class TestJunctions(T.ToyCase):
         self.junction(self.fx.data_root / "index")
         with mock.patch.object(run.paths, "DATA_PARENT", self.fx.base):
             Config(self.fx.config_path)
-            with self.assertRaises(common.UsageError):
-                common.load_data_root(self.fx.config_path)
+            with self.assertRaises(index.UsageError):
+                index.load_data_root(self.fx.config_path)
 
 
 GIT_FOREIGN = {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}      # git's own test knob: every repo looks foreign

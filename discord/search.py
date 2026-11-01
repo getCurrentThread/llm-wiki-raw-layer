@@ -1,7 +1,7 @@
 """Ledger-only Discord FTS5 index and search."""
 import json
 import re
-from rawlayer.search import common, search as drv, textindex as ti
+from rawlayer.search import driver as drv, fts, index
 from .keys import snowflake_ms
 
 NAME = "discord"
@@ -40,7 +40,7 @@ _LABEL = """channel=coalesce((SELECT CASE WHEN p.name IS NOT NULL THEN p.name ||
 
 
 def _s(v):
-    return common.clean(v) if isinstance(v, str) else ""
+    return index.clean(v) if isinstance(v, str) else ""
 
 
 def _texts(value):
@@ -67,7 +67,7 @@ def msg_text(native, counts=None):
     return (_s("\n".join(parts)), "files" if names else "forwarded") if parts else ("", "")
 
 
-class DiscordApplier(common.SimpleApplier):
+class DiscordApplier(index.SimpleApplier):
     origin = ORIGIN
 
     def record(self, rec, seq):
@@ -107,7 +107,7 @@ class DiscordApplier(common.SimpleApplier):
                 uid = _s(author.get("id")) if isinstance(author, dict) else ""
                 ref = _s(ref.get("messageId")) if isinstance(ref, dict) else ""
                 vals = (key, mid, int(mid), rev, seq, held, cid, uid, ts_ms // 1000, ts_ms,
-                        ref, int(bool(n.get("_removedAt"))), int(edited), body, text, ti.ng_text(text))
+                        ref, int(bool(n.get("_removedAt"))), int(edited), body, text, fts.ng_text(text))
                 self.con.execute("""INSERT INTO msgs(key,msg_id,sid,rev,seq,held,channel_id,user_id,ts,ts_ms,
                   reference_id,deleted,edited,body_from,message,ng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                   ON CONFLICT(key) DO UPDATE SET rev=excluded.rev,seq=excluded.seq,held=excluded.held,
@@ -148,7 +148,7 @@ class DiscordApplier(common.SimpleApplier):
          FROM ch_src c LEFT JOIN ch_src p ON p.channel_id=c.parent_id LEFT JOIN guild_src g ON g.guild_id=c.guild_id""")
 
 
-class DiscordIndex(common.SimpleIndex):
+class DiscordIndex(index.SimpleIndex):
     name = NAME
     schema_version = extractor_version = "discord-1"
     schema, table, applier_class = SCHEMA, "msgs", DiscordApplier
@@ -169,9 +169,9 @@ class Filters(drv.Filters):
             if values:
                 ors = []
                 for value in values:
-                    sql, ps = common.like("t." + label, value)
+                    sql, ps = index.like("t." + label, value)
                     if label == "sender":
-                        nick, ns = common.like("nicks", value)
+                        nick, ns = index.like("nicks", value)
                         ors.append(f"({sql} OR t.{ident}=? OR t.user_id IN (SELECT user_id FROM users WHERE {nick}))")
                         self.params += ps + [value] + ns
                     else:
@@ -210,34 +210,34 @@ class DiscordSearch(drv.SearchDriver):
     def check_args(self, a):
         if a.thread is not None:
             if a.list_channels or snowflake_ms(a.thread) is None:
-                raise common.UsageError("--thread needs a snowflake and cannot be combined with --list-channels")
+                raise index.UsageError("--thread needs a snowflake and cannot be combined with --list-channels")
             return "thread"
 
     def parse_cursor(self, value, flag, before=True):
         parts = (value or "").split(".")
         if len(parts) != 3 or not all(len(p) <= 19 and p.isascii() and p.isdecimal() for p in parts):
-            raise common.UsageError(f"{flag}: expected ts_ms.snowflake.channel_id")
+            raise index.UsageError(f"{flag}: expected ts_ms.snowflake.channel_id")
         if any(int(p) >= 2 ** 63 for p in parts[:2]):
-            raise common.UsageError(f"{flag}: cursor out of range")
+            raise index.UsageError(f"{flag}: cursor out of range")
         return int(parts[0]), int(parts[1]), parts[2]
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "msg_id", "channel_id", "channel", "guild_id", "guild", "user_id", "sender", "ts", "ts_ms", "body_from")} | {
             "deleted": bool(r["deleted"]), "edited": bool(r["edited"]), "reference_id": r["reference_id"],
-            "text": r["message"], "snippet": ti.highlight(r["message"], marks, width),
-            "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
+            "text": r["message"], "snippet": fts.highlight(r["message"], marks, width),
+            "date": index.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
 
     def list_all(self, con, a, tz):
         where, params = [], []
         if a.channel:
             ors = []
             for value in a.channel:
-                sql, ps = common.like("label", value)
+                sql, ps = index.like("label", value)
                 ors.append(f"({sql} OR channel_id=?)")
                 params += ps + [value]
             where.append("(" + " OR ".join(ors) + ")")
         if a.guild:
-            sql, ps = common.like("guild", a.guild)
+            sql, ps = index.like("guild", a.guild)
             where.append(f"({sql} OR guild_id=?)")
             params += ps + [a.guild]
         clause = " WHERE " + " AND ".join(where) if where else ""
@@ -249,7 +249,7 @@ class DiscordSearch(drv.SearchDriver):
         mid = a.thread
         seed = con.execute("SELECT * FROM msgs WHERE msg_id=? ORDER BY channel_id LIMIT 1", (mid,)).fetchone()
         if seed is None:
-            raise common.UsageError("message not in Discord index")
+            raise index.UsageError("message not in Discord index")
         channel = con.execute("SELECT parent_id FROM ch_src WHERE channel_id=?", (seed["channel_id"],)).fetchone()
         root = seed["channel_id"] if channel and channel[0] else seed["reference_id"] or mid
         seen = {mid}
@@ -263,7 +263,7 @@ class DiscordSearch(drv.SearchDriver):
         rows = con.execute("SELECT * FROM msgs WHERE (msg_id=? OR channel_id=? OR reference_id=?)" + hide +
                            " ORDER BY ts_ms,sid,channel_id", (root, root, root)).fetchall()
         if query or a.channel or a.guild or a.sender or a.since or a.until or a.before or a.after or a.mode != "hits":
-            common.note("query and selection filters are not applied to --thread")
+            index.note("query and selection filters are not applied to --thread")
         return {"mode": "thread", "root_id": root, "total": len(rows), "rows": [self.hit(r, tz, [], a.width) for r in rows]}
 
 

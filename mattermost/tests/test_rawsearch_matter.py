@@ -17,7 +17,7 @@ from unittest import mock
 
 from rawlayer import conf
 from rawlayer.capture import fsio
-from rawlayer.search import common
+from rawlayer.search import fts, index
 from mattermost import search as matter
 from mattermost.tests import ledgerfix as L
 from mattermost.tests.fixtures import TEST_PARENT, Fixture, mm_file
@@ -237,7 +237,7 @@ class TestBuild(Scenario):
 class TestSearch(Scenario):
     def test_chunk_units_cover_the_live_posts_in_order(self):
         from rawlayer.search import dense
-        con, _meta, _fresh = common.open_search(self.dr, matter.SPEC)
+        con, _meta, _fresh = index.open_search(self.dr, matter.SPEC)
         self.addCleanup(con.close)
         units = {c: matter.DRIVER.chunk_units(con, c) for c in matter.DRIVER.changed_containers(con, 0)}
         live = {r[0] for r in con.execute("SELECT post_id FROM matter WHERE deleted=0 AND system=0 AND message!=''")}
@@ -370,7 +370,7 @@ class TestSearch(Scenario):
         self.assertEqual(env["tz"], "+09:00")
         env = search(self.cfg, '"가나, 다라" -마바')         # the separator token is shown as <S>, as in --explain
         self.assertEqual((env["fts"], env["exclude_fts"]), ('"가나 <S> 다라"', '"마바"'))
-        self.assertNotIn(common.ti.SEP, json.dumps(env, ensure_ascii=False))
+        self.assertNotIn(fts.SEP, json.dumps(env, ensure_ascii=False))
 
     def test_filters(self):
         self.assertEqual(keys(search(self.cfg, "메시지", "--channel", "개발")), [k("pa09")])
@@ -603,7 +603,7 @@ class TestApplier(unittest.TestCase):
     @staticmethod
     def fresh(full):
         con = sqlite3.connect(":memory:", isolation_level=None)
-        con.executescript(common.META_DDL)
+        con.executescript(index.META_DDL)
         matter.SPEC.create_tables(con)
         if not full:
             matter.SPEC.create_triggers(con)
@@ -628,7 +628,7 @@ class TestApplier(unittest.TestCase):
                     self.rec("mm:ch:c1", 1, native="not a dict"), self.rec("mm:file:f1", 1, native={"name": "a"})):
             self.app.record(bad, 2)
         self.app.end_manifest(2)
-        counts = common.read_counts(self.con)
+        counts = index.read_counts(self.con)
         self.assertEqual((counts["stale_rev"], counts["bad_record"], counts["bad_key"]), (1, 5, 2))
         self.assertEqual((counts["bad_native"], counts["skipped_file"], counts["ts_unknown"]), (1, 1, 1))
         self.app.record(self.rec(key, 2, op="absent"), 3)

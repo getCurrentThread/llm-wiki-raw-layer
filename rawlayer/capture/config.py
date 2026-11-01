@@ -63,7 +63,7 @@ class Config:
         parent = Path(paths.DATA_PARENT).resolve()
         raw = self.data_root / "raw"
         # The same folders llm-wiki's capture checked. <data_root>/index belongs to the search side, which guards it
-        # itself (rawlayer.search.common.load_data_root): capture's acceptance must not depend on it.
+        # itself (rawlayer.search.index.load_data_root): capture's acceptance must not depend on it.
         for p in [self.data_root, raw, self.data_root / "reports"] + \
                 [raw / d for d in ("ledger", "manifests", ".state", ".work", ".verify")]:
             if p.exists(follow_symlinks=False) and not paths.inside(p.resolve(), parent):

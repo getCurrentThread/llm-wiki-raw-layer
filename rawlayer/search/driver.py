@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The query half of an app's search.py. An app's search module subclasses SearchDriver for its row model and
 delegates the module-level run()/add_arguments() the CLI calls (rawlayer/search/cli.py) to the subclass
-instance; the fold/index half stays where it was, in the module's SourceIndex subclass (common.py):
+instance; the fold/index half stays where it was, in the module's SourceIndex subclass (index.py):
 
   class KakaoSearch(SearchDriver):
       name, table, fts_table, sort_cols, ...   # the source's facts
@@ -18,11 +18,11 @@ import sqlite3
 import sys
 from typing import NamedTuple
 
-from . import common
 from . import dense
+from . import fts
+from . import index
 from . import normalize
-from . import textindex as ti
-from .common import UsageError
+from .index import UsageError
 
 WINDOW_TERM_ROWS = 2000              # a term in more rows than this is too common to pair across rows
 
@@ -37,8 +37,8 @@ class Filters:
 
     def __init__(self, a, tz):
         self.where, self.params = [], []
-        self.since = common.parse_when(a.since, tz) if a.since else None
-        self.until = common.parse_when(a.until, tz, end=True) if a.until else None
+        self.since = index.parse_when(a.since, tz) if a.since else None
+        self.until = index.parse_when(a.until, tz, end=True) if a.until else None
         col = f"t.{self.range_col}"
         if self.since is not None or self.until is not None:
             self.where.append(f"{col} > 0")
@@ -104,7 +104,7 @@ class SearchDriver:
     # ---- arguments and validation
     def add_arguments(self, p):
         """The search subcommand's arguments: the shared ones, the source's own (arguments()), then the cursors."""
-        common.add_search_arguments(p, self.modes, sender_help=self.sender_help)
+        index.add_search_arguments(p, self.modes, sender_help=self.sender_help)
         self.arguments(p)
         p.add_argument("--before", metavar="CURSOR",
                        help=f"browse: the page older than this cursor ({self.cursor_form}, printed with each page)")
@@ -119,9 +119,9 @@ class SearchDriver:
         return None
 
     def parse_cursor(self, s, flag, before=True):
-        """The keyset cursor of --before/--after -> the row's sort key values (common.parse_cursor's
+        """The keyset cursor of --before/--after -> the row's sort key values (index.parse_cursor's
         ts.n.row form; a source whose sort key is not all ints overrides)."""
-        return common.parse_cursor(s, flag, before=before)
+        return index.parse_cursor(s, flag, before=before)
 
     # ---- the hooks a row model implements
     def filters(self, a, tz):
@@ -156,7 +156,7 @@ class SearchDriver:
                 if label:
                     break
         return {g.key: gid, "label": label, **{k: found[c] if found else "" for k, c in g.extra}, "n": r["n"],
-                **common.day_span(r["f"], r["l"], tz)}
+                **index.day_span(r["f"], r["l"], tz)}
 
     def group_label(self, r, mode):
         """(label, ident) of a group row for the text output."""
@@ -201,8 +201,8 @@ class SearchDriver:
         are the ones reported; a rewrite the compiler refuses (a literal term next to the OR it added) is retried
         without the added alternatives."""
         try:
-            typed = ti.build_fts_query(query)
-        except ti.QueryError as e:
+            typed = fts.build_fts_query(query)
+        except fts.QueryError as e:
             raise UsageError(f"bad query: {e}") from None
         if literal:
             return typed, None, None
@@ -212,8 +212,8 @@ class SearchDriver:
             if nq == canonical:
                 break
             try:
-                return ti.build_fts_query(nq), typed, nq
-            except ti.QueryError:
+                return fts.build_fts_query(nq), typed, nq
+            except fts.QueryError:
                 continue
         return typed, None, None
 
@@ -222,8 +222,8 @@ class SearchDriver:
         loose = None if literal else normalize.relax(query)
         if loose:
             try:
-                return ti.build_fts_query(loose), loose
-            except ti.QueryError:
+                return fts.build_fts_query(loose), loose
+            except fts.QueryError:
                 pass
         return None
 
@@ -233,7 +233,7 @@ class SearchDriver:
 
     def body(self, q, flt, extra_where=(), extra_params=()):
         if q is not None:
-            frm, where, params = ti.sql_parts(q, self.table, self.fts_table, alias="t")
+            frm, where, params = fts.sql_parts(q, self.table, self.fts_table, alias="t")
         else:
             frm, where, params = f"{self.table} t", [], []
         where = list(where) + flt.where + list(extra_where)
@@ -259,7 +259,7 @@ class SearchDriver:
 
     def rows_by_key(self, con, keys, q, flt):
         """{rec_key: row} of the rows with these stable keys that pass the filters and q's excluded terms."""
-        frm, where, params = ti.sql_parts(q._replace(fts="", verify=[], weak=[]), self.table, self.fts_table, alias="t")
+        frm, where, params = fts.sql_parts(q._replace(fts="", verify=[], weak=[]), self.table, self.fts_table, alias="t")
         keys, out = list(keys), {}
         for i in range(0, len(keys), 400):
             kw, kp = self.key_where(keys[i:i + 400])
@@ -302,7 +302,7 @@ class SearchDriver:
         every positive term; the tightest first (fewest rows between the ones holding the terms), then the newest.
         Each is named by its row holding the most terms (its anchor). None when there is none: no sidecar, an OR,
         fewer than two terms, or a term in more than WINDOW_TERM_ROWS rows."""
-        terms = ti._split_terms(query)
+        terms = fts._split_terms(query)
         pos = [normalize._show("AND", p, t) for op, p, t in terms if op == "AND"]
         neg = [normalize._show(op, p, t) for op, p, t in terms if op == "NOT"]
         path = dense.sidecar_path(data_root, self.name)
@@ -317,7 +317,7 @@ class SearchDriver:
                 return None
             sets.append(keys)
         try:
-            side = common.open_ro(path)
+            side = index.open_ro(path)
             try:
                 chunks = None
                 for keys in sets:
@@ -401,9 +401,9 @@ class SearchDriver:
         if a.mode == "count":
             return {"mode": "count", "total": total, "rows": []}
         if a.mode == "timeline":
-            rows = con.execute(f"SELECT {common.month_sql('t.ts', tz)} AS bucket, count(*) AS n {body} AND t.ts > 0 "
+            rows = con.execute(f"SELECT {index.month_sql('t.ts', tz)} AS bucket, count(*) AS n {body} AND t.ts > 0 "
                                f"GROUP BY bucket ORDER BY bucket", params).fetchall()
-            kept, omitted = common.clip_buckets([{"bucket": r["bucket"], "n": r["n"]} for r in rows], a.limit)
+            kept, omitted = index.clip_buckets([{"bucket": r["bucket"], "n": r["n"]} for r in rows], a.limit)
             return {"mode": "timeline", "total": total, "rows": kept, "omitted_buckets": omitted}
         col = self.group_modes[a.mode].col
         rows = con.execute(f"SELECT {col} AS gid, count(*) AS n, MIN(CASE WHEN t.ts > 0 THEN t.ts END) AS f, "
@@ -413,10 +413,10 @@ class SearchDriver:
 
     # ---- entry point (what the module-level run() delegates to)
     def run(self, a):
-        data_root = common.load_data_root(a.config)
-        tz = common.parse_tz(a.tz)
-        common.check_numbers(a)
-        query = common.query_text(a)
+        data_root = index.load_data_root(a.config)
+        tz = index.parse_tz(a.tz)
+        index.check_numbers(a)
+        query = index.query_text(a)
         if a.before and a.after:
             raise UsageError("give --before or --after, not both")
         extra = self.check_args(a)
@@ -433,9 +433,9 @@ class SearchDriver:
         relaxed = window = False
         if query is not None and extra is None:
             q, exact, normalized = self.compile(query, a.literal)
-        con, meta, fresh = common.open_search(data_root, self.spec)
+        con, meta, fresh = index.open_search(data_root, self.spec)
         try:
-            common.warn_if_stale(self.spec, fresh)
+            index.warn_if_stale(self.spec, fresh)
             flt = self.filters(a, tz)
             if extra is not None:
                 res = self.extra_result(con, a, extra, query, tz)
@@ -449,14 +449,14 @@ class SearchDriver:
                 if q is not None:
                     if a.explain and not a.json:
                         print(f"# normalized query: {normalized or '(as typed)'}")
-                        print(f"# fts5 index expr : {common.show_fts(q.fts) or '(none -- full scan)'}")
+                        print(f"# fts5 index expr : {index.show_fts(q.fts) or '(none -- full scan)'}")
                         print(f"# literal verify  : {q.verify or '-'}   exclude: {q.exclude or '-'}   "
-                              f"weak: {q.weak or '-'}   exclude expr: {common.show_fts(q.exclude_fts) or '-'}")
+                              f"weak: {q.weak or '-'}   exclude expr: {index.show_fts(q.exclude_fts) or '-'}")
                     if q.weak:
-                        common.note(f"{', '.join(q.weak)}: a single character cannot use the n-gram index; "
+                        index.note(f"{', '.join(q.weak)}: a single character cannot use the n-gram index; "
                                     f"falling back to a slower substring scan")
                     elif not q.fts:
-                        common.note("no term could use the index, so this is a full scan")
+                        index.note("no term could use the index, so this is a full scan")
                 if a.mode == "hits" and (q is None or cursor):
                     res = self.browse(con, a, q, flt, cursor, tz)
                 elif a.mode == "hits":
@@ -474,9 +474,9 @@ class SearchDriver:
                         if win and res is not None:
                             res["total"], window = win[0], True
                         if res is None:
-                            common.note(f"--hybrid unavailable ({hy['reason']}): keyword hits only")
+                            index.note(f"--hybrid unavailable ({hy['reason']}): keyword hits only")
                         elif hy["stale"]:
-                            common.note(f"the embeddings are behind the index: what changed since rank by keyword "
+                            index.note(f"the embeddings are behind the index: what changed since rank by keyword "
                                         f"only until `manage.py embed {self.name}` runs")
                     if res is None:
                         res = self.hits(con, a, q, flt, tz, exact)
@@ -485,9 +485,9 @@ class SearchDriver:
                             (q, normalized), relaxed = lo, True
                             res = self.hits(con, a, q, flt, tz)
                     if relaxed:
-                        common.note("no row matched every term, so these rows match any of them (relaxed)")
+                        index.note("no row matched every term, so these rows match any of them (relaxed)")
                     if window:
-                        common.note("no row held every term, so the keyword list is the rows of stretches of one "
+                        index.note("no row held every term, so the keyword list is the rows of stretches of one "
                                     "conversation or page that hold them all between them (window)")
                     if hy is not None:
                         res["hybrid"] = hy
@@ -496,19 +496,19 @@ class SearchDriver:
             if a.json:
                 env = {"source": self.name, "mode": res["mode"], "query": query, "normalized_query": normalized,
                        "relaxed": relaxed, "window": window,
-                       "fts": common.show_fts(q.fts) if q else None,
-                       "exclude_fts": common.show_fts(q.exclude_fts) if q else None,
+                       "fts": index.show_fts(q.fts) if q else None,
+                       "exclude_fts": index.show_fts(q.exclude_fts) if q else None,
                        "weak": q.weak if q else [], "verify": q.verify if q else [], "exclude": q.exclude if q else [],
-                       "filters": flt.summary(a), "tz": common.tz_label(tz)}
+                       "filters": flt.summary(a), "tz": index.tz_label(tz)}
                 env.update({k: v for k, v in res.items() if k != "mode"})
                 env.update(built_at=meta.get("built_at"), updated_at=meta.get("updated_at"),
                            index={"seq": fresh["seq"], "ledger_seq": fresh["ledger_seq"], "stale": fresh["stale"]})
-                print(common.dumps(env))
+                print(index.dumps(env))
             else:
                 self.render(res, a, tz)
         finally:
             con.close()
-        return common.EXIT_OK
+        return index.EXIT_OK
 
     # ---- text output
     def render(self, res, a, tz):
@@ -518,7 +518,7 @@ class SearchDriver:
             out(f"=== {self.name}: {total} match(es) ===\n")
             return
         if mode == "timeline":
-            out(f"=== {self.name}: {total} match(es) by month ({common.tz_label(tz)}) ===\n")
+            out(f"=== {self.name}: {total} match(es) by month ({index.tz_label(tz)}) ===\n")
             if not rows:
                 out("  (no matches)\n")
             if res.get("omitted_buckets"):
@@ -535,7 +535,7 @@ class SearchDriver:
             for r in rows:
                 span = f"{r['first']}..{r['last']}" if r["first"] else ""
                 label, ident = self.group_label(r, mode)
-                out(f"  {r['n']:7,}  {common.pad(label, 38)} {span:22} {ident}\n")
+                out(f"  {r['n']:7,}  {index.pad(label, 38)} {span:22} {ident}\n")
             return
         self.render_rest(res, a, tz)
 

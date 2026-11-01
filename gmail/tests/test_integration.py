@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from rawlayer import schedule
 from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
-from rawlayer.search import common, textindex as ti
+from rawlayer.search import fts, index
 from gmail.fetch import sync, sync_config
 from gmail.search import SPEC, DRIVER, GmailApplier, mail_paragraphs
 from gmail.origins import GmArchive
@@ -26,7 +26,7 @@ class IntegrationTests(unittest.TestCase):
 
     def build(self):
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
 
     def query(self, *args):
         rc, out, err = h.run_rawsearch(["gmail", "--config", self.fx.config_path, "--json", *args])
@@ -34,7 +34,7 @@ class IntegrationTests(unittest.TestCase):
         return json.loads(out)
 
     def snapshot(self):
-        with contextlib.closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
+        with contextlib.closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
                     for t in ("msgs", "states", "labels", "membership", "counts")}
 
@@ -72,7 +72,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.query("deployment")["total"], 0)
         self.assertEqual(self.query("deployment", "--include-removed")["total"], 2)
         incremental = self.snapshot()
-        common.update(self.fx.data_root, SPEC, rebuild=True)
+        index.update(self.fx.data_root, SPEC, rebuild=True)
         self.assertEqual(incremental, self.snapshot())
 
     def test_hex_text_paging_and_context(self):
@@ -93,9 +93,9 @@ class IntegrationTests(unittest.TestCase):
         sync(self.fx.root, self.http.client(), full=True)
         self.build()
         self.assertEqual([r["msg_id"] for r in self.query("예산")["rows"]], ["abc126", "abc125"])
-        with contextlib.closing(sqlite3.connect(common.index_path(self.fx.data_root, SPEC))) as con:
+        with contextlib.closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
             self.assertEqual(dict(con.execute("SELECT msg_id, tng FROM msgs")),
-                             {"abc126": ti.ng_text("예산 보고")} | {m: ti.ng_text("Synthetic deployment") for m in (MID, OTHER, "abc125")})
+                             {"abc126": fts.ng_text("예산 보고")} | {m: fts.ng_text("Synthetic deployment") for m in (MID, OTHER, "abc125")})
 
     def test_mail_paragraphs_and_chunk_units(self):
         body = ("안녕하세요.\n\n일정 확인 부탁드립니다.\n> 이전 메일 인용\n\n"
@@ -106,7 +106,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(mail_paragraphs("위\n-----Original Message-----\n아래"), ["위"])
         self.assertEqual(mail_paragraphs("보고서 작성: 담당자\n본문"), ["보고서 작성: 담당자\n본문"])
         self.build()
-        con, _meta, _fresh = common.open_search(self.fx.data_root, SPEC)
+        con, _meta, _fresh = index.open_search(self.fx.data_root, SPEC)
         self.addCleanup(con.close)
         self.assertEqual(set(DRIVER.changed_containers(con, 0)) >= {MID, OTHER}, True)
         label, units = DRIVER.chunk_units(con, OTHER)
@@ -168,7 +168,7 @@ class IntegrationTests(unittest.TestCase):
         snapshots = []
         for full in (False, True):
             with contextlib.closing(sqlite3.connect(":memory:")) as con:
-                con.executescript(common.META_DDL)
+                con.executescript(index.META_DDL)
                 SPEC.create_tables(con)
                 applier = GmailApplier(con, full)
                 for rec in sorted(recs, key=lambda r: r["kind"] == "msg"):

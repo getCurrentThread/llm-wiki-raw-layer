@@ -9,7 +9,7 @@ from unittest.mock import patch
 from gmail.fetch import sync, main
 from gmail.mime import extract
 from gmail.search import SPEC
-from rawlayer.search import common
+from rawlayer.search import index
 from appkit.archive import load
 from .fixtures import Fixture, Transport, MID, OTHER, raw_message
 from tests.core import appfix as h
@@ -53,7 +53,7 @@ class ContentOnlyTests(unittest.TestCase):
         self.assertIn("_removedAt", state)
         self.assertEqual(load(self.fx.root / "manifest.json")["cursor"], "30")
         self.assertEqual(h.capture(self.fx), 0)
-        common.update(self.fx.data_root, SPEC)
+        index.update(self.fx.data_root, SPEC)
         for extra, expected in (([], 2), (["--include-removed"], 3)):
             rc, out, err = h.run_rawsearch(["gmail", "--config", self.fx.config_path,
                                           "deployment", "--json", *extra])

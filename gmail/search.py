@@ -2,7 +2,7 @@
 import json
 import re
 from rawlayer.capture.canon import pk_text
-from rawlayer.search import common, search as drv, textindex as ti
+from rawlayer.search import driver as drv, fts, index
 from .keys import gm_id, MAX_MS
 
 NAME, HELP, ORIGIN = "gmail", "search Gmail messages, labels and threads", "gm_archive"
@@ -24,10 +24,10 @@ CREATE TABLE membership(msg_id TEXT NOT NULL,label_id TEXT NOT NULL,
 
 
 def _s(value):
-    return common.clean(value) if isinstance(value, str) else ""
+    return index.clean(value) if isinstance(value, str) else ""
 
 
-class GmailApplier(common.SimpleApplier):
+class GmailApplier(index.SimpleApplier):
     origin = ORIGIN
 
     def record(self, rec, seq):
@@ -62,7 +62,7 @@ class GmailApplier(common.SimpleApplier):
             files = n.get("attachments", [])
             attachments = "\n".join(_s(v.get("filename")) for v in files if isinstance(v, dict)) if isinstance(files, list) else ""
             text = "\n".join((subject, sender, recipients, body, attachments))
-            ng = ti.ng_text(text)
+            ng = fts.ng_text(text)
             self.con.execute("""INSERT INTO msgs(key,msg_id,thread_id,rev,seq,held,ts,ts_ms,sender,subject,
              recipients,body_text,attachments,message,ng,tng) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(msg_id) DO UPDATE SET rev=excluded.rev,seq=excluded.seq,held=excluded.held,
@@ -70,7 +70,7 @@ class GmailApplier(common.SimpleApplier):
              subject=excluded.subject,recipients=excluded.recipients,body_text=excluded.body_text,
              attachments=excluded.attachments,message=excluded.message,ng=excluded.ng,tng=excluded.tng""",
              (key, ident, n["thread_id"], rev, seq, held, ts // 1000, ts, sender, subject,
-              recipients, body, attachments, text, ng, ti.title_ng(subject, ng)))
+              recipients, body, attachments, text, ng, fts.title_ng(subject, ng)))
         elif kind == "lbls":
             labels = n.get("label_ids")
             if not isinstance(labels, list) or not all(isinstance(v, str) and pk_text(v) for v in labels):
@@ -93,7 +93,7 @@ class GmailApplier(common.SimpleApplier):
           THEN 1 ELSE 0 END""")
 
 
-class GmailIndex(common.SimpleIndex):
+class GmailIndex(index.SimpleIndex):
     name = NAME
     schema_version = extractor_version = "gmail-2"
     schema, table, applier_class, title = SCHEMA, "msgs", GmailApplier, True
@@ -111,14 +111,14 @@ class Filters(drv.Filters):
         self.selector |= bool(a.label or a.from_address or a.thread)
         for value in (a.sender, a.from_address):
             if value:
-                sql, params = common.like("t.sender", value)
+                sql, params = index.like("t.sender", value)
                 self.where.append(sql)
                 self.params += params
         if a.thread:
             self.where.append("t.thread_id=?")
             self.params.append(a.thread)
         for value in a.label:
-            sql, params = common.like("l.name", value)
+            sql, params = index.like("l.name", value)
             self.where.append(f"EXISTS(SELECT 1 FROM membership m LEFT JOIN labels l ON l.label_id=m.label_id WHERE m.msg_id=t.msg_id AND (m.label_id=? OR {sql}))")
             self.params += [value] + params
 
@@ -171,19 +171,19 @@ class GmailSearch(drv.SearchDriver):
 
     def check_args(self, a):
         if a.thread and gm_id(a.thread) is None:
-            raise common.UsageError("--thread needs a Gmail hex id")
+            raise index.UsageError("--thread needs a Gmail hex id")
 
     def parse_cursor(self, value, flag, before=True):
         parts = value.split(".")
         if len(parts) != 2 or not parts[0].isascii() or not parts[0].isdigit() \
                 or len(parts[0]) > 19 or int(parts[0]) >= 2 ** 63 or gm_id(parts[1]) is None:
-            raise common.UsageError(f"{flag}: expected ts_ms.hex_id")
+            raise index.UsageError(f"{flag}: expected ts_ms.hex_id")
         return int(parts[0]), parts[1]
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "msg_id", "thread_id", "ts", "ts_ms", "sender", "subject", "recipients", "body_text", "attachments")} | {
-            "deleted": bool(r["deleted"]), "text": r["message"], "snippet": ti.highlight(r["message"], marks, width),
-            "date": common.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
+            "deleted": bool(r["deleted"]), "text": r["message"], "snippet": fts.highlight(r["message"], marks, width),
+            "date": index.fmt_ts(r["ts"], tz), "cursor": self.cursor(r)}
 
     def aggregate(self, con, a, q, flt, tz):
         if a.mode != "labels":

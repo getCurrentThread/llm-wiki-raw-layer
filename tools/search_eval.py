@@ -214,11 +214,11 @@ def split_words(a, b, rng):
 def data_root(app):
     from rawlayer import registry  # noqa: PLC0415
     from rawlayer.management.base import default_config  # noqa: PLC0415
-    from rawlayer.search import common  # noqa: PLC0415
+    from rawlayer.search import index  # noqa: PLC0415
     try:
         registry.select(app)
-        return common.load_data_root(default_config(app))
-    except (common.UsageError, registry.RegistryError) as e:
+        return index.load_data_root(default_config(app))
+    except (index.UsageError, registry.RegistryError) as e:
         raise EvalError(f"{app}: {e}") from None
 
 
@@ -358,10 +358,10 @@ def count_kinds(items):
 def ask_llm(url, model, text, timeout=180):
     """A local generative model's answer to LLM_PROMPT + text (a loopback server only, as the embedder)."""
     import urllib.request  # noqa: PLC0415
-    from rawlayer.search import common, dense  # noqa: PLC0415
+    from rawlayer.search import dense, index  # noqa: PLC0415
     try:
         endpoint = dense.check_url(url) + "/api/chat"
-    except common.UsageError as e:
+    except index.UsageError as e:
         raise EvalError(str(e)) from None
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": LLM_PROMPT + text}], "stream": False,
                        "think": False, "keep_alive": "10m", "options": {"temperature": 0.7, "num_predict": 80}})
@@ -377,13 +377,13 @@ def ask_llm(url, model, text, timeout=180):
 
 def paraphrase_query(answer, text):
     """The model's question as a plain query, or None when it is unusable or mostly the text's own bigrams."""
-    from rawlayer.search import textindex as ti  # noqa: PLC0415
+    from rawlayer.search import fts  # noqa: PLC0415
     lines = [ln for ln in answer.strip().splitlines() if ln.strip()]
     q = " ".join(w for w in re.sub(r"[^0-9A-Za-z가-힣\s]", " ", lines[0] if lines else "").split() if w.upper() != "OR")
-    qt = {t for t in ti.ng_tokens(q) if t != ti.SEP}
+    qt = {t for t in fts.ng_tokens(q) if t != fts.SEP}
     if not 4 <= len(q) <= PARA_MAX_LEN or len(qt) < 2:
         return None
-    return q if len(qt & set(ti.ng_tokens(text))) / len(qt) <= PARA_MAX_SHARED else None
+    return q if len(qt & set(fts.ng_tokens(text))) / len(qt) <= PARA_MAX_SHARED else None
 
 
 def paraphrase(app, n, seed, pool, model, url, runner):

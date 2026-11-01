@@ -50,10 +50,10 @@ from collections import Counter
 
 from rawlayer.capture.canon import as_int
 from rawlayer.capture.model import OPS
-from rawlayer.search import common
-from rawlayer.search import search as drv
-from rawlayer.search import textindex as ti
-from rawlayer.search.common import UsageError
+from rawlayer.search import index
+from rawlayer.search import driver as drv
+from rawlayer.search import fts
+from rawlayer.search.index import UsageError
 
 NAME = "mattermost"
 HELP = "search Mattermost posts (index: <data_root>/index/mattermost.sqlite)"
@@ -121,7 +121,7 @@ _POST_COLS = ("rev", "seq", "held", "channel_id", "ts", "ts_ms", "user_id", "typ
 
 def _s(v):
     """A stripped str, or '' for anything that is not a str."""
-    return common.clean(v.strip()) if isinstance(v, str) else ""
+    return index.clean(v.strip()) if isinstance(v, str) else ""
 
 
 def file_names(native):
@@ -141,7 +141,7 @@ def post_text(native, counts=None):
     msg = native.get("message")
     if isinstance(msg, str):
         if msg.strip():
-            return common.clean(msg.strip()), "message"
+            return index.clean(msg.strip()), "message"
     elif msg is not None and counts is not None:
         counts["body_other"] += 1
     parts = []
@@ -159,7 +159,7 @@ def post_text(native, counts=None):
             if isinstance(fld, dict):
                 v = " ".join(str(fld.get(k) or "").strip() for k in ("title", "value")).strip()
                 if v:
-                    parts.append(common.clean(v))
+                    parts.append(index.clean(v))
     if parts:
         return "\n".join(parts), "attachment"
     names = file_names(native)
@@ -171,14 +171,14 @@ def post_text(native, counts=None):
 def _ts_ms(ts_ms, create_at):
     """create_at in ms when it is a plausible epoch (2001..2286), else 0."""
     for v in (ts_ms, as_int(create_at)):
-        if common.is_int(v) and 1_000_000_000_000 <= v < 10_000_000_000_000:
+        if index.is_int(v) and 1_000_000_000_000 <= v < 10_000_000_000_000:
             return v
     return 0
 
 
 def _ident(v):
     """An id field (channel_id, user_id, root_id): a str, else ''."""
-    return common.clean(v) if isinstance(v, str) else ""
+    return index.clean(v) if isinstance(v, str) else ""
 
 
 def _jlist(items):
@@ -188,7 +188,7 @@ def _jlist(items):
 def _ng(msg, body_from, names):
     """The n-gram shadow: the text, plus the file names (a JSON list) when the text is not made of them."""
     extra = " ".join(json.loads(names)) if names and body_from != "files" else ""
-    return ti.ng_text(msg + "\n" + extra if extra else msg)
+    return fts.ng_text(msg + "\n" + extra if extra else msg)
 
 
 class MatterApplier:
@@ -207,14 +207,14 @@ class MatterApplier:
             self.counts["bad_record"] += 1
             return
         origin, op, rev, key = rec.get("origin"), rec.get("op"), rec.get("rev"), rec.get("key")
-        if origin != ORIGIN or op not in OPS or not common.is_int(rev) or not isinstance(key, str):
+        if origin != ORIGIN or op not in OPS or not index.is_int(rev) or not isinstance(key, str):
             self.counts["bad_record"] += 1
             return
         m = _KEY.fullmatch(key)
         if m is None or rec.get("kind") != m.group(1):
             self.counts["bad_key"] += 1
             return
-        kind, ident = m.group(1), common.clean(m.group(2))
+        kind, ident = m.group(1), index.clean(m.group(2))
         if kind == "post":
             self._post(rec, seq, op, rev, ident)
         elif kind == "ch":
@@ -263,7 +263,7 @@ class MatterApplier:
             rc = as_int(native.get("reply_count"))
             rc = rc if rc is not None and 0 <= rc < _I64 else 0
             fids = native.get("file_ids")
-            fids = [common.clean(f) for f in fids if isinstance(f, str)] if isinstance(fids, list) else []
+            fids = [index.clean(f) for f in fids if isinstance(f, str)] if isinstance(fids, list) else []
             names = file_names(native)
             edit_at, delete_at = as_int(native.get("edit_at")), as_int(native.get("delete_at"))
             if edit_at is not None and edit_at > 0:
@@ -353,7 +353,7 @@ class MatterApplier:
 
     # ---- derive
     def end_manifest(self, seq):
-        common.bump_counts(self.con, self.counts)
+        index.bump_counts(self.con, self.counts)
         self.counts.clear()
         if self.full:
             return
@@ -406,7 +406,7 @@ class MatterApplier:
                     (cid, label, name, team, ch_type, n, senders, first, last, nd, nsys, ngone))
 
 
-class MatterIndex(common.SourceIndex):
+class MatterIndex(index.SourceIndex):
     name = NAME
     origins = frozenset((ORIGIN,))
     schema_version = "matter-2"
@@ -415,10 +415,10 @@ class MatterIndex(common.SourceIndex):
 
     def create_tables(self, con):
         con.executescript(SCHEMA)
-        con.execute(ti.fts_ddl("matter"))
+        con.execute(fts.fts_ddl("matter"))
 
     def create_triggers(self, con):
-        common.create_triggers(con, "matter", "matter_fts")
+        index.create_triggers(con, "matter", "matter_fts")
 
     def applier(self, con, full):
         return MatterApplier(con, full)
@@ -431,7 +431,7 @@ class MatterIndex(common.SourceIndex):
                "channels": con.execute("SELECT count(*) FROM channels").fetchone()[0],
                "users": con.execute("SELECT count(*) FROM users").fetchone()[0],
                "stored_files": con.execute("SELECT count(*) FROM blobs WHERE held = 1").fetchone()[0]}
-        out.update(common.read_counts(con))
+        out.update(index.read_counts(con))
         return out
 
 
@@ -476,20 +476,20 @@ class _Filters(drv.Filters):
         if a.channel:
             ors = []
             for c in a.channel:
-                lab, p1 = common.like("t.channel", c)
-                nam, p2 = common.like("name", c)
+                lab, p1 = index.like("t.channel", c)
+                nam, p2 = index.like("name", c)
                 ors.append(f"({lab} OR t.channel_id = ? OR "
                            f"t.channel_id IN (SELECT channel_id FROM channels WHERE {nam}))")
                 self.params += p1 + [c.strip()] + p2
             self.where.append("(" + " OR ".join(ors) + ")")
         if a.team:
-            sql, ps = common.like("t.team", a.team)
+            sql, ps = index.like("t.team", a.team)
             self.where.append(sql)
             self.params += ps
         if a.sender:
-            snd, p1 = common.like("t.sender", a.sender)
-            nam, p2 = common.like("name", a.sender)
-            nick, p3 = common.like("nickname", a.sender)
+            snd, p1 = index.like("t.sender", a.sender)
+            nam, p2 = index.like("name", a.sender)
+            nick, p3 = index.like("nickname", a.sender)
             self.where.append(f"({snd} OR t.user_id = ? OR "
                               f"t.user_id IN (SELECT user_id FROM users WHERE {nam} OR {nick}))")
             self.params += p1 + [a.sender.strip()] + p2 + p3
@@ -563,13 +563,13 @@ class MatterSearch(drv.SearchDriver):
         return {"id": r["id"], "key": f"mm:post:{r['post_id']}", "post_id": r["post_id"],
                 "channel_id": r["channel_id"],
                 "channel": r["channel"], "team": r["team"], "ts": r["ts"], "ts_ms": r["ts_ms"],
-                "date": common.fmt_ts(r["ts"], tz), "sender": r["sender"], "user_id": r["user_id"],
+                "date": index.fmt_ts(r["ts"], tz), "sender": r["sender"], "user_id": r["user_id"],
                 "type": r["type"],
                 "body_from": r["body_from"], "root_id": r["root_id"], "reply_count": r["reply_count"],
                 "files": _jl(r["files"]), "file_ids": _jl(r["file_ids"]), "stored": _jd(r["stored"]),
                 "edited": bool(r["edited"]),
                 "deleted": bool(r["deleted"]), "system": bool(r["system"]), "gone": bool(r["gone"]),
-                "cursor": self.cursor(r), "snippet": ti.highlight(msg, marks, width) if msg else self.placeholder(r),
+                "cursor": self.cursor(r), "snippet": fts.highlight(msg, marks, width) if msg else self.placeholder(r),
                 "text": msg}
 
     def context(self, con, r, n, a, tz):
@@ -584,10 +584,10 @@ class MatterSearch(drv.SearchDriver):
             f"{hide} ORDER BY ts_ms, post_id LIMIT ?", key + (n,)).fetchall()
         out = []
         for c in list(reversed(before)) + [r] + list(after):
-            text = common.flat(c["message"]) or self.placeholder(c)
-            out.append({"id": c["id"], "post_id": c["post_id"], "ts": c["ts"], "date": common.fmt_ts(c["ts"], tz),
+            text = index.flat(c["message"]) or self.placeholder(c)
+            out.append({"id": c["id"], "post_id": c["post_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
                         "sender": c["sender"], "user_id": c["user_id"], "root_id": c["root_id"],
-                        "text": common.clip(text, a.width), "deleted": bool(c["deleted"]),
+                        "text": index.clip(text, a.width), "deleted": bool(c["deleted"]),
                         "system": bool(c["system"]),
                         "gone": bool(c["gone"]), "edited": bool(c["edited"]), "hit": c["id"] == r["id"]})
         return out
@@ -618,13 +618,13 @@ class MatterSearch(drv.SearchDriver):
         if a.channel:
             ors = []
             for c in a.channel:
-                lab, p1 = common.like("label", c)
-                nam, p2 = common.like("name", c)
+                lab, p1 = index.like("label", c)
+                nam, p2 = index.like("name", c)
                 ors.append(f"({lab} OR {nam} OR channel_id = ?)")
                 params += p1 + p2 + [c.strip()]
             where.append("(" + " OR ".join(ors) + ")")
         if a.team:
-            sql, ps = common.like("team", a.team)
+            sql, ps = index.like("team", a.team)
             where.append(sql)
             params += ps
         w = (" WHERE " + " AND ".join(where)) if where else ""
@@ -636,7 +636,7 @@ class MatterSearch(drv.SearchDriver):
              "team": r["team"], "type": r["ch_type"], "n": r["n"], "senders": r["senders"],
              "n_deleted": r["n_deleted"],
              "n_system": r["n_system"], "n_gone": r["n_gone"],
-             **common.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
+             **index.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
 
     def extra_result(self, con, a, extra, query, tz):
         """The thread holding post a.thread: its root first, then every reply by (create_at, post_id). Selection
@@ -650,7 +650,7 @@ class MatterSearch(drv.SearchDriver):
         if a.context:
             skipped.append("--context")
         if skipped:
-            common.note(f"{', '.join(skipped)} not applied -- --thread retrieves a whole thread as one unit; search "
+            index.note(f"{', '.join(skipped)} not applied -- --thread retrieves a whole thread as one unit; search "
                         f"with those instead")
         pid = a.thread.strip()
         seed = con.execute("SELECT * FROM matter WHERE post_id = ?", (pid,)).fetchone()   # deleted or not: it was named
@@ -669,15 +669,15 @@ class MatterSearch(drv.SearchDriver):
             else:
                 kept.append(r)
         if hid_d:
-            common.note(f"{hid_d} deleted post(s) hidden from this thread; --include-deleted shows them")
+            index.note(f"{hid_d} deleted post(s) hidden from this thread; --include-deleted shows them")
         if hid_s:
-            common.note(f"{hid_s} system post(s) hidden from this thread; --include-system shows them")
+            index.note(f"{hid_s} system post(s) hidden from this thread; --include-system shows them")
         if not root_found:
-            common.note("the thread's root post is not in the index (never archived); showing the replies")
+            index.note("the thread's root post is not in the index (never archived); showing the replies")
         out = []
         for r in kept:
             h = self.hit(r, tz, [], a.width)
-            h["snippet"] = common.clip(common.flat(r["message"]) or self.placeholder(r), a.width)
+            h["snippet"] = index.clip(index.flat(r["message"]) or self.placeholder(r), a.width)
             h["root"] = r["post_id"] == root
             out.append(h)
         return {"mode": "thread", "root_id": root, "root_found": root_found, "channel_id": seed["channel_id"],
@@ -692,7 +692,7 @@ class MatterSearch(drv.SearchDriver):
             for r in rows:
                 span = f"{r['first']}..{r['last']}" if r["first"] else ""
                 team = f"[{r['team']}]" if r["team"] else ""
-                out(f"  {r['n']:7,}  {common.pad(r['label'], 32)} {common.pad(team, 14)} {span:22} "
+                out(f"  {r['n']:7,}  {index.pad(r['label'], 32)} {index.pad(team, 14)} {span:22} "
                     f"id={r['channel_id']}\n")
             return
         if mode == "thread":
@@ -719,9 +719,9 @@ class MatterSearch(drv.SearchDriver):
             else:
                 out("  (no posts)\n")
             for h in rows:
-                where = f" | {common.pad(_place(h), 20)}" if multi else ""
-                text = common.flat(h["text"]) if h["text"] else h["snippet"]
-                out(f"{h['date']:16} | {common.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['post_id']}\n")
+                where = f" | {index.pad(_place(h), 20)}" if multi else ""
+                text = index.flat(h["text"]) if h["text"] else h["snippet"]
+                out(f"{h['date']:16} | {index.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['post_id']}\n")
             return
         shown = len(rows)
         head = f"=== {NAME}: {total} match(es)"
@@ -732,13 +732,13 @@ class MatterSearch(drv.SearchDriver):
             out("  (no matches)\n")
         prefix = f"[{NAME}] "
         for h in rows:
-            out(f"{prefix}{h['date']:16} | {common.pad(self.who(h), 18)} | {common.pad(_place(h), 26)} "
+            out(f"{prefix}{h['date']:16} | {index.pad(self.who(h), 18)} | {index.pad(_place(h), 26)} "
                 f":: {h['snippet']}{self.flags(h)}\n")
             out(f"{' ' * len(prefix)}post={h['post_id']} root={h['root_id'] or '-'} channel={h['channel_id'] or '-'}"
                 f"{' team=' + h['team'] if h['team'] else ''} cursor={h['cursor']}\n")
             for c in h.get("context", []):
                 arrow = ">>" if c["hit"] else "  "
-                out(f"     {arrow} {c['date'][5:]:11} {common.pad(self.who(c), 14)} {c['text']}"
+                out(f"     {arrow} {c['date'][5:]:11} {index.pad(self.who(c), 14)} {c['text']}"
                     f"{''.join(f' [{k}]' for k in ('deleted', 'system', 'gone') if c.get(k))}\n")
 
 
