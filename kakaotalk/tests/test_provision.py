@@ -251,5 +251,73 @@ class TestSetupCommand(unittest.TestCase):
                 keystore_v2.load_store(str(self.fx.user_dir / "appstate.dat")), str(self.fx.user_dir)), [])
 
 
+class TestRestartClient(unittest.TestCase):
+    """--restart-client restarts a running client before the memory scan (the process calls are mocked)."""
+    setUp, tearDown = TestProvision.setUp, TestProvision.tearDown
+
+    def test_a_running_client_is_restarted_before_the_scan(self):
+        for rel in provision.ROOT_FILES:                              # no copy: the chain reaches the scan
+            p = self.home.joinpath(*rel)
+            if p.exists():
+                p.unlink()
+        for new_pid, want in ((456, [456]), (None, [123])):    # None: no KakaoTalk.exe found, the running one is scanned
+            with self.subTest(new_pid=new_pid):
+                scanned = []
+                relaunch = mock.Mock(return_value=new_pid)
+                with mock.patch.object(kd, "_find_pid", lambda name="KakaoTalk.exe": 123), \
+                        mock.patch.object(provision, "relaunch_client", relaunch), \
+                        mock.patch.object(provision, "scan_memory_root",
+                                          lambda store, pid=None, note=None: scanned.append(pid)):
+                    provision.provision(self.cfg, Notes(), True, home=self.home)
+                relaunch.assert_called_once()
+                self.assertEqual(scanned, want)
+
+
+class TestUseridInMemory(unittest.TestCase):
+    """The ActionLogDB userId lookup decrypts in memory: no plaintext file beside the source, ever."""
+
+    def setUp(self):
+        import sqlite3
+        import tempfile
+        self.base = Path(tempfile.mkdtemp(prefix="llmw-"))
+        self.src_dir, work = self.base / "client", self.base / "work"
+        self.src_dir.mkdir()
+        work.mkdir()
+        self.images = {}
+        for name, ddl in (("good", "CREATE TABLE Common(userid INTEGER); INSERT INTO Common VALUES (4242);"),
+                          ("bare", "CREATE TABLE Other(x INTEGER);")):
+            p = work / (name + ".sqlite")
+            con = sqlite3.connect(p)
+            con.execute("PRAGMA journal_mode=wal")                    # the WAL header must still open
+            con.executescript(ddl)
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            con.close()
+            self.images[name] = p.read_bytes()
+        self.src = self.src_dir / "ActionLogDB.edb_1.backup"
+        self.src.write_bytes(b"\0" * 16)
+        self.connected = []
+        real = sqlite3.connect
+        self.connect = lambda target, *a, **kw: (self.connected.append(target), real(target, *a, **kw))[1]
+
+    def tearDown(self):
+        shutil.rmtree(self.base, onerror=lambda *a: None)
+
+    def lookup(self, image, live):
+        with mock.patch.object(kd, "read_shared", lambda p: b"\0" * 16), \
+                mock.patch.object(kd, "eva_decrypt", lambda data, key, iv: image), \
+                mock.patch.object(kd, "sqlcipher_decrypt", lambda data, key: image), \
+                mock.patch.object(kd.sqlite3, "connect", self.connect):
+            return kd.get_userid_live(str(self.src)) if live else kd.get_userid_backup(str(self.src), "pragma")
+
+    def test_success_and_missing_table_write_nothing(self):
+        import sqlite3
+        for live in (False, True):
+            self.assertEqual(self.lookup(self.images["good"], live), "4242")
+            with self.assertRaises(sqlite3.Error):
+                self.lookup(self.images["bare"], live)
+        self.assertEqual(sorted(p.name for p in self.src_dir.iterdir()), [self.src.name])
+        self.assertEqual(set(self.connected), {":memory:"})
+
+
 if __name__ == "__main__":
     unittest.main()

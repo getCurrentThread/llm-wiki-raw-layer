@@ -109,31 +109,30 @@ def sqlcipher_key_from_passphrase(passphrase, salt):
     return hashlib.pbkdf2_hmac("sha512", passphrase.encode() if isinstance(passphrase,str) else passphrase,
                                salt, SC_ITERS, 32)
 
+def _userid_of(dec):
+    """Common.userid of a decrypted ActionLogDB image, opened in memory: plaintext never touches the disk
+    (a file beside the source would sit in the client's own folder)."""
+    con = sqlite3.connect(":memory:")
+    try:
+        if dec[18:20] == b"\x02\x02":         # a WAL-mode header: an in-memory image opens only as rollback
+            dec = dec[:18] + b"\x01\x01" + dec[20:]
+        con.deserialize(dec)
+        r = con.execute("select userid from Common where userid is not null limit 1").fetchone()
+        return str(r[0]) if r else None
+    finally:
+        con.close()
+
 def get_userid_live(p=None):
     """라이브 ActionLogDB(SQLCipher4 + SIMON_IS_FREE) → Common.userid.
     p 를 주면 그 파일(카톡 users 루트의 ActionLogDB.edb)을, 없으면 LOCALAPPDATA 기준 경로를 쓴다."""
     from . import keystore_v2 as _kv  # noqa: PLC0415
     p = p or os.path.join(_kv.users_dir(), "ActionLogDB.edb")
     data = read_shared(p); key = sqlcipher_key_from_passphrase("SIMON_IS_FREE", data[:16])
-    dec = sqlcipher_decrypt(data, key)
-    tmp = p + ".dec.sqlite"; open(tmp,"wb").write(dec)
-    try:
-        con = sqlite3.connect(tmp); r = con.execute("select userid from Common where userid is not null limit 1").fetchone(); con.close()
-        return str(r[0]) if r else None
-    finally:
-        try: os.remove(tmp)
-        except OSError: pass
+    return _userid_of(sqlcipher_decrypt(data, key))
 
 def get_userid_backup(backup_actionlog, pragma):
     data = read_shared(backup_actionlog); key, iv = eva_key_iv("SIMON_IS_FREE")
-    dec = eva_decrypt(data, key, iv)
-    tmp = backup_actionlog + ".dec.sqlite"; open(tmp,"wb").write(dec)
-    try:
-        con = sqlite3.connect(tmp); r = con.execute("select userid from Common where userid is not null limit 1").fetchone(); con.close()
-        return str(r[0]) if r else None
-    finally:
-        try: os.remove(tmp)
-        except OSError: pass
+    return _userid_of(eva_decrypt(data, key, iv))
 
 # ---------------------------------------------------------------- 메모리 키 스캔 (라이브)
 def _find_pid(name="KakaoTalk.exe"):

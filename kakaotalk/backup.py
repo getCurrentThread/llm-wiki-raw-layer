@@ -29,6 +29,8 @@ import os
 import re
 import sqlite3
 
+from rawlayer.capture import fsio
+
 from . import katok_decrypt as kd
 from . import keystore_v2 as kv
 from . import roomlist
@@ -38,7 +40,7 @@ _SQLITE = re.compile(r"^(\d+)\.sqlite$")
 
 
 def _rows_of(path):
-    con = sqlite3.connect(path)
+    con = fsio.connect_ro(path, immutable=True)
     try:
         cols = {c[1] for c in con.execute("PRAGMA table_info(chatLogs)")}
         if "logId" not in cols:
@@ -51,7 +53,7 @@ def _rows_of(path):
 def _titles_of(path):
     """{chatId(str): title} from a decrypted chat-list database; {} when it holds nothing readable."""
     try:
-        con = sqlite3.connect(path)
+        con = fsio.connect_ro(path, immutable=True)
         try:
             return roomlist.chat_titles(con)
         finally:

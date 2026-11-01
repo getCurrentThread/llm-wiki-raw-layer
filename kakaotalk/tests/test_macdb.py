@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from Crypto.Cipher import AES
@@ -290,9 +291,10 @@ class TestMacdbOrigin(Base):
 class TestMacdbCommand(Base):
     def setUp(self):
         super().setUp()
-        self.mac = self.fx.inputs / "mac" / "nt.sqlite"
+        self.mac = self.fx.data_root / "mac" / "nt.sqlite"        # plaintext only under the data root
         self.mac.parent.mkdir(parents=True, exist_ok=True)
         self.enc = self.fx.inputs / "mac" / "enc.db"
+        self.enc.parent.mkdir(parents=True, exist_ok=True)
 
     def _build_encrypted(self, uid=UID, uuid=UUID):
         plain = self.fx.inputs / "mac" / "plain.sqlite"
@@ -333,6 +335,22 @@ class TestMacdbCommand(Base):
         rc = self.run_macdb(uuid="99999999-9999-9999-9999-999999999999", user_id=UID, db=str(self.enc))
         self.assertEqual(rc, 3)
         self.assertFalse(self.mac.exists())
+
+    def test_a_target_outside_the_data_root_is_refused(self):
+        self._build_encrypted()
+        outside = self.fx.inputs / "mac" / "nt.sqlite"
+        self.set_mac(outside)
+        rc = self.run_macdb(uuid=UUID, user_id=UID, db=str(self.enc))
+        self.assertEqual(rc, 2)
+        self.assertEqual(sorted(p.name for p in outside.parent.iterdir()), ["enc.db"])
+
+    def test_a_failed_write_leaves_no_tmp(self):
+        self._build_encrypted()
+        self.set_mac(self.mac)
+        with mock.patch.object(provision.os, "replace", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                self.run_macdb(uuid=UUID, user_id=UID, db=str(self.enc))
+        self.assertEqual(list(self.mac.parent.iterdir()), [])
 
     def test_unset_option_refused(self):
         self._build_encrypted()

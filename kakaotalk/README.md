@@ -72,7 +72,9 @@ names its senders.
 `mac_db` is an optional
 top-level path (default null): the macOS client's decrypted database, what the `macdb` origin captures. It is
 an option, not a source, so configs on machines without macOS inputs stay valid with no placeholder; when
-set, its parent directory must exist (setup's provisioning writes the file there).
+set, its parent directory must exist (setup's provisioning writes the file there). The path must lie inside
+the app's data root: `provision.run_macdb` refuses (exit 2) to write the plaintext anywhere else, and a failed
+write leaves no `.tmp` behind.
 For frozen `T1`/`T2` inputs, encrypted rooms come from `<inputs_root>/<set>/kakao_user/chat_data`. Static
 inputs remain at their configured paths and are checked against the freeze's hashes.
 
@@ -239,7 +241,11 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   While resident it prints one JSON line per event (`event`), command text included.
 - Addresses are locked to client 26.9.1.5339: a version or builder-prologue mismatch refuses before anything
   is touched. Exit codes: 0 ok, 1 a write happened but was rejected or failed after it, 2 refused before any
-  write. Requires the `frida` Python package (imported lazily; the collector never needs it).
+  write. `send` statuses: `sent` (0); `server_rejected` (1, the server's errCode is non-zero);
+  `failed_after_write` (1: the injected script reached the client's send call — its `[CALLED]` marker — and
+  no success followed, a builder failure, an exception or a timeout; also any frida error while the script
+  loads, since loading runs it up to that call; the message may have arrived, so check the room before
+  resending); `refused` (2: every failure before that call, nothing was sent). Requires the `frida` Python package (imported lazily; the collector never needs it).
 
 ## Search
 

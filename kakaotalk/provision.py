@@ -330,12 +330,16 @@ def write_keystore_for(cfg, note, root, store, udir, scan=False) -> list:
 def run_macdb(cfg, note, uuid=None, user_id=None, db=None, home=None, brute_limit=None) -> int:
     """The old macdb command's body: derive the client database's name and key from the platform UUID and the
     userId (the kakaocli port), decrypt it in one consistent snapshot into the configured mac_db path. Counts
-    only, never the key. 0 ok · 2 refusal (mac_db unset, no uuid/userId/database) · 3 the key opens nothing."""
+    only, never the key. 0 ok · 2 refusal (mac_db unset or outside the data root, no uuid/userId/database) ·
+    3 the key opens nothing."""
     from . import kakaocli
     out = cfg.get("mac_db")
     if not out:
         note('the config sets no "mac_db": the macOS database is not captured on this machine')
         return 2                                    # provision only calls this when mac_db is set
+    if not paths.inside(Path(out), Path(cfg["data_root"])):
+        note('"mac_db" is not inside the data root: the decrypted database is written only there')
+        return 2                                    # plaintext lives only under the app's data root
     home = home or os.path.expanduser("~")
     uuid = uuid or kakaocli.platform_uuid()
     if uuid is None:
@@ -362,9 +366,15 @@ def run_macdb(cfg, note, uuid=None, user_id=None, db=None, home=None, brute_limi
         note("the derived key opens no SQLCipher page (wrong uuid/userId, or a new scheme)")
         return 3
     tmp = out + ".tmp"
-    with open(tmp, "wb") as fh:
-        fh.write(image)
-    os.replace(tmp, out)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(image)
+        os.replace(tmp, out)
+    finally:
+        try:                                        # a failed write leaves no plaintext behind
+            os.remove(tmp)
+        except OSError:                             # held by a scanner: it stays inside the data root, and the
+            pass                                    # original error is the one to report
     note(f"decrypted: {facts['cipher']}, {facts['pages']} pages, wal {facts['wal']['state']} "
          f"({facts['wal']['frames_applied']} frames) -> {out}")
     return 0
@@ -427,8 +437,8 @@ def provision(cfg, note, restart_client=False, home=None, scan=False, root_file=
                     break
         if st is None or not st["alive"]:
             pid = kd._find_pid()
-            if pid is None and restart_client:
-                pid = relaunch_client(note)
+            if restart_client:                      # relaunch_client stops a running client first
+                pid = relaunch_client(note) or kd._find_pid()   # no exe found: scan the running client
             if pid is not None:
                 try:
                     found = scan_memory_root(store, pid=pid, note=note)

@@ -30,7 +30,10 @@ before anything is touched. `send` and `listen` reach the rooms whose own messag
 Delivery is judged by the client's WRITE response handler (errCode 0) and, ultimately, by the room — the
 client renders received messages up to a minute late. A "server unstable" dialog right after a send means a
 long-lived client session went stale, not a crash: restart the client and send again.
-Exit codes: 0 ok, 1 a write happened but was rejected or failed after it, 2 refused before any write."""
+Exit codes: 0 ok, 1 a write happened but was rejected or failed after it (status server_rejected, or
+failed_after_write when the client's send was called, or frida failed while loading the script, and no success
+followed: check the room before resending,
+the message may have arrived), 2 refused before any write."""
 import argparse
 import ctypes
 import json
@@ -374,6 +377,7 @@ try {
         outer.writePointer(clone);
         outer.add(4).writeU32(0);
         var f = new NativeFunction(BUILDER, 'uint8', ['pointer', 'pointer', 'uint8'], 'thiscall');
+        send('[CALLED]');                   // from here on a failure may follow a write: never "refused"
         var ret = f(ROOM, outer, 0);
         send(ret === 1 ? '[OK]' : '[FAIL] builder ret=' + ret);
         setTimeout(function () {
@@ -538,14 +542,24 @@ def cmd_send(a):
     source = SEND_JS % (BUILDER, LOCO_GLOBAL, RESHANDLER, tpl["roomVtable"], matching[0],
                         1 if a.dry_run else 0, msg_id, json.dumps(message), "0x%X" % chat_id,
                         tpl["template_hex"], tpl["texthdr_hex"], RESPONSE_WAIT * 1000)
-    session, script, lines = _attach(pid, source)
+    try:
+        session, script, lines = _attach(pid, source)
+    except CollectorError:
+        raise                                           # frida_missing: nothing was attached
+    except Exception as e:                              # load() runs the script, which may have called the client
+        if a.dry_run:
+            raise
+        return {"status": "failed_after_write", "detail": type(e).__name__, "msgId": hex(msg_id)}, 1
     try:
         line, lines = _collect(lines, ("[WINDOW-END]", "[DRY]", "[FAIL]"), RESPONSE_WAIT + 25)
     finally:
         _teardown(session, script)
     failed = next((l for l in lines if l.startswith("[FAIL]")), None)
     if failed or not any(l.startswith(("[OK]", "[DRY]")) for l in lines):
-        return {"status": "refused", "detail": (failed or "no result")[:200], "msgId": hex(msg_id)}, 2
+        detail = {"detail": (failed or "no result")[:200], "msgId": hex(msg_id)}
+        if any(l.startswith("[CALLED]") for l in lines):   # the client was called: it may have sent
+            return {"status": "failed_after_write", **detail}, 1
+        return {"status": "refused", **detail}, 2
     if a.dry_run:
         return {"status": "dry_run", "msgId": hex(msg_id), "utf8": len(message.encode("utf-8"))}, 0
     err_code, err_msg = None, None
