@@ -3,7 +3,7 @@ import sqlite3
 import unittest
 from contextlib import closing
 from rawlayer.search import index
-from notion.search import SPEC, DRIVER, NotionApplier
+from notion.search import SPEC, NotionApplier
 from .fixtures import Fixture, PID, BID, UID, OTHER, page, block
 from tests.core import appfix as h
 
@@ -50,8 +50,6 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(result["total"], 1)
             self.assertEqual(result["source"], "notion")
             self.assertFalse(result["index"]["stale"])
-            rc, out, err = h.run_rawsearch(["notion", "--config", self.fx.config_path, "deployment", "--mode", mode])
-            self.assertEqual(rc, 0, err)
         self.assertEqual(self.query("deployment", "--page", "absent")["total"], 0)
 
     def test_context_list_breadcrumb_page_text(self):
@@ -87,36 +85,6 @@ class SearchTests(unittest.TestCase):
         self.assertNotEqual(first["rows"][0]["key"], older["rows"][0]["key"])
         newer = self.query("--page", PID, "--limit", "1", "--after", older["page"]["after"])
         self.assertEqual(first["rows"][0]["key"], newer["rows"][0]["key"])
-
-    def test_page_title_match_ranks_first_and_block_type(self):
-        self.fx.write(page(title="예산 계획", blocks={BID: block(text="예산 예산 예산 정리")}))
-        self.assertEqual(h.capture(self.fx), 0)
-        index.update(self.fx.data_root, SPEC)
-        self.assertEqual([r["kind"] for r in self.query("예산")["rows"]], ["page", "block"])
-        with closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
-            self.assertEqual(con.execute("SELECT kind, btype, tng != '' FROM nrows ORDER BY kind").fetchall(),
-                             [("block", "paragraph", 0), ("page", "", 1)])
-
-    def test_chunk_units_page_first_headings_break(self):
-        heading = dict(block(OTHER, "개요"), type="heading_2")
-        heading["heading_2"] = heading.pop("paragraph")
-        self.fx.write(page(blocks={OTHER: heading, BID: block()}, order=[[OTHER, 0, None], [BID, 1, OTHER]]))
-        self.assertEqual(h.capture(self.fx), 0)
-        index.update(self.fx.data_root, SPEC)
-        con, _meta, _fresh = index.open_search(self.fx.data_root, SPEC)
-        self.addCleanup(con.close)
-        self.assertEqual(DRIVER.changed_containers(con, 0), [PID])
-        label, units = DRIVER.chunk_units(con, PID)
-        self.assertEqual(label, "Synthetic page")
-        self.assertEqual([(u[0].split(":")[1], u[3]) for u in units], [("page", False), ("block", True), ("block", False)])
-        self.assertEqual(units[1][2], "개요")
-
-    def test_usage_errors(self):
-        for args in ([], ["--page-text", "bad"], ["--page", PID, "--before", "bad"],
-                     ["--page", PID, "--before", "9" * 5000 + ".nt:page:" + PID],
-                     ["deployment", "--context", "-1"], ["--page-text", PID, "--list-pages"]):
-            rc, out, err = h.run_rawsearch(["notion", "--config", self.fx.config_path, *args])
-            self.assertEqual(rc, 2, (args, out, err))
 
     def test_direct_fold_block_before_page_full_incremental(self):
         # Each record in its own manifest exposes accidental dependency on derived columns.

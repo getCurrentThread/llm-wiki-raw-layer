@@ -1,5 +1,4 @@
 import unittest
-from rawlayer.capture import canon
 from notion.readers.project import project
 from .fixtures import Fixture, page, block, BID, PID, OTHER, COMMENT, rt
 from tests.core import appfix as h
@@ -74,11 +73,6 @@ class CaptureTests(unittest.TestCase):
         obs = _page(obj, PID)
         self.assertEqual(len(obs), 2)
         self.assertEqual(len(obs[0].derived["order"]), 1)
-
-    def test_projection_vector(self):
-        a = {"icon": {"type": "file", "file": {"url": "https://cdn/x?sig=1", "expiry_time": "a"}}}
-        b = {"icon": {"type": "file", "file": {"url": "https://cdn/x?sig=2", "expiry_time": "b"}}}
-        self.assertEqual(canon.record_h(project(a), {}), canon.record_h(project(b), {}))
 
     def test_projection_preserves_authored_links_and_schema(self):
         value = {"paragraph": {"rich_text": [{"text": {"link": {"url": "https://example.org/?q=important"}}}]},

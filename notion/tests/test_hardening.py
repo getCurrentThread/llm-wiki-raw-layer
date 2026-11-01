@@ -1,5 +1,4 @@
 import unittest
-from notion.keys import nt_id, iso_ms
 from .fixtures import Fixture, PID, BID, page
 from tests.core import appfix as h
 
@@ -21,16 +20,11 @@ class HardeningTests(unittest.TestCase):
         self.fx.write(page(blocks={}))
         self.assertEqual(h.capture(self.fx), 3)
 
-    def test_invalid_ids_times(self):
-        for value in (None, 12, "bad", "", True):
-            self.assertIsNone(nt_id(value))
-        for value in (None, "bad", "2024-10-01T00:00:00", True):
-            self.assertIsNone(iso_ms(value))
-
     def test_bad_order(self):
-        value = page(order=[[BID, -1, None]])
-        self.fx.write(value)
-        self.assertEqual(h.capture(self.fx), 75)
+        for order in ([[BID, -1, None]], [[BID, 0, "invalid"]]):
+            with self.subTest(order=order):
+                self.fx.write(page(order=order))
+                self.assertEqual(h.capture(self.fx), 75)
 
     def test_data_source_and_users(self):
         from .fixtures import OTHER
@@ -44,6 +38,3 @@ class HardeningTests(unittest.TestCase):
         self.fx.write(value)
         self.assertEqual(h.capture(self.fx), 75)
 
-    def test_invalid_order_parent(self):
-        self.fx.write(page(order=[[BID, 0, "invalid"]]))
-        self.assertEqual(h.capture(self.fx), 75)

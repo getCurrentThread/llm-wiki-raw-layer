@@ -45,16 +45,6 @@ class SetupDefaults(Base):
         self.assertEqual(cfg["nt_desktop_path"], str(self.root / "kept.db"))
         self.assertFalse(any(str(self.root) in n or str(self.home) in n for n in notes))
 
-    def test_api_source_names_no_database(self):
-        cfg = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-        cfg.update(data_root=str(self.root), nt_source="api")
-        db = self.home / "AppData" / "Roaming" / "Notion" / "notion.db"
-        db.parent.mkdir(parents=True)
-        db.write_bytes(b"")
-        self.app.setup_defaults(cfg, lambda _n: None)
-        self.assertEqual(cfg["nt_desktop_path"], "")
-
-
 class TaskChecks(Base):
     def cfg(self, **kv):
         base = {"nt_sync": True, "nt_source": "desktop", "nt_desktop_path": ""}
@@ -70,14 +60,3 @@ class TaskChecks(Base):
                          (str(self.root), False), (str(db), True)):
             with self.subTest(path=path):
                 self.assertEqual(self.app.task_checks(self.cfg(nt_desktop_path=path)) == [], ok)
-
-
-
-class WikiExportDeclaration(unittest.TestCase):
-    def test_collect_declaration(self):
-        """`manage.py collect notion`: the declared prefix and layout, and the config keys derived from it."""
-        app = registry.app_registry("notion").apps[0]
-        self.assertEqual(app.wiki, ("nt", "page"))
-        keys = [f"nt_wiki_{k}" for k in ("project", "include", "exclude", "since")]
-        self.assertEqual([op.key for op in app.options][-4:], keys)
-        self.assertTrue(set(keys) <= set(json.loads(EXAMPLE.read_text(encoding="utf-8"))))

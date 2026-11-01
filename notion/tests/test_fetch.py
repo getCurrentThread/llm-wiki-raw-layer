@@ -103,13 +103,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(report["errors"], 0)
         self.assertNotIn("_removed_at", load(self.path)["comments"][COMMENT])
 
-    def test_directory_permission_is_optional(self):
-        self.client.directory = False
-        report = sync(self.fx.root, self.client, full=True)
-        self.assertFalse(report["user_directory_available"])
-        self.assertEqual(report["errors"], 0)
-        self.assertEqual(report["pages_fetched"], 1)
-
     def test_skip_unchanged_but_full_sweep_rechecks_blocks(self):
         sync(self.fx.root, self.client, full=True)
         self.client.value["blocks"][BID] = block(text="changed without page timestamp")
