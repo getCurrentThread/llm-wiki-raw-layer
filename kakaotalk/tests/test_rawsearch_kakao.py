@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rawlayer import conf
 from rawlayer.capture import fsio
 from rawlayer.search import common
 from kakaotalk import search as kakao
@@ -24,7 +23,6 @@ from kakaotalk.tests import ledgerfix as L
 from kakaotalk.tests.edbfix import sidecar
 from kakaotalk.tests.fixtures import TEST_PARENT, Fixture
 
-REPO = conf.PROJECT_DIR
 EDB, MACDB, BACKUP = (1 << kakao.RANK[o] for o in kakao.PRECEDENCE)
 QUERIES = ["10월", "가나다", "api", "메시지", "edb 메시지", "수정", "삭제될", "\"100%\"", "라이브 OR 잡담", "메시지 -edb",
            "사라질", "SQL문", "3시"]
@@ -418,7 +416,7 @@ class TestEdges(unittest.TestCase):
         try:
             cfg = base / "config.json"
             with cfg.open("w", encoding="utf-8") as fh:
-                json.dump({"v": 1, "data_root": str(REPO)}, fh)
+                json.dump({"v": 1, "data_root": str(Path(TEST_PARENT).parent)}, fh)   # outside the data parent
             self.assertEqual(rs("index", "--config", cfg)[0], 2)
         finally:
             L.force_rmtree(base)

@@ -16,7 +16,7 @@ from urllib import parse
 from urllib.error import HTTPError
 
 from mattermost import admin
-from mattermost.tests.fixtures import Fixture
+from mattermost.tests.fixtures import TEST_PARENT, Fixture
 from mattermost.tests.helpers import _force
 
 URL = "https://mm.example"
@@ -276,7 +276,7 @@ class TestApply(Base):
         for members, category in (("alice", "zed"), "unknown_users"), (("alice", "carol"), "not_in_team"):
             code, report = self.run_admin("apply", "--spec", self.spec(members=members), "--out", str(self.result))
             self.assertEqual((code, report["status"]), (2, category))
-        for out in (str(Path(__file__).resolve()), "result.json"):
+        for out in (str(Path(TEST_PARENT).parent / "result.json"), "result.json"):   # outside the data parent; relative
             self.fake.seen.clear()
             code, report = self.run_admin("apply", "--spec", self.spec(), "--out", out)
             self.assertEqual((code, report["status"]), (2, "unsafe_result_path"))

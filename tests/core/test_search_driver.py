@@ -502,7 +502,7 @@ class TestEdges(T.ToyCase):
         self.assertEqual(run_search("index", "--config", cfg, "--source", "toy")[0], 0)
 
     def test_data_root_outside_parent_refused(self):
-        cfg = self.bare_config(T.REPO)
+        cfg = self.bare_config(T.TEST_PARENT.parent)        # outside the data parent wherever the checkout is
         self.assertEqual(run_search("index", "--config", cfg)[0], 2)
         self.assertEqual(run_search("index", "--config", self.bare_config("relative"))[0], 2)
         self.assertEqual(run_search("index", "--config", self.fx.base / "none.json")[0], 2)
