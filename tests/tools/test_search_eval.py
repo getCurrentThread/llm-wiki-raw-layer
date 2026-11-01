@@ -44,6 +44,17 @@ class Metrics(unittest.TestCase):
         self.assertEqual(r["fused_window"], [frozenset({"a", "a2"}), frozenset({"b"}), frozenset({"c", "c1"})])
         self.assertEqual(r["sem_window"][0], frozenset({"c", "c1"}))
 
+    def test_ndcg_counts_each_gold_once(self):
+        self.assertAlmostEqual(E.score(["g"], ["g"])["ndcg@10"], 1.0)
+        self.assertAlmostEqual(E.score(["a", "b", "g"], ["g"])["ndcg@10"], 0.5)      # 1/log2(4)
+        two = E.score(["g1", "a", "g2"], ["g1", "g2"])["ndcg@10"]
+        self.assertAlmostEqual(two, (1 + 0.5) / (1 + 1 / __import__("math").log2(3)))
+        # a window holding both golds gains once; the gold again further down gains nothing
+        self.assertAlmostEqual(E.score([frozenset({"g1", "g2"}), "g1"], ["g1", "g2"])["ndcg@10"],
+                               1 / (1 + 1 / __import__("math").log2(3)))
+        self.assertEqual(E.score([str(i) for i in range(10)] + ["g"], ["g"])["ndcg@10"], 0.0)
+        self.assertIn("ndcg@10", E.summarize([dict(E.score(["g"], ["g"]), ms=1.0, error=False, zero=False)]))
+
     def test_percentile(self):
         self.assertEqual(E.pct([5, 1, 3, 2, 4], 50), 3)
         self.assertEqual(E.pct([1, 2, 3, 4, 100], 95), 100)
@@ -85,6 +96,19 @@ class Queries(unittest.TestCase):
         self.assertIsNone(E.paraphrase_query("가" * 70, text))                         # too long
         self.assertIsNone(E.paraphrase_query("", text))
 
+    def test_spacing_pairs(self):
+        self.assertEqual(E.spaced_pairs("회의실 예약 부탁 api 서버"), [("회의실 예약", "회의실예약"), ("예약 부탁", "예약부탁")])
+        self.assertEqual(E.spaced_pairs("가 나다 라마바사아자차카"), [])     # one syllable, seven syllables
+
+    def test_split_items_pair_neighbours_of_one_container(self):
+        rows = [{"key": "c2", "g": "C", "text": "계좌번호 알려주세요"}, {"key": "d1", "g": "D", "text": "x"},
+                {"key": "c1", "g": "C", "text": "송금은 내일"}, {"key": "c0", "g": "C", "text": None}]
+        self.assertEqual([(a["key"], b["key"]) for a, b in E.adjacent_pairs(rows, "g")], [("c1", "c2")])
+        rng = __import__("random").Random(3)
+        a, b = E.split_words("송금은 내일 송금", "내일 계좌번호", rng)
+        self.assertEqual((a, b), ("송금은", "계좌번호"))          # 내일 is in both, so neither side takes it
+        self.assertIsNone(E.split_words("내일", "내일 오후", rng))
+
     def test_ask_llm_refuses_a_remote_server(self):
         with self.assertRaises(E.EvalError):
             E.ask_llm("http://example.com:11434", "m", "x")
@@ -97,6 +121,14 @@ class Store(unittest.TestCase):
         new = [{"id": "auto-001", "source": "auto", "query": "y", "gold": ["k3"]}]
         merged = E.merge_items(old, new)
         self.assertEqual([it["query"] for it in merged], ["y", "송금 보냈"])
+
+    def test_kinds_left_out_survive(self):
+        old = [{"source": "auto", "kind": "title", "query": "t", "gold": ["k1"]},
+               {"source": "auto", "kind": "spacing", "query": "s", "gold": ["k2"]},
+               {"source": "llm", "kind": "paraphrase", "query": "p", "gold": ["k3"]}]
+        new = [{"source": "auto", "kind": "spacing", "query": "s2", "gold": ["k4"]}]
+        merged = E.merge_items(old, new, ("spacing", "split"))
+        self.assertEqual([it["query"] for it in merged], ["s2", "t", "p"])
 
 
 if __name__ == "__main__":

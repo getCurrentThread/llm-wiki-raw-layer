@@ -3,8 +3,8 @@
        python -s -B <PROJECT>/tools/search_eval.py paraphrase <app> [--n 30] [--model qwen3:4b-instruct]
        python -s -B <PROJECT>/tools/search_eval.py run <app> [--modes default,literal,hybrid] [--label TEXT]
 
-Retrieval quality of `manage.py search` on an app's own ledger: Hit@k, Recall@k and MRR for k = 1, 3, 5, 10, with
-latency p50/p95 (per call, Python start-up included). A developer tool, not a manage.py command; standard library
+Retrieval quality of `manage.py search` on an app's own ledger: Hit@k, Recall@k and MRR for k = 1, 3, 5, 10, and
+nDCG@10 (binary gain: a gold key counts once, at the first hit that holds it), with latency p50/p95 (per call, Python start-up included). A developer tool, not a manage.py command; standard library
 only. Every search runs as `manage.py search <app> --json` through tools/mcp_rawsearch.py's Runner, on the app's
 default config.
 
@@ -15,8 +15,13 @@ browse of the newest --pool rows:
   inflected  1-2 words of one message, the last a bare Hangul word given a particle as a user would type it
              ("일정" -> "일정을"), kept only when the words as written find exactly that one row: synthetic, it
              measures what query normalization undoes;
-  phrase     2-3 consecutive words of one message, kept only when the search finds exactly that one row.
-Items whose source is not "auto" (hand-written: {"source": "manual", "kind": "manual", "query": ..., "gold": [...]})
+  phrase     2-3 consecutive words of one message, kept only when the search finds exactly that one row;
+  spacing    two consecutive bare Hangul words of one message typed without the space between them ("회의실 예약" ->
+             "회의실예약"), kept only when the words as written ("회의실 예약", quoted) find exactly that one row;
+  split      one word of a message and one of the next message in the same container, kept when no row holds both,
+             each finds 1..SPLIT_MAX rows, and neither is in the other message (gold = both rows): a thought typed as
+             two chat lines.
+--kinds regenerates only the kinds it names (default: all); the items of the other kinds are kept. Items whose source is not "auto" (hand-written: {"source": "manual", "kind": "manual", "query": ..., "gold": [...]})
 are kept as they are. `paraphrase` replaces the "paraphrase" items: a local generative model (Ollama on a loopback
 IP, as the embedder) writes a question about a random row in other words, kept when it is short and few of its
 bigrams are the row's (PARA_MAX_*; gold = that row): the case semantic search is for. `run` searches every item once per mode and prints
@@ -28,6 +33,7 @@ Exit codes: 0 ok | 2 usage or no eval set | 1 error."""
 import argparse
 import datetime
 import json
+import math
 import os
 import random
 import re
@@ -42,6 +48,8 @@ if str(PROJECT) not in sys.path:
 from tools import mcp_rawsearch as M  # noqa: E402
 
 KS = (1, 3, 5, 10)
+KINDS = ("title", "inflected", "phrase", "spacing", "split")
+SPLIT_MAX = 100                      # a split item's words: each matches at most this many rows
 TIMEOUT = 120
 # a word the query language reads as a plain term: no quotes, exclusion, OR, `name:` or prefix `*`
 WORD = re.compile(r"[0-9A-Za-z가-힣]{2,}")
@@ -122,6 +130,14 @@ def score(ranking, gold, ks=KS):
         out[f"hit@{k}"] = 1.0 if top & gold else 0.0
         out[f"recall@{k}"] = len(top & gold) / len(gold) if gold else 0.0
     out["rr"] = next((1.0 / (i + 1) for i, x in enumerate(ranking[:max(ks)]) if _keys(x) & gold), 0.0)
+    dcg, found = 0.0, set()
+    for i, x in enumerate(ranking[:10]):
+        new = (_keys(x) & gold) - found
+        if new:
+            dcg += 1 / math.log2(i + 2)
+            found |= new
+    ideal = sum(1 / math.log2(i + 2) for i in range(min(len(gold), 10)))
+    out["ndcg@10"] = dcg / ideal if ideal else 0.0
     return out
 
 
@@ -155,15 +171,42 @@ def summarize(results):
         for m in ("hit", "recall"):
             out[f"{m}@{k}"] = round(sum(r[f"{m}@{k}"] for r in results) / n, 4)
     out["mrr"] = round(sum(r["rr"] for r in results) / n, 4)
+    out["ndcg@10"] = round(sum(r["ndcg@10"] for r in results) / n, 4)
     ms = [r["ms"] for r in results if not r["error"]]
     out["p50_ms"], out["p95_ms"] = pct(ms, 50), pct(ms, 95)
     return out
 
 
-def merge_items(old, auto):
-    """The new auto items, then every item of `old` that is not auto (hand-written ones survive a regeneration)."""
-    kept = [it for it in old if it.get("source") != "auto"]
+def merge_items(old, auto, kinds=KINDS):
+    """The new auto items, then every item of `old` that is not an auto item of a regenerated kind (hand-written ones
+    survive a regeneration, and so do the auto kinds --kinds left out)."""
+    kept = [it for it in old if it.get("source") != "auto" or (it.get("kind") and it["kind"] not in kinds)]
     return auto + kept
+
+
+def spaced_pairs(text):
+    """Two consecutive bare Hangul words of `text` (2-6 syllables each), as (with the space, without it)."""
+    toks = (text or "").split()
+    return [(f"{a} {b}", a + b) for a, b in zip(toks, toks[1:])
+            if re.fullmatch("[가-힣]{2,6}", a) and re.fullmatch("[가-힣]{2,6}", b)]
+
+
+def adjacent_pairs(rows, group):
+    """(older, newer) pairs of rows that follow each other in one container (rows: a browse, newest first)."""
+    last, out = {}, []
+    for r in rows:
+        g = r.get(group)
+        if g is not None and g in last and isinstance(r.get("text"), str) and isinstance(last[g].get("text"), str):
+            out.append((r, last[g]))
+        last[g] = r
+    return out
+
+
+def split_words(a, b, rng):
+    """A word of a's text that b's lacks and one of b's that a's lacks (case-folded), or None."""
+    wa = [w for w in dict.fromkeys(words(a)) if w.casefold() not in b.casefold()]
+    wb = [w for w in dict.fromkeys(words(b)) if w.casefold() not in a.casefold()]
+    return (rng.choice(wa), rng.choice(wb)) if wa and wb else None
 
 
 # ---------------------------------------------------------------------------------------------------- the store
@@ -209,7 +252,8 @@ def search(runner, app, argv):
         return None
 
 
-def generate(app, n, seed, pool, runner):
+def generate(app, n, seed, pool, runner, kinds=KINDS):
+    """The auto items of `kinds` (title n/2, inflected and phrase the rest of n; spacing and split n/4 each)."""
     root = data_root(app)
     env = search(runner, app, ["--since=1970-01-01", f"--limit={pool}", "--width=20"])
     if env is None:
@@ -226,14 +270,14 @@ def generate(app, n, seed, pool, runner):
             titles.setdefault(q, []).append(r["key"])
     tq = sorted(titles)
     rng.shuffle(tq)
-    for q in tq[:n // 2]:
+    for q in tq[:n // 2] if "title" in kinds else ():
         auto.append({"source": "auto", "kind": "title", "query": q, "gold": titles[q]})
 
     texts = [r for r in rows if isinstance(r.get("text"), str)]
     seen = {it["query"] for it in auto}
     tries = 0
     want = len(auto) + (n - len(auto)) // 2
-    while texts and len(auto) < want and tries < n * 8:
+    while "inflected" in kinds and texts and len(auto) < want and tries < n * 8:
         tries += 1
         r = rng.choice(texts)
         cands = inflectable(r["text"])
@@ -249,7 +293,7 @@ def generate(app, n, seed, pool, runner):
             auto.append({"source": "auto", "kind": "inflected", "query": q, "gold": [r["key"]]})
 
     tries = 0
-    while texts and len(auto) < n and tries < n * 8:
+    while "phrase" in kinds and texts and len(auto) < n and tries < n * 8:
         tries += 1
         r = rng.choice(texts)
         wins = phrase_windows(r["text"])
@@ -263,11 +307,43 @@ def generate(app, n, seed, pool, runner):
         if c is not None and c.get("total") == 1:
             auto.append({"source": "auto", "kind": "phrase", "query": q, "gold": [r["key"]]})
 
+    def count(*argv):
+        c = search(runner, app, ["--mode=count", *argv])
+        return c.get("total") if c is not None else None
+
+    tries, mark = 0, len(auto)
+    while "spacing" in kinds and texts and len(auto) < mark + n // 4 and tries < n * 4:
+        tries += 1
+        r = rng.choice(texts)
+        cands = spaced_pairs(r["text"])
+        if not cands:
+            continue
+        spaced, joined = rng.choice(cands)
+        if joined in seen:
+            continue
+        seen.add(joined)
+        if count(f'--query="{spaced}"') == 1:
+            auto.append({"source": "auto", "kind": "spacing", "query": joined, "gold": [r["key"]]})
+
+    from rawlayer import registry  # noqa: PLC0415 -- data_root() selected the app
+    pairs = adjacent_pairs(rows, dict(registry.search_modules())[app].DRIVER.page_group) if "split" in kinds else []
+    tries, mark = 0, len(auto)
+    while pairs and len(auto) < mark + n // 4 and tries < n * 4:
+        tries += 1
+        a, b = rng.choice(pairs)
+        ws = split_words(a["text"], b["text"], rng)
+        q = ws and f"{ws[0]} {ws[1]}"
+        if not q or q in seen:
+            continue
+        seen.add(q)
+        if count(f"--query={q}") == 0 and all(1 <= (count(f"--query={w}") or 0) <= SPLIT_MAX for w in ws):
+            auto.append({"source": "auto", "kind": "split", "query": q, "gold": [a["key"], b["key"]]})
+
     for i, it in enumerate(auto, 1):
-        it["id"] = f"auto-{i:03d}"
+        it["id"] = f"auto-{it['kind']}-{i:03d}"
     path = root / "eval" / "search.json"
     old = load_set(path)
-    items = merge_items(old["items"] if old else [], auto)
+    items = merge_items(old["items"] if old else [], auto, kinds)
     write_json(path, {"app": app, "seed": seed, "items": items})
     return {"app": app, "items": len(items), "by_kind": count_kinds(items), "pool": len(rows)}
 
@@ -387,6 +463,7 @@ def main(argv=None):
     g.add_argument("--n", type=int, default=100)
     g.add_argument("--seed", type=int, default=42)
     g.add_argument("--pool", type=int, default=200000, help="newest rows browsed for candidates")
+    g.add_argument("--kinds", default=",".join(KINDS), help="the auto kinds to regenerate (the others are kept)")
     p = sub.add_parser("paraphrase")
     p.add_argument("app")
     p.add_argument("--n", type=int, default=30)
@@ -405,7 +482,10 @@ def main(argv=None):
         if a.cmd in ("generate", "paraphrase"):
             if a.n < 1 or a.pool < 1:
                 raise EvalError("--n and --pool must be at least 1")
-            res = generate(a.app, a.n, a.seed, a.pool, runner) if a.cmd == "generate" else \
+            kinds = tuple(k for k in getattr(a, "kinds", "").split(",") if k)
+            if a.cmd == "generate" and (not kinds or any(k not in KINDS for k in kinds)):
+                raise EvalError(f"--kinds: one or more of {', '.join(KINDS)}")
+            res = generate(a.app, a.n, a.seed, a.pool, runner, kinds) if a.cmd == "generate" else \
                 paraphrase(a.app, a.n, a.seed, a.pool, a.model, a.url, runner)
         else:
             modes = [m for m in a.modes.split(",") if m]
