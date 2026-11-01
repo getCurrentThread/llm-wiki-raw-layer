@@ -80,7 +80,7 @@ RETRY_WAITS = (2, 10)
 CC_ALPHA, KW_N, SEM_N, SEM_K = 0.15, 30, 30, 300
 RELAXED_KW = 0.1                     # a relaxed OR-ed keyword list fused at full weight drowns the semantic hits
 PREFILTER = 20000
-EMBED_TIMEOUT, QUERY_TIMEOUT = 300, 30
+EMBED_TIMEOUT = 300
 _PART = 400                          # keys per IN (...) list: below SQLite's bound-parameter limit
 
 SIDECAR_DDL = """
@@ -517,7 +517,7 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
             current = meta.get("chunker") == chunker_id(drv) and \
                 meta.get("src_stamp") == json.dumps(drv.spec.stamp(), sort_keys=True) and \
                 meta.get("src_built_at") == str(built[0] if built else None)
-            vec = Embedder(meta["url"], meta["model"], dims, QUERY_TIMEOUT)([meta.get("prefix", "") + _query_text(query)])[0]
+            vec = Embedder(meta["url"], meta["model"], dims, timeout=None)([meta.get("prefix", "") + _query_text(query)])[0]
             chunks_of = {}
             for part in _parts(set(kw_keys)):
                 for key, cid in side.execute(f"SELECT rec_key, chunk_id FROM chunk_rec WHERE rec_key IN "

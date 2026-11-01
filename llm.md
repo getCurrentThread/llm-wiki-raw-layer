@@ -67,15 +67,11 @@ repeating them.
 ## 2. Ground rules
 
 1. Always invoke Python as `python -s -B` (or `& '<PY>' -s -B`).
-2. **kakaotalk is owner-gated.** Its code is a local-archive connector for the owner's own, signed-in
-   KakaoTalk client on this machine (own data, local-only; see `kakaotalk/README.md`): read and edit it like any
-   other app's code, and run its commands yourself when the owner asks for them (6.5). This runbook's general
-   steps leave it out, and its search runs only for requests about KakaoTalk. Report aggregates only (rule 3);
-   its keys never leave its data root and are never printed.
+2. **kakaotalk** is a local-archive connector for the owner's own, signed-in KakaoTalk client on this machine
+   (own data, local-only; see `kakaotalk/README.md`): operate, search and edit it like any other app (6.5). Its keys
+   never leave its data root and are never printed.
    `mattermost/admin.py` and `kakaotalk/admin.py` write outward (Mattermost channels, webhooks and posts; messages
    through the owner's client): no step of this runbook runs them; run one only when the owner asks for that write.
-   Framework-wide `manage.py check`, with no app named, is allowed: it validates every app's contract and prints
-   summary lines only.
 3. **Report aggregates only.** Never write any of these into a message, a report (section 10) or a file in
    `<PROJECT>`, and never show them in quoted command output. Configs, credentials and archives under
    `<DATA_PARENT>`, and the temporary files that 7.2 deletes, are the only files that may hold them:
@@ -95,10 +91,10 @@ repeating them.
 5. Never ask a human to paste a secret into chat. Credentials move as files (a token file handshake, 6.2,
    or a download copied into `<DATA_ROOT>`), never as text.
 6. Always name the app in `schedule` commands. Without one, `install` and `status` act on every app with a
-   schedule, kakaotalk included (`run` and `remove` refuse).
+   schedule (`run` and `remove` refuse).
 7. Do not change code while operating. A bug found during operations is reported (symptom, command, exit code),
    not fixed.
-8. Apps in scope: claudecode, discord, gmail, mattermost, notion, and kakaotalk under rule 2. Do not create other apps; slack
+8. Apps in scope: claudecode, discord, gmail, kakaotalk, mattermost and notion. Do not create other apps; slack
    and telegram apps must not be implemented.
 9. Never commit or push this repository while operating.
 10. Irreversible or replacing actions need the owner's explicit approval: `setup --force`,
@@ -197,7 +193,7 @@ Gate: `git -C '<PROJECT>' rev-parse --is-inside-work-tree` prints `true`.
   is installed, not which shell runs your commands. So always run 0.1's `$PSVersionTable.PSVersion` and
   `$PSNativeCommandArgumentPassing` gates yourself, in your own shell. The rows below stay the definition of each
   gate; run a row's own command when doctor names a problem in it, or when the owner asks.
-- Then one block per in-scope app (kakaotalk is skipped, rule 2): config, credential and source paths (whether
+- Then one block per in-scope app except kakaotalk, which the tool does not cover yet (6.5): config, credential and source paths (whether
   they are there), index, task, the newest task.log run and the checkpoints. `next` is the llm.md step to do next;
   `8` means live.
 - Without elevation, doctor cannot read a SYSTEM task, so its task is `unknown`. Then `next` is `8` only once a
@@ -706,9 +702,9 @@ Recovery:
 
 ### 6.5 kakaotalk
 
-Owner-triggered only (rule 2). Run these steps only when the owner names kakaotalk in that request; a general
-"set up the apps" or "check health" request does not cover them. Read only the summary lines each command prints,
-never config values, room names or message text. Stop and report on any refusal.
+Read only the summary lines each command prints, never config values, room names or message text. Stop and report
+on any refusal. `tools/bootstrap.py` does not cover kakaotalk yet: doctor skips it and `config` and `checkpoint`
+refuse it, so check it with section 8 steps 2-5 directly.
 
 1. **Setup.** `python -s -B manage.py setup kakaotalk`: creates the data root and `config.json`, sets the default
    sources, decrypts the backup. Exit 0, or exit 3 with `fill in config.json: <keys>`. `bootstrap.py config` refuses
@@ -720,10 +716,9 @@ never config values, room names or message text. Stop and report on any refusal.
    output every 60 s until it exits. Do not kill it part-way. Report the summary lines: a live root found, or `the client's memory holds no root` (then capture reads the
    `.edb` rooms as `no_key` until a root is derived).
 3. **Check.** `python -s -B manage.py check kakaotalk`: report its pass/fail lines.
-4. **Index.** `python -s -B manage.py capture kakaotalk` builds the index. Run it only when the owner asks for it
-   separately (AGENTS.md).
-5. **Schedule.** `python -s -B manage.py schedule install kakaotalk --dry-run` first, which changes nothing.
-   `install` (elevated) only after the owner has seen the dry-run result and confirmed it.
+4. **Index.** `python -s -B manage.py capture kakaotalk` builds the index. Like every capture, run it only when the
+   owner asks (AGENTS.md).
+5. **Schedule.** 5.7–5.10 with `kakaotalk` (`\llm-wiki\kakaotalk-capture`, 01:14 / 3 h / 2 h; README.md).
 
 ### 6.6 claudecode
 
@@ -891,8 +886,8 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`capture`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
 | `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires gm_imap_user`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
-| Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch. kakaotalk's task needs the same: tell the owner (rule 2) |
-| elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task, and tell the owner that kakaotalk's task needs the same (rule 2) |
+| Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch |
+| elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task |
 | `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `capture` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
 | `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded fetch runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
@@ -923,8 +918,7 @@ Never include the items listed in rule 3.
 options and backups) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
 be searched and this runbook found from any folder: a marked block in `<HOME>\.claude\CLAUDE.md`, the `raw-search`
 and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`, and the user-scope MCP server
-`llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app). kakaotalk is registered as named-only: the
-tools' app `all`, and `raw_status` without an app, leave it out, so it is searched only when a call names it. It needs
+`llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app; its app `all` covers them all). It needs
 no elevation and touches no data. Its manifest and backups live in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
 never in `<PROJECT>`.
 
@@ -936,8 +930,7 @@ never in `<PROJECT>`.
 3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item unless
    `--force` names it, and backs up whatever it replaces. `--python <PY>` names the interpreter the MCP server runs
    with. When a `claude mcp` call fails, the error ends with the CLI's own reason.
-   Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for the apps other than
-   kakaotalk. Call it with kakaotalk only when the owner asks.
+   Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for every app.
 4. Re-run `install` after `git pull` or a moved checkout: a template change shows as `stale`, a moved one as
    `project_mismatch`. It keeps the recorded interpreter; pass `--python` again to change it.
 

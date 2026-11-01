@@ -11,8 +11,7 @@ Apps here: {{APPS}}.
 
 - The `llm_wiki_raw` MCP tools come first: `raw_status` (which indexes exist and how fresh), `raw_aggregate`
   (count, timeline, senders and the other aggregate modes), `raw_search` (hits with context), `raw_read` (a
-  thread, a page's text, a list), `raw_help` (an app's modes, filters and query language). Their app `all`, and
-  `raw_status` without an app, leave out kakaotalk: name it only for a request about KakaoTalk.
+  thread, a page's text, a list), `raw_help` (an app's modes, filters and query language).
 - When they are not connected, run the search command {{WHERE}}:
   `{{RUN}} search <app> ... --json`
   Its `--help` documents its options.
@@ -24,7 +23,7 @@ Apps here: {{APPS}}.
 - How many / when / who / where: aggregate first. Read hits only when the content matters. "Read that day / that
   conversation": browse with the container and date filters, paging with the cursors.
 - A question worded unlike the text it is after (a paraphrase, a description, "the mail where they said the
-  launch slips"): search with `hybrid: true` (`--hybrid`), limit 10 or less. It also ranks by meaning: each hit's
+  launch slips"): search with `hybrid: true` (`--hybrid`). It also ranks by meaning: each hit's
   `sources` gives its keyword and semantic rank (a semantic-only hit holds none of the terms), and `context` is the
   conversation window or section around it. `window: true` means no single row held every term, so the keyword
   ranks went to stretches of one conversation or page whose rows hold them all between them: read the `context`.
@@ -49,5 +48,3 @@ teammate", or initials). Container labels can be people too: a Mattermost direct
 and a 1:1 room or DM is usually titled with the other person's name; mask them like a sender ("a DM with a
 teammate"). Research constants (SEED, PBKDF2 parameters, SQLCipher pragma formulas) may be cited
 as technical knowledge. Never copy raw results into a file, a note or a repository.
-kakaotalk is searched only through these tools and only when the request is about KakaoTalk. Otherwise it is an
-app like the others: its code may be read and edited, and its commands run when the owner asks.

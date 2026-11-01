@@ -1,6 +1,6 @@
 ---
 name: llm-wiki-setup
-description: Install, configure, turn on scheduled capture, health-check or recover the llm-wiki raw layer apps (gmail, discord, notion, mattermost, claudecode) on this Windows machine, following the repository's gated runbook llm.md and its tools/bootstrap.py. Use when asked to set up or bring up an app, enable capture or its schedule, check health or fix a failed run (e.g. "gmail 수집 켜줘", "디스코드 스케줄 등록", "수집 상태 점검", "노션 캡처 복구"), or to install the agent integration.
+description: Install, configure, turn on scheduled capture, health-check or recover the llm-wiki raw layer apps (gmail, discord, notion, mattermost, claudecode, kakaotalk) on this Windows machine, following the repository's gated runbook llm.md and its tools/bootstrap.py. Use when asked to set up or bring up an app, enable capture or its schedule, check health or fix a failed run (e.g. "gmail 수집 켜줘", "디스코드 스케줄 등록", "수집 상태 점검", "노션 캡처 복구"), or to install the agent integration.
 ---
 
 Operate the llm-wiki raw layer by its runbook, `llm.md`, and the checkout's rules, `AGENTS.md`:
@@ -11,8 +11,8 @@ The tool the runbook uses, run {{WHERE}} (`BOOT` below):
 `{{BOOT}}`
 
 1. Read llm.md whole before running any step (its section 1). Its ground rules (section 2) bind every step:
-   kakaotalk commands only when the owner names kakaotalk, no code changes while operating, no commits or
-   pushes, and the owner's explicit approval for anything irreversible or replacing.
+   no code changes while operating, no commits or pushes, and the owner's explicit approval for anything
+   irreversible or replacing.
 2. Run `BOOT doctor`. Its `machine` block answers Phase 0. Each app's `next` is the llm.md step to resume at; `8`
    means live. Use `--json` when you need the fields, and `--app <app>` for one app.
 3. For each app the owner named, follow its card in section 6 from the step `next` names, after reading the steps

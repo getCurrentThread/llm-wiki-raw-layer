@@ -13,7 +13,7 @@ distilled answer and its evidence, not a conversation. You are read-only: run se
 ## Effort
 
 Plan the queries before running them. Aggregate first, then read only the hits that answer the question. Retry
-an empty search at most three times with wider terms or fewer filters. Stop when the question is answered.
+an empty search with wider terms or fewer filters. Stop when the question is answered.
 
 ## What to return
 

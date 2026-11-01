@@ -134,7 +134,7 @@ class InstallUninstall(Home):
         self.assertEqual(set(rows.values()), {"current"})
         self.assertEqual(self.kit().install(), [])          # idempotent
         server = self.servers()[K.MCP_NAME]
-        self.assertEqual(server["args"][3:], ["--apps", ",".join(APPS), "--named-only", "kakaotalk"])
+        self.assertEqual(server["args"][3:], ["--apps", ",".join(APPS)])
         self.kit().uninstall()
         self.assertEqual(self.snapshot(), {})               # the folders it created are gone too
         self.assertEqual(self.servers(), {})

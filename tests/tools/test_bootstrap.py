@@ -428,7 +428,7 @@ class OffLimits(unittest.TestCase):
                                                             return_value=(["gmail"], ["kakaotalk"])):
                 rc, out, err = run(*argv)
                 self.assertEqual(rc, 2)
-                self.assertIn("owner-gated", err)
+                self.assertIn("not covered", err)
                 self.assertEqual(out, "")
 
     def test_unknown_app(self):
@@ -441,7 +441,7 @@ class OffLimits(unittest.TestCase):
     def test_discovery_leaves_it_out(self):
         apps, off = B.in_scope_apps()
         self.assertNotIn("kakaotalk", apps)
-        self.assertTrue(set(off) <= set(B.OWNER_GATED))
+        self.assertTrue(set(off) <= set(B.NOT_COVERED))
 
 
 class DoctorReport(unittest.TestCase):

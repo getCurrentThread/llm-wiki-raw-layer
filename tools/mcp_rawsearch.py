@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""python -s -B <PROJECT>/tools/mcp_rawsearch.py --apps APP[,APP...] [--named-only APP[,APP...]] [--timeout S]
+"""python -s -B <PROJECT>/tools/mcp_rawsearch.py --apps APP[,APP...]
        [--max-chars N] [--probe]
 
 An MCP server over stdio (JSON-RPC 2.0, one message per line) that gives agents read-only search of this project's
@@ -8,8 +8,7 @@ raw ledgers: raw_status, raw_aggregate, raw_search, raw_read and raw_help. Every
 no app and never passes --config. Standard library only. `tools/bootstrap.py agents install` registers it with
 Claude Code (user scope).
 
---named-only apps are searched only when a call names them: app 'all' (and raw_status without an app) leaves them
-out. An app's own flags (the tools' `filters`) are checked against its `search --help`, exactly: no abbreviations.
+An app's own flags (the tools' `filters`) are checked against its `search --help`, exactly: no abbreviations.
 
 Results are not masked; the tools' descriptions and the server's instructions tell the agent to summarize and to
 give no message text, names or ids unless the owner asked. The server's log (stderr) holds the tool, the app, the
@@ -29,7 +28,6 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 VERSION = "1"
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")     # newest first
-TIMEOUT = 45
 MAX_CHARS = 20000
 WORKERS = 4
 _FLAG = re.compile(r"[a-z][a-z0-9-]{0,31}")
@@ -54,14 +52,11 @@ PRIVACY = ("unmasked: summarize; give no message text (quotes included), names, 
 _NO_TEXT = "Unmasked private text: summarize; no message text, names or ids unless the owner asked."
 
 
-def instructions(named_only=()):
-    one = "it" if len(named_only) == 1 else "them"
+def instructions():
     return (
         "Read-only search of the owner's raw ledgers (private messages, mails and documents). Start with raw_status "
-        "for the app(s) the request is about"
-        + (f"; app 'all' leaves out {', '.join(named_only)}: name {one} only for requests about {one}"
-           if named_only else "")
-        + ". Aggregate before reading hits (raw_aggregate), and read an app's modes and filters with raw_help. Korean "
+        "for the app(s) the request is about. Aggregate before reading hits (raw_aggregate), and read an app's modes "
+        "and filters with raw_help. Korean "
         "particles and common endings are stripped automatically (normalized_query shows what ran; filters "
         "{\"literal\": true} matches as typed); a zero-hit search retries OR-ed and says relaxed. For a question "
         "worded unlike the text (a paraphrase, a description), raw_search with hybrid true also ranks by meaning. "
@@ -101,13 +96,10 @@ def _schema(props, required=()):
     return {"type": "object", "properties": props, "required": list(required), "additionalProperties": False}
 
 
-def tools(apps, named_only=(), max_chars=MAX_CHARS):
-    covered = [a for a in apps if a not in named_only]
-    app_one = {"type": "string", "enum": list(apps), "description": "the app whose ledger to use"
-               + (f" ({', '.join(named_only)} only for requests about it)" if named_only else "")}
+def tools(apps, max_chars=MAX_CHARS):
+    app_one = {"type": "string", "enum": list(apps), "description": "the app whose ledger to use"}
     app_all = {"type": "string", "enum": ["all", *apps],
-               "description": f"an app, or all: {', '.join(covered)}"
-               + (f" ({', '.join(named_only)} only by name, and only for requests about it)" if named_only else "")}
+               "description": f"an app, or all: {', '.join(apps)}"}
     ro = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
     return [
         {"name": "raw_status", "title": "Raw ledgers: index status",
@@ -244,8 +236,7 @@ def _check_keys(a, allowed):
 class Runner:
     """Runs `manage.py` children for requests: cancel(request) kills the children a request started."""
 
-    def __init__(self, timeout=TIMEOUT, python=None, manage=None):
-        self.timeout = timeout
+    def __init__(self, python=None, manage=None):
         self.python = python or sys.executable
         self.manage = Path(manage) if manage else PROJECT / "manage.py"
         self.lock = threading.Lock()
@@ -285,7 +276,7 @@ class Runner:
                 pass
 
     def run(self, rid, argv):
-        """(rc, stdout, stderr) of `manage.py <argv>`; ToolError on a timeout, Cancelled on a cancel."""
+        """(rc, stdout, stderr) of `manage.py <argv>`; Cancelled on a cancel."""
         cmd = [self.python, "-s", "-B", str(self.manage), *argv]
         with self.lock:
             if rid in self.cancelled:
@@ -294,13 +285,7 @@ class Runner:
                                  stderr=subprocess.PIPE, env=self.env(),
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.children.setdefault(rid, []).append(p)
-        try:
-            out, err = p.communicate(timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.communicate()
-            raise ToolError(f"the search took longer than {self.timeout} s: narrow it (a selector, fewer months, "
-                            "a smaller limit)") from None
+        out, err = p.communicate()
         with self.lock:
             if rid in self.cancelled:
                 raise Cancelled()
@@ -465,10 +450,8 @@ def shape(env, notes, full_text=False, max_chars=MAX_CHARS, hint=None):
 # ---------------------------------------------------------------------------------------------------- the tools
 
 class Tools:
-    def __init__(self, apps, runner, max_chars=MAX_CHARS, named_only=()):
+    def __init__(self, apps, runner, max_chars=MAX_CHARS):
         self.apps = list(apps)
-        self.named_only = [x for x in named_only if x in self.apps]
-        self.covered = [x for x in self.apps if x not in self.named_only]
         self.runner = runner
         self.max_chars = max_chars
         self.lock = threading.Lock()
@@ -477,9 +460,7 @@ class Tools:
     def _apps(self, a, all_ok=False):
         app = a.get("app", "all" if all_ok else None)
         if app == "all" and all_ok:
-            if not self.covered:
-                raise ToolError(f"'all' covers no app here: name one of {', '.join(self.apps)}")
-            return list(self.covered)
+            return list(self.apps)
         if app not in self.apps:
             raise ToolError(f"app must be one of: {', '.join(self.apps)}{' (or all)' if all_ok else ''}")
         return [app]
@@ -581,11 +562,7 @@ class Tools:
             return {"state": "stale" if ix.get("stale") else "ok", "rows": env.get("total"), "seq": ix.get("seq"),
                     "ledger_seq": ix.get("ledger_seq"), "updated_at": env.get("updated_at"),
                     "built_at": env.get("built_at")}
-        out = {"apps": self._each(apps, one)}
-        if self.named_only and a.get("app", "all") == "all":
-            out["named_only"] = {"apps": self.named_only, "note": "left out of 'all': name one, and only for a "
-                                                                  "request about it"}
-        return out
+        return {"apps": self._each(apps, one)}
 
     def raw_aggregate(self, rid, a):
         _check_keys(a, ("app", "mode", *_COMMON, "limit"))
@@ -715,11 +692,11 @@ class Server:
                              "capabilities": {"tools": {"listChanged": False}},
                              "serverInfo": {"name": "llm-wiki-raw", "title": "llm-wiki raw ledgers",
                                             "version": VERSION},
-                             "instructions": instructions(self.tools.named_only)})
+                             "instructions": instructions()})
         elif method == "ping":
             self.reply(rid, {})
         elif method == "tools/list":
-            self.reply(rid, {"tools": tools(self.tools.apps, self.tools.named_only, self.tools.max_chars)})
+            self.reply(rid, {"tools": tools(self.tools.apps, self.tools.max_chars)})
         elif method == "tools/call":
             name = params.get("name")
             if name not in TOOLS:
@@ -772,9 +749,6 @@ class Server:
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="tools/mcp_rawsearch.py", description=__doc__.split("\n\n")[0])
     ap.add_argument("--apps", required=True, help="the apps the tools may search, comma-separated")
-    ap.add_argument("--named-only", default="", help="of those, the apps searched only when a call names them "
-                                                     "(left out of 'all'), comma-separated")
-    ap.add_argument("--timeout", type=int, default=TIMEOUT, help=f"seconds per search (default {TIMEOUT})")
     ap.add_argument("--max-chars", type=int, default=MAX_CHARS, help=f"result size cap (default {MAX_CHARS})")
     ap.add_argument("--probe", action="store_true", help="print raw_status (app 'all') as one line per app and exit")
     ap.add_argument("--manage", help=argparse.SUPPRESS)          # tests: a stand-in manage.py
@@ -782,16 +756,9 @@ def main(argv=None):
     apps = [x for x in a.apps.split(",") if x]
     if not apps or not all(_APP.fullmatch(x) for x in apps):
         ap.error("--apps: comma-separated app names")
-    named = [x for x in a.named_only.split(",") if x]
-    if not set(named) <= set(apps):
-        ap.error("--named-only: apps given in --apps")
-    runner = Runner(timeout=max(5, a.timeout), manage=a.manage)
-    t = Tools(apps, runner, max_chars=max(2000, a.max_chars), named_only=named)
+    runner = Runner(manage=a.manage)
+    t = Tools(apps, runner, max_chars=max(2000, a.max_chars))
     if a.probe:
-        for app in t.named_only:
-            print(f"mcp_rawsearch: {app}: named only (not probed: searched only when a call names it)")
-        if not t.covered:
-            return 3
         status = t.raw_status("probe", {})["apps"]
         for app, s in status.items():
             extra = "" if s.get("rows") is None else f" rows={s['rows']} seq={s.get('seq')}/{s.get('ledger_seq')}"

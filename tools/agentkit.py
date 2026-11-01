@@ -233,12 +233,6 @@ def _claude_cli(argv):
     return 0
 
 
-def _named_only(found):
-    """The apps the MCP server searches only when a call names them: the owner-gated ones (kakaotalk)."""
-    from tools import bootstrap  # noqa: PLC0415
-    return [a for a in found if a in bootstrap.OWNER_GATED]
-
-
 class Kit:
     """Claude Code's configuration in `home` (its .claude/ folder and .claude.json), with the manifest and backups
     in `state`. `claude(argv) -> rc` runs the claude CLI; `found` are the apps the MCP server may search; `python`
@@ -355,9 +349,6 @@ class Kit:
 
     def mcp_spec(self):
         args = ["-s", "-B", str(MCP_SERVER), "--apps", ",".join(self.found)]
-        named = _named_only(self.found)
-        if named:
-            args += ["--named-only", ",".join(named)]
         return {"type": "stdio", "command": self.python, "args": args}
 
     def mcp_now(self):

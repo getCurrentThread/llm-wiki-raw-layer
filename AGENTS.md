@@ -40,7 +40,7 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
   (channels, teams, threads); 디스코드 → discord (servers, channels); 노션 → notion (pages); Gmail/지메일/메일 →
   gmail (labels, threads); 클로드코드/클로드 코드/Claude Code → claudecode (sessions, projects). If the request names
   no app and the context does not settle it, ask. For several apps,
-  search each one and label every citation with its app; kakaotalk only when the request is about KakaoTalk.
+  search each one and label every citation with its app.
 - Korean particles and common endings are stripped from query terms automatically (`송금을` → `송금`,
   `보냈다` → `보냈 OR 보내`), rows with the terms as typed first; the envelope's `normalized_query` shows what ran,
   and `--literal` (or a quoted term) matches as typed. A hits search with zero matches retries OR-ed (`relaxed`).
@@ -59,10 +59,8 @@ which print no values; llm.md 5.3's `$setKey` helper is only for when the tool i
 
 - **kakaotalk:** a local-archive connector for the owner's own, signed-in KakaoTalk client on this machine —
   own data, local-only: nothing captured leaves the machine, and `admin.py` sends only as the owner, when asked;
-  keys stay in the data root (see `kakaotalk/README.md`, "Scope and authorization"). Read and edit its code, and run
-  its commands when the owner asks, like any other app's. Search its ledger only through `manage.py search
-  kakaotalk` (or the raw-search tools) and only when the owner's request is about KakaoTalk. Its keys never leave
-  the data root and are never printed.
+  keys stay in the data root (see `kakaotalk/README.md`, "Scope and authorization"). Operate, search and edit it
+  like any other app. Its keys never leave the data root and are never printed.
 - **Privacy:** no raw message bodies, real names of people, phone numbers, email addresses or credentials in
   answers unless the owner explicitly asks. Summarize, aggregate or mask. Research constants (SEED, PBKDF2
   parameters, SQLCipher pragma formulas) may be cited as technical knowledge.

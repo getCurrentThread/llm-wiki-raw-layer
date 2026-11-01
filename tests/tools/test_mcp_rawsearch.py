@@ -73,7 +73,7 @@ class Protocol(unittest.TestCase):
         self.addCleanup(self.stop)
 
     def start(self, *extra):
-        self.p = subprocess.Popen([sys.executable, "-s", "-B", str(SERVER), "--apps", "alpha,beta", "--timeout", "8",
+        self.p = subprocess.Popen([sys.executable, "-s", "-B", str(SERVER), "--apps", "alpha,beta",
                                    "--manage", str(self.manage), *extra], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -186,10 +186,7 @@ class Protocol(unittest.TestCase):
         env = self.payload(self.call(38, "raw_search", {"app": "alpha", "query": "q", "hybrid": False}))
         self.assertNotIn("--hybrid", env["argv"])
 
-    def test_timeout_and_cancel(self):
-        t0 = time.monotonic()
-        self.assertIn("longer than", self.error_text(self.call(1, "raw_search", {"app": "alpha", "query": "SLEEP"})))
-        self.assertLess(time.monotonic() - t0, 25)
+    def test_cancel(self):
         t0 = time.monotonic()
         self.send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                    "params": {"name": "raw_search", "arguments": {"app": "alpha", "query": "SLEEP"}}})
@@ -198,7 +195,7 @@ class Protocol(unittest.TestCase):
         self.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 99}})
         messages, log = self.stop()
         self.assertEqual(messages, [])                      # the cancelled request is never answered
-        self.assertLess(time.monotonic() - t0, 7)           # its child was killed, not left to the 8 s timeout
+        self.assertLess(time.monotonic() - t0, 7)           # its child was killed, not left to sleep its 30 s
         self.assertIn("tool=raw_search app=alpha cancelled", log)
 
     def test_status_aggregate_read_help(self):
@@ -206,7 +203,6 @@ class Protocol(unittest.TestCase):
         self.assertEqual(env["apps"]["alpha"]["state"], "ok")
         self.assertEqual(env["apps"]["alpha"]["rows"], 0)
         self.assertEqual(env["apps"]["beta"]["state"], "missing")
-        self.assertNotIn("named_only", env)
         agg = self.payload(self.call(2, "raw_aggregate", {"app": "alpha", "mode": "timeline", "since": "2020",
                                                           "limit": 12}))
         self.assertEqual(agg["argv"][3:], ["--mode=timeline", "--since=2020", "--limit=12"])
@@ -253,20 +249,6 @@ class Protocol(unittest.TestCase):
         self.assertIsNone(env["chunk"]["next_offset"])
         self.assertLess(rid, 6)
 
-    def test_named_only(self):
-        self.stop()
-        self.start("--named-only", "beta")
-        self.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
-        self.assertIn("leaves out beta", self.recv()["result"]["instructions"])
-        env = self.payload(self.call(2, "raw_status", {}))
-        self.assertEqual(set(env["apps"]), {"alpha"})
-        self.assertEqual(env["named_only"]["apps"], ["beta"])
-        both = self.payload(self.call(3, "raw_aggregate", {"app": "all", "mode": "count", "query": "x"}))
-        self.assertEqual(set(both["apps"]), {"alpha"})
-        named = self.payload(self.call(4, "raw_status", {"app": "beta"}))
-        self.assertEqual(named["apps"]["beta"]["state"], "missing")
-        self.assertNotIn("named_only", named)
-
     def test_probe(self):
         base = [sys.executable, "-s", "-B", str(SERVER), "--apps", "alpha,beta", "--manage", str(self.manage),
                 "--probe"]
@@ -274,11 +256,6 @@ class Protocol(unittest.TestCase):
         self.assertEqual(r.returncode, 3)
         self.assertIn("mcp_rawsearch: alpha: ok rows=0 seq=2/2", r.stdout)
         self.assertIn("mcp_rawsearch: beta: missing", r.stdout)
-        r = subprocess.run(base + ["--named-only", "beta"], capture_output=True, text=True, timeout=60)
-        self.assertEqual(r.returncode, 0)
-        self.assertIn("mcp_rawsearch: beta: named only", r.stdout)
-        r = subprocess.run(base + ["--named-only", "gamma"], capture_output=True, text=True, timeout=60)
-        self.assertEqual(r.returncode, 2)
 
 
 class Arguments(unittest.TestCase):
