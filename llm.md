@@ -114,7 +114,7 @@ repeating them.
 
 | command | exit codes |
 |---|---|
-| `capture` | 0 ok · 3 suspect (that origin, one `sources` entry such as `gm_archive`, committed nothing) · 75 busy or below the disk floor (nothing committed), or an origin or container skipped (what was read is committed) · 2 refused · 1 error |
+| `capture` | CORE.md ("What the core guarantees", Exit codes); 75 is also returned below the disk floor (nothing committed) |
 | `-m <app>.fetch` | 0 ok · 75 `errors` above 0, busy, a network or API failure, or another non-auth category · 2 `auth_required`, `auth_failed`, `account_changed` (the last only from a sync run, never from `--auth-check`) · 1 config or unexpected error · with `--capture`, a non-zero code of its `capture` step (the row above) is returned as is |
 | `-m gmail.fetch --auth` | 0 `auth_ready` · 2 every failure; `status` names the cause (7.3) |
 | `-m mattermost.fetch --login` | 0 `auth_ready` · 2 every failure; `status` names the cause (6.4) |
@@ -228,14 +228,12 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 
 The app cards in section 6 run these steps at the points they name, with their own keys, bounds and commands.
 
-**5.0 The bootstrap tool.** `tools/bootstrap.py` does the config edits and the bookkeeping of these steps. Run it
-as `python -s -B tools/bootstrap.py ...` from `<PROJECT>`, or with its full path from anywhere. It prints key
-names and states, never config values. It refuses kakaotalk.
-- `config get <app>`: each key's state (missing, placeholder, empty, set, or a path in or outside the data root and
-  whether it is there), never its value. Booleans, integers and `*_source` values are shown.
-- `config set <app> <KEY> <VALUE> [<KEY> <VALUE> ...]`: the 5.3 edit (its value rule; `--string` keeps every
-  value a string). After writing, it reports the placeholders left, `config ok` or the refusal, and what
-  `schedule install` would refuse.
+**5.0 The bootstrap tool.** `tools/bootstrap.py` does the config edits and the bookkeeping of these steps; its
+docstring says what each command prints. Run it as `python -s -B tools/bootstrap.py ...` from `<PROJECT>`, or with
+its full path from anywhere. It prints key names and states, never config values. It refuses kakaotalk.
+- `config get <app>`: each key's state, never its value.
+- `config set <app> <KEY> <VALUE> [<KEY> <VALUE> ...]`: the 5.3 edit (`--string` keeps every value a string). After
+  writing, it reports the placeholders left, `config ok` or the refusal, and what `schedule install` would refuse.
 - `config defaults <app>`: fills the keys `setup` fills (5.1) into a config that is already there; it never
   replaces a value that is set.
 - `checkpoint mark <app> <step> [--field NAME=VALUE ...]`: records a passed gate in
@@ -1123,43 +1121,32 @@ Never include the items listed in rule 3.
 
 ## 11. Agent integration (Claude Code)
 
-`python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`) renders `tools/agent_templates/` into Claude
-Code's global configuration, so that the ledgers can be searched and this runbook found from any folder. It
-needs no elevation and touches no data. It installs:
-- a marked block in `<HOME>\.claude\CLAUDE.md`, between `<!-- llm-wiki-raw-layer:begin ... -->` and
-  `<!-- llm-wiki-raw-layer:end -->`; the rest of the file is kept byte for byte;
-- the `raw-search` and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`;
-- the user-scope MCP server `llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app), registered
-  with `claude mcp add-json --scope user`. kakaotalk is registered as named-only: the tools' app `all`, and
-  `raw_status` without an app, leave it out, so it is searched only when a call names it.
+`python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; its docstring is the reference for the states,
+options and backups) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
+be searched and this runbook found from any folder: a marked block in `<HOME>\.claude\CLAUDE.md`, the `raw-search`
+and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`, and the user-scope MCP server
+`llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app). kakaotalk is registered as named-only: the
+tools' app `all`, and `raw_status` without an app, leave it out, so it is searched only when a call names it. It needs
+no elevation and touches no data. Its manifest and backups live in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
+never in `<PROJECT>`.
 
-Its manifest and backups live in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`, never in `<PROJECT>`.
-
-1. `agents status`. Each item is `absent`, `current`, `stale` (an older version this tool wrote), `modified`
-   (changed by hand since) or `foreign` (not this tool's), or `unreadable` (a global CLAUDE.md that is not UTF-8
-   or whose markers are broken: the owner fixes it by hand).
-   `project_mismatch` means the integration points at another checkout. Exit 0 when every item is `current`.
-2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and wait for an explicit yes: it rewrites their global
-   configuration (rule 10).
-3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item
-   unless `--force` names it, and backs up whatever it replaces. `--python
-   <PY>` names the interpreter the MCP server runs with; without it, install keeps the interpreter the server was
-   installed with (while that file is still there), else uses the one running the command. When a `claude mcp`
-   call fails, the error ends with the CLI's own reason.
+1. `agents status`. Exit 0 when every item is `current`. `project_mismatch` means the integration points at another
+   checkout; `unreadable` (a global CLAUDE.md that is not UTF-8 or whose markers are broken) is for the owner to fix
+   by hand.
+2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and
+   wait for an explicit yes: it rewrites their global configuration (rule 10).
+3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item unless
+   `--force` names it, and backs up whatever it replaces. `--python <PY>` names the interpreter the MCP server runs
+   with. When a `claude mcp` call fails, the error ends with the CLI's own reason.
    Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for the apps other than
    kakaotalk. Call it with kakaotalk only when the owner asks.
 4. Re-run `install` after `git pull` or a moved checkout: a template change shows as `stale`, a moved one as
    `project_mismatch`. It keeps the recorded interpreter; pass `--python` again to change it.
 
-`agents uninstall` removes what install wrote and nobody changed since (a `modified` item is kept and named;
-`--force` removes it too, saving the changed copy first and naming where). `--restore` also puts back what install
-replaced or removed, from the backups, including an original whose earlier restore failed. Without `--restore`,
-the backups of the items it removes are forgotten (their files stay under the state folder's `backups`, and the
-output says so). Both take `--dry-run`.
-
-The checkout's own copies (`.claude/skills`, `.claude/agents`, `.agents/skills`) come from the same templates
-with commands run from `<PROJECT>`: after editing a template, run `agents sync-repo`. `agents sync-repo --check`
-exits 3 while they differ, and a test fails.
+`agents uninstall [--restore] [--force] [--dry-run]` undoes install and keeps what was changed by hand unless
+`--force` names it (the docstring says what is backed up and restored). After editing a template, run
+`agents sync-repo` to refresh the checkout's own copies (`.claude/skills`, `.claude/agents`, `.agents/skills`);
+`agents sync-repo --check` exits 3 while they differ, and a test fails.
 
 ## 12. Dense retrieval (optional)
 

@@ -18,8 +18,9 @@ folders. Standard library only.
       was installed with (while that is still there), else the one running this command.
   uninstall [--dry-run] [--restore] [--force]
       Removes what install wrote and nobody changed since (a modified item is kept and named; --force removes it
-      too, saving the hand-changed copy first). --restore also puts back what install replaced or removed, from the
-      backups; without it, the backups of the removed items are forgotten (their files stay in the state folder).
+      too, saving the hand-changed copy first). --restore also puts back what install replaced, from the backups
+      (also an original whose earlier restore failed); without it, the backups of the removed items are forgotten
+      (their files stay in the state folder).
   sync-repo [--check]
       Renders the templates into this checkout (.claude/skills, .claude/agents, .agents/skills), with commands that
       run from the checkout. --check changes nothing and exits 3 on a difference.
