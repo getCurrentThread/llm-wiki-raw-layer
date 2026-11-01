@@ -6,7 +6,7 @@ from rawlayer.capture.origins import Unstable
 from discord.readers.archive import msg_native
 from discord.keys import snowflake_ms
 from .fixtures import Fixture, CID, MID, message
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class CaptureTests(unittest.TestCase):
@@ -23,8 +23,8 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(h.replay_diff(self.fx), 0)
 
     def test_versions_and_return(self):
-        from .ledgerfix import rounds
-        rounds(self.fx)
+        texts = ("synthetic deployment", "edited deployment", "synthetic deployment")
+        h.rounds(self.fx, [{CID: [[message(text=t)]]} for t in texts])
         recs = h.by_key(h.records(self.fx))[f"dc:msg:{CID}:{MID}"]
         self.assertEqual([r["rev"] for r in recs], [1, 2, 3])
 

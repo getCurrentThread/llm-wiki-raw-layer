@@ -5,8 +5,7 @@ from contextlib import closing
 from rawlayer.search import common, dense, textindex as ti
 from claudecode.search import SPEC, DRIVER, ClaudeCodeApplier, add_arguments, tool_text
 from .fixtures import Fixture, CID, MID, row
-from .ledgerfix import rounds
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class SearchTests(unittest.TestCase):
@@ -31,7 +30,8 @@ class SearchTests(unittest.TestCase):
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall() for t in ("msgs", "sessions", "counts")}
 
     def test_incremental_equals_rebuild_several_rounds(self):
-        rounds(self.fx)
+        texts = ("synthetic deployment", "edited deployment", "synthetic deployment")
+        h.rounds(self.fx, [{CID: [[row(text=t)]]} for t in texts])
         common.update(self.fx.data_root, SPEC)
         self.update({CID: [[row()], [row("reply", text="deployed", role="assistant", n=1)]]})
         incremental = self.snapshot()

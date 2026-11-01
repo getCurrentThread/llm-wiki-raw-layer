@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""The shared preamble of an app's test helpers: one capture run, the ledger read back and checked, the
-replay comparison, the raw-search runner and the clone/damage utilities of the search tests. An app's
-tests/helpers.py and tests/ledgerfix.py re-export these next to their origins list and scenario builders
+"""The shared preamble of an app's tests: one capture run, the ledger read back and checked, the replay
+comparison, the raw-search runner and the clone/damage utilities of the search tests. An app's tests use this
+module directly (`from tests.core import appfix as h`: an app's tests select the app, so `h.capture(fx)` runs its
+origins); an app with its own scenario builders keeps them in a tests/ledgerfix.py
 (the ledger invariants themselves live in ledgercheck.py)."""
 import contextlib
 import datetime as _dt
@@ -13,6 +14,7 @@ import stat
 import tempfile
 from pathlib import Path
 
+from rawlayer import registry
 from rawlayer.capture import cli, run, state
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
@@ -38,10 +40,19 @@ def preserved_env():
         tempfile.tempdir = td
 
 
-def capture(fx, origins):
-    """One capture run (input set live, precheck skipped as in the capture tests). Returns its exit code."""
+def capture(fx, origins=None):
+    """One capture run (input set live, precheck skipped as in the capture tests) of `origins`, by default every
+    origin of the selected app. Returns its exit code."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()):
-        return run.capture(Config(fx.config_path), "live", list(origins), skip_precheck=True)
+        return run.capture(Config(fx.config_path), "live",
+                           list(registry.origin_order() if origins is None else origins), skip_precheck=True)
+
+
+def rounds(fx, writes):
+    """A capture run after each `fx.write(w)` for w in `writes`: a ledger of several rounds, every run ok."""
+    for w in writes:
+        fx.write(w)
+        assert capture(fx) == 0
 
 
 def records(fx):

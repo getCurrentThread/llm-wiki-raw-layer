@@ -7,7 +7,7 @@ from gmail.readers.archive import containers, safe_rel
 from gmail.keys import gm_id
 from tools.archiveio import load
 from .fixtures import Fixture, Transport, MID
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class HardeningTests(unittest.TestCase):

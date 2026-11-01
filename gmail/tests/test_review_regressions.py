@@ -12,7 +12,7 @@ from gmail.search import SPEC
 from rawlayer.search import common
 from tools.archiveio import load
 from .fixtures import Fixture, Transport, MID, OTHER, raw_message
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class ContentOnlyTests(unittest.TestCase):

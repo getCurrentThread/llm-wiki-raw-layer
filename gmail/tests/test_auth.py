@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from gmail.auth import pkce, callback_code, authorize, refresh, token_request, credential_path, SCOPE
 from tools.archiveio import FetchError, load
 from .fixtures import Fixture, Response
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class AuthTests(unittest.TestCase):

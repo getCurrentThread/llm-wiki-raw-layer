@@ -17,7 +17,7 @@ from urllib.error import HTTPError
 
 from mattermost import admin
 from mattermost.tests.fixtures import TEST_PARENT, Fixture
-from mattermost.tests.helpers import _force
+from tests.core.appfix import _force
 
 URL = "https://mm.example"
 TOKEN = "synthetic-token"

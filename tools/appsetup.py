@@ -2,7 +2,8 @@
 """What the apps' AppConfig.setup_defaults share (`manage.py setup <app>`, and `tools/bootstrap.py config defaults
 <app>` on a config.json that is already there): fill a config key only while it is unset (missing, empty, or still
 a config.example.json placeholder <...>), and create the archive folder an app's fetch step writes into. A value
-the owner set is never replaced. Only key names reach `note`, never the values: they are machine paths."""
+the owner set is never replaced. `defaults` states them as a dict; `existing_path` is the task check they share.
+Only key names reach `note`, never the values: they are machine paths."""
 import os
 from pathlib import Path
 
@@ -68,3 +69,26 @@ def _inside(path, parent):
     p = os.path.normcase(os.path.abspath(path)).rstrip("\\/")
     q = os.path.normcase(os.path.abspath(parent)).rstrip("\\/")
     return os.path.isabs(path) and p.startswith(q + os.sep)
+
+
+def defaults(cfg, note, data=None, home=None):
+    """The declarative form of an app's setup_defaults, once the config names a data root: `data` maps a dotted key to a
+    name under the data root (`sources.*` keys are folders `fill` creates), `home` a key to path parts under the
+    owner's profile (offered only when that path exists). `fill` sets what is still unset, data keys first."""
+    root = cfg.get("data_root")
+    if not root:
+        return []
+    values = {key: Path(root, name) for key, name in (data or {}).items()}
+    values.update((key, profile_path(*parts)) for key, parts in (home or {}).items())
+    return fill(cfg, note, values, folders=[k for k in values if k.startswith("sources.")])
+
+
+def existing_path(cfg, sync, key, kind, other):
+    """A task_checks result: while `cfg.<sync>` is on, `cfg.<key>` must be an absolute path to an existing folder or
+    file (`kind`), as SYSTEM has another `other` than the owner's."""
+    if not getattr(cfg, sync):
+        return []
+    value = getattr(cfg, key)
+    if value and os.path.isabs(value) and (os.path.isdir if kind == "folder" else os.path.isfile)(value):
+        return []
+    return [f"{sync} requires an absolute {key} to an existing {kind} (SYSTEM has another {other})"]

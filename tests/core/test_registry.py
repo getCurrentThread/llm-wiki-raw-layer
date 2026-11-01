@@ -6,6 +6,7 @@ import os
 import sys
 import types
 import unittest
+from pathlib import Path
 
 from rawlayer import registry
 from rawlayer.capture import publicout
@@ -42,19 +43,21 @@ class FakeApps:
         self.names = []
 
     def fake(self, name, label=None, origins=(), source_keys=(), options=(), words=(), patterns=(), search=None,
-             configs=1, resolve=None, wiki=None):
+             configs=1, resolve=None, wiki=None, archive=None, inputs=True, vocab=True):
         pkg = "fakeapps_" + name
         mods = {pkg: types.ModuleType(pkg)}
         apps = mods[pkg + ".apps"] = types.ModuleType(pkg + ".apps")
         for i in range(configs):
             cls = type(f"Cfg{i}", (AppConfig,), {"label": label or name, "source_keys": tuple(source_keys),
                                                  "options": tuple(options), "wiki": wiki,
-                                                 "__module__": pkg + ".apps"})
+                                                 "archive": archive, "__module__": pkg + ".apps"})
             setattr(apps, cls.__name__, cls)
         mods[pkg + ".origins"] = types.SimpleNamespace(ORIGINS=tuple(origins))
-        mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg, n, f: {}),
-                                                      static_roots=lambda inputs: {})
-        mods[pkg + ".vocab"] = types.SimpleNamespace(WORDS=tuple(words), PATTERNS=tuple(patterns))
+        if inputs:                                          # inputs.py and vocab.py are optional modules
+            mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg, n, f: {}),
+                                                          static_roots=lambda inputs: {})
+        if vocab:
+            mods[pkg + ".vocab"] = types.SimpleNamespace(WORDS=tuple(words), PATTERNS=tuple(patterns))
         if search is not None:
             mods[pkg + ".search"] = search
         for k, v in mods.items():
@@ -195,6 +198,27 @@ class TestRefusals(Base):
         taken = Option("w_wiki_since", "", str)             # a key the declaration would add, claimed by an option
         self.refused(self.apps.fake("wka", options=[taken], wiki=("w", "chat")))
         self.refused(self.apps.fake("wkb", wiki=("w", "chat")), self.apps.fake("wkc", wiki=("w", "mail")))
+
+    def test_inputs_and_vocab_are_optional(self):
+        app = registry.Registry([self.apps.fake("bare", inputs=False, vocab=False)]).apps[0]
+        self.assertEqual((app.inputs.resolve(None, "live", None), app.inputs.static_roots(None)), ({}, {}))
+        self.assertEqual((app.vocab.WORDS, app.vocab.PATTERNS), ((), ()))
+
+    def test_archive_declaration(self):
+        """AppConfig.archive = p adds the source key <p>_archive and, without an inputs.py, that input attribute: the
+        config's path live, <inputs_root>/<set>/<p>/archive frozen; an inputs.py replaces it."""
+        pkg = self.apps.fake("arc", archive="ar", source_keys=["other"], inputs=False)
+        reg = registry.Registry([pkg])
+        self.assertEqual(reg.source_keys, ("ar_archive", "other"))
+        inputs = reg.apps[0].inputs
+        cfg = types.SimpleNamespace(sources={"ar_archive": os.path.join(os.sep, "x", "y")})
+        self.assertEqual(inputs.resolve(cfg, "live", None), {"ar_archive": Path(os.sep, "x", "y")})
+        self.assertEqual(inputs.resolve(cfg, "T1", "frozen"), {"ar_archive": Path("frozen", "ar", "archive")})
+        self.assertEqual(inputs.static_roots(None), {})
+        self.refused(pkg, self.apps.fake("arc2", archive="ar", inputs=False))        # the key is taken
+        self.refused(self.apps.fake("arc3", archive="Bad-Prefix"))
+        own = registry.Registry([self.apps.fake("arc4", archive="aq", resolve=lambda cfg, n, f: {"aq_dir": 1})])
+        self.assertEqual(own.apps[0].inputs.resolve(None, "live", None), {"aq_dir": 1})
 
     def test_search_name_is_the_label(self):
         search = types.SimpleNamespace(SPEC=types.SimpleNamespace(name="other"))

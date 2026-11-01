@@ -1,4 +1,4 @@
-"""Private, atomic archive publication shared by the app-owned fetch steps."""
+"""Private, atomic archive publication shared by the app-owned fetch steps, and the origin base of their archives."""
 import contextlib
 import datetime as dt
 import json
@@ -8,6 +8,7 @@ import subprocess
 import sys
 import uuid
 
+from rawlayer.capture.origins import Origin
 from rawlayer.registry import identifiers, text  # noqa: F401 -- the apps import them from here
 
 
@@ -88,6 +89,23 @@ def fetch_first(ctx, enabled, archive, app):
             raise FetchError("collection_incomplete")
 
 
+class ArchiveOrigin(Origin):
+    """An origin that reads the archive its app's fetch step keeps (AppConfig.archive `p`): it is named `<p>_archive`
+    as its input attribute is, an app calls `self.fetch(ctx)` first in read / read_once, and `peak` lists the
+    (folder below the archive, glob) pairs whose files a capture may copy: estimate_peak is their size (none: 0)."""
+    peak = ()
+
+    def fetch(self, ctx):
+        app = type(self).__module__.partition(".")[0]       # the app's folder: <app>/origins.py holds the origin
+        fetch_first(ctx, getattr(ctx.cfg, self.name.removesuffix("_archive") + "_sync"),
+                    getattr(ctx.inputs, self.name), app)
+
+    def estimate_peak(self, inputs):
+        root = getattr(inputs, self.name)
+        return sum(p.stat().st_size for folder, pattern in self.peak for p in (root / folder).glob(pattern)
+                   if p.is_file())
+
+
 @contextlib.contextmanager
 def locked(root):
     root = Path(root)
@@ -138,6 +156,15 @@ def nonnegative(value):
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100000:
         raise ValueError("nonnegative integer")
     return value
+
+
+def choice(*values):
+    """An Option check: one of `values`."""
+    def check(value):
+        if value not in values:
+            raise ValueError("choice")
+        return value
+    return check
 
 
 def main(app, sync_config, argv=None):

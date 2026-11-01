@@ -15,16 +15,13 @@ from tests.core import toyfix as T
 
 
 def app_files(label, origins="()", extra=None):
-    """The files of a minimal app (no input, no reader): its label, and ORIGINS as Python source."""
+    """The files of a minimal app (no input, no vocabulary, no reader): its label, and ORIGINS as Python source."""
     files = {
         "__init__.py": "",
         "apps.py": ("from rawlayer.registry import AppConfig\n\n\n"
                     f"class Config(AppConfig):\n    label = {label!r}\n"),
         "origins.py": ("from tests.core.toyapp.origins import ToyA, ToyB, ToyM  # noqa: F401\n\n"
                        f"ORIGINS = {origins}\n"),
-        "inputs.py": ("def resolve(cfg, input_set, frozen_root):\n    return {}\n\n\n"
-                      "def static_roots(inputs):\n    return {}\n"),
-        "vocab.py": "WORDS = ()\nPATTERNS = ()\n",
     }
     files.update(extra or {})
     return files

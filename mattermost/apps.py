@@ -1,12 +1,7 @@
 # -*- coding: utf-8 -*-
 from rawlayer.registry import AppConfig, Option
-from tools.archiveio import boolean, nonnegative, text
-
-
-def _patterns(v):
-    if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
-        raise ValueError("mm_exclude_patterns")
-    return list(v)
+from tools.appsetup import defaults
+from tools.archiveio import boolean, identifiers, nonnegative, text
 
 
 def _url(v):
@@ -18,12 +13,12 @@ def _url(v):
 class MatterConfig(AppConfig):
     label = "mattermost"
     # config.json "sources": the archive directory (mattertok's format; the app's fetch step keeps it current)
-    source_keys = ("mm_archive",)
+    archive = "mm"
     # channels whose display name or name contains one of these (casefolded) are not read (mattertok's rule).
     # mm_sync: live capture runs the app's fetch step first (mattermost/fetch.py); mm_url is the server and
     # mm_token_file a private file under the data parent holding the session token `--login` writes.
     # mm_files_max_mb: the fetch step also keeps each attached file of at most this many MB (0: none).
-    options = (Option("mm_exclude_patterns", [], _patterns, attr="mm_exclude"),
+    options = (Option("mm_exclude_patterns", [], identifiers, attr="mm_exclude"),
                Option("mm_sync", False, boolean), Option("mm_url", "", _url),
                Option("mm_token_file", "", text), Option("mm_files_max_mb", 0, nonnegative))
     wiki = ("mm", "chat")
@@ -42,12 +37,7 @@ class MatterConfig(AppConfig):
     def setup_defaults(self, cfg, note):
         # the archive and the token file --login writes, in the data root; mm_url and mm_exclude_patterns are the
         # owner's to give (an organisation's values, never defaults)
-        from pathlib import Path
-        from tools.appsetup import fill
-        root = cfg.get("data_root")
-        if root:
-            fill(cfg, note, {"sources.mm_archive": Path(root, "archive"), "mm_token_file": Path(root, "token.txt")},
-                 folders=("sources.mm_archive",))
+        defaults(cfg, note, data={"sources.mm_archive": "archive", "mm_token_file": "token.txt"})
 
     def task_checks(self, cfg):
         if not cfg.mm_sync:

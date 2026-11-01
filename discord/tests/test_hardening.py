@@ -2,7 +2,7 @@ import json
 import unittest
 from discord.readers.archive import read_once, _safe_rel
 from .fixtures import Fixture, CID, MID, UID, message
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class HardeningTests(unittest.TestCase):

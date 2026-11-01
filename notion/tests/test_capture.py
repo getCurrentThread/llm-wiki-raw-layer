@@ -2,7 +2,7 @@ import unittest
 from rawlayer.capture import canon
 from notion.readers.project import project
 from .fixtures import Fixture, page, block, BID, PID, OTHER, COMMENT, rt
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class CaptureTests(unittest.TestCase):

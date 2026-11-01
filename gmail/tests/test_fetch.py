@@ -6,7 +6,7 @@ from gmail.fetch import sync
 from gmail.api import GmailClient, Bucket, pages
 from tools.archiveio import FetchError, load, locked
 from .fixtures import Fixture, Transport, Response, http_error, raw_message, MID, OTHER
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class FetchTests(unittest.TestCase):

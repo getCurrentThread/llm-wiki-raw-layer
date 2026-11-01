@@ -1,5 +1,5 @@
-from pathlib import Path
 from rawlayer.registry import AppConfig, Option
+from tools.appsetup import defaults
 from tools.archiveio import boolean, text, identifiers, nonnegative
 
 EXCLUDED = ["SPAM", "TRASH", "DRAFT", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"]
@@ -14,7 +14,7 @@ def body_bytes(value):
 
 class GmailConfig(AppConfig):
     label = "gmail"
-    source_keys = ("gm_archive",)
+    archive = "gm"
     options = (Option("gm_sync", False, boolean), Option("gm_client_file", "", text),
                Option("gm_token_file", "", text), Option("gm_exclude_labels", EXCLUDED, identifiers),
                Option("gm_volatile_labels", ["UNREAD"], identifiers),
@@ -27,11 +27,8 @@ class GmailConfig(AppConfig):
 
     def setup_defaults(self, cfg, note):
         # the archive, the downloaded Desktop client JSON and the token --auth writes, all in the data root
-        from tools.appsetup import fill
-        root = cfg.get("data_root")
-        if root:
-            fill(cfg, note, {"sources.gm_archive": Path(root, "archive"), "gm_client_file": Path(root, "client.json"),
-                             "gm_token_file": Path(root, "token.json")}, folders=("sources.gm_archive",))
+        defaults(cfg, note, data={"sources.gm_archive": "archive", "gm_client_file": "client.json",
+                                  "gm_token_file": "token.json"})
 
     def task_checks(self, cfg):
         if not cfg.gm_sync:

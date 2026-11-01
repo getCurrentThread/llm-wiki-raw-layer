@@ -3,7 +3,7 @@ import json
 import unittest
 from discord.desktop import payloads, json_values, scan, sync
 from .fixtures import Fixture, CID, MID, UID
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class DesktopTests(unittest.TestCase):

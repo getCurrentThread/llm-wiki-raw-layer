@@ -7,7 +7,7 @@ from discord.fetch import DiscordClient, dce_message, sync
 from discord.readers.archive import read_once
 from tools.archiveio import FetchError, load, locked
 from .fixtures import Fixture, CID, MID, UID
-from . import helpers as h
+from tests.core import appfix as h
 
 
 def message(mid=MID, content="synthetic deployment"):

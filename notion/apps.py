@@ -1,19 +1,14 @@
 from rawlayer.registry import AppConfig, Option
-from tools.archiveio import boolean, text, identifiers, nonnegative
-
-
-def _source(value):
-    if value not in ("api", "desktop"):
-        raise ValueError("nt_source")
-    return value
+from tools.appsetup import defaults, existing_path
+from tools.archiveio import boolean, choice, text, identifiers, nonnegative
 
 
 class NotionConfig(AppConfig):
     label = "notion"
-    source_keys = ("nt_archive",)
+    archive = "nt"
     options = (Option("nt_sync", False, boolean), Option("nt_cli", "", text),
                Option("nt_page_ids", [], identifiers), Option("nt_comments", True, boolean),
-               Option("nt_max_pages", 0, nonnegative), Option("nt_source", "api", _source),
+               Option("nt_max_pages", 0, nonnegative), Option("nt_source", "api", choice("api", "desktop")),
                Option("nt_desktop_path", "", text))
     wiki = ("nt", "page")
     schedule = {"task": r"\llm-wiki\notion-capture", "start": "03:29",
@@ -23,15 +18,9 @@ class NotionConfig(AppConfig):
     def setup_defaults(self, cfg, note):
         # the archive in the data root; for the desktop source, Notion's database in the owner's profile (SYSTEM's
         # %APPDATA% is the system profile's), filled only when it is there
-        from pathlib import Path
-        from tools.appsetup import fill, profile_path
-        root = cfg.get("data_root")
-        if not root:
-            return
-        values = {"sources.nt_archive": Path(root, "archive")}
-        if cfg.get("nt_source", "api") == "desktop":
-            values["nt_desktop_path"] = profile_path("AppData", "Roaming", "Notion", "notion.db")
-        fill(cfg, note, values, folders=("sources.nt_archive",))
+        home = {"nt_desktop_path": ("AppData", "Roaming", "Notion", "notion.db")}
+        defaults(cfg, note, data={"sources.nt_archive": "archive"},
+                 home=home if cfg.get("nt_source", "api") == "desktop" else None)
 
     def task_checks(self, cfg):
         # The existing core's scheduler uses SYSTEM, whereas ntn's keychain belongs
@@ -40,8 +29,4 @@ class NotionConfig(AppConfig):
             return []
         if cfg.nt_source == "api":
             return ["nt_sync requires a user-account task (ntn keychain)"]
-        import os
-        p = cfg.nt_desktop_path
-        if not p or not os.path.isabs(p) or not os.path.isfile(p):
-            return ["nt_sync requires an absolute nt_desktop_path to an existing file (SYSTEM has another %APPDATA%)"]
-        return []
+        return existing_path(cfg, "nt_sync", "nt_desktop_path", "file", "%APPDATA%")

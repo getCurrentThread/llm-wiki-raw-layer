@@ -1,7 +1,7 @@
 import unittest
 from notion.keys import nt_id, iso_ms
 from .fixtures import Fixture, PID, BID, page
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class HardeningTests(unittest.TestCase):

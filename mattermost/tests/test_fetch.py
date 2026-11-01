@@ -24,7 +24,7 @@ from mattermost.apps import MatterConfig, _url
 from mattermost.fetch import MattermostClient, login, sync, token
 from mattermost.readers import archive as reader
 from mattermost.tests.fixtures import Fixture
-from mattermost.tests.helpers import _force, by_key, capture, invariants, records, replay_diff
+from tests.core.appfix import _force, by_key, capture, invariants, records, replay_diff
 
 URL = "https://mm.example"
 

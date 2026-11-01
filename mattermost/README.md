@@ -9,7 +9,7 @@ The implementation uses the Python standard library.
 ## Layout
 
 Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
-This app's folder contains `apps.py` (source keys, options and schedule), `origins.py`, `inputs.py`, `readers/`,
+This app's folder contains `apps.py` (source keys, options and schedule), `origins.py`, `readers/`,
 `fetch.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/` and `config.example.json`.
 Core tests are at `<PROJECT>/tests/core/`;
 app tests are at `<PROJECT>/mattermost/tests/`. The `/raw-search` skill is

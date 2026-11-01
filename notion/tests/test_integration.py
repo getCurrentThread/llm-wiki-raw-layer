@@ -3,13 +3,12 @@ import io
 import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
-from tests.core import appfix
 from rawlayer import schedule
 from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
-from notion import inputs
+from rawlayer import registry
 from .fixtures import Fixture
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class IntegrationTests(unittest.TestCase):
@@ -18,7 +17,7 @@ class IntegrationTests(unittest.TestCase):
         self.addCleanup(h.force_rmtree, self.fx.base)
 
     def test_collect_pipeline(self):
-        with appfix.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
+        with h.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(capture.main(["notion", "--config", str(self.fx.config_path)]), 0)
         rc, out, err = h.run_rawsearch(["notion", "--config", self.fx.config_path, "deployment", "--json"])
         self.assertEqual(rc, 0, err)
@@ -39,5 +38,6 @@ class IntegrationTests(unittest.TestCase):
 
     def test_frozen_and_peak(self):
         from notion.origins import NtArchive
+        inputs = registry.get().apps[0].inputs
         self.assertEqual(inputs.resolve(Config(self.fx.config_path), "T2", self.fx.base)["nt_archive"], self.fx.base / "nt/archive")
         self.assertGreater(NtArchive().estimate_peak(type("Inputs", (), {"nt_archive": self.fx.root})()), 0)

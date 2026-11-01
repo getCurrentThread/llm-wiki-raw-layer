@@ -5,7 +5,7 @@ from contextlib import closing
 from rawlayer.search import common, dense
 from discord.search import SPEC, DRIVER, DiscordApplier, msg_text
 from .fixtures import Fixture, CID, MID, UID, message
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class SearchTests(unittest.TestCase):

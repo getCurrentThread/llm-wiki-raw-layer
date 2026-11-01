@@ -10,7 +10,7 @@ from tools.archiveio import FetchError
 from claudecode.origins import CcArchive
 from claudecode.readers.archive import read_once
 from .fixtures import Fixture, CID, MID, row
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class CaptureTests(unittest.TestCase):

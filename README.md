@@ -58,13 +58,13 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
   claudecode/                  Claude Code conversation archive and session/project search (see claudecode/README.md)
     apps.py                    AppConfig: label, source keys, options, schedule and task checks
     origins.py                 origins in processing and commit order
-    inputs.py                  live and frozen input paths
+    inputs.py                  live and frozen input paths (optional: `AppConfig.archive` gives the archive input)
     readers/                   source readers
-    vocab.py                   public output vocabulary
+    vocab.py                   public output vocabulary (optional)
     search.py                  app index and search interface
     tests/                     app tests with synthetic inputs
     config.example.json        machine config shape
-  tools/archiveio.py           the fetch steps' shared file, lock and exit-code helpers
+  tools/archiveio.py           the fetch steps' shared file, lock and exit-code helpers, and `ArchiveOrigin`
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
   tools/appsetup.py            the apps' shared setup defaults (AppConfig.setup_defaults)
   tools/agentkit.py            the agent integration (bootstrap.py agents): global install, sync-repo

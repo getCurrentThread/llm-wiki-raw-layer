@@ -1,19 +1,16 @@
-from tools.archiveio import fetch_first
-from rawlayer.capture.origins import Origin
+from tools.archiveio import ArchiveOrigin
 from .readers import archive
 
 
-class NtArchive(Origin):
+class NtArchive(ArchiveOrigin):
     name = "nt_archive"
     kinds = frozenset({"page", "block", "comment", "ds", "user"})
     day_kinds = frozenset({"block"})
+    peak = (("", "**/*.json"),)
 
     def read(self, ctx):
-        fetch_first(ctx, ctx.cfg.nt_sync, ctx.inputs.nt_archive, "notion")
+        self.fetch(ctx)
         return archive.containers(ctx.inputs.nt_archive, self.name)
-
-    def estimate_peak(self, inputs):
-        return sum(p.stat().st_size for p in inputs.nt_archive.rglob("*.json") if p.is_file())
 
 
 ORIGINS = (NtArchive,)

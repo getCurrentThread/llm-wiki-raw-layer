@@ -5,7 +5,6 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
-from tests.core import appfix
 from rawlayer import schedule
 from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
@@ -13,9 +12,9 @@ from rawlayer.search import common, textindex as ti
 from gmail.fetch import sync, sync_config
 from gmail.search import SPEC, DRIVER, GmailApplier, mail_paragraphs
 from gmail.origins import GmArchive
-from gmail import inputs
+from rawlayer import registry
 from .fixtures import Fixture, Transport, MID, OTHER, THREAD, raw_message
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class IntegrationTests(unittest.TestCase):
@@ -40,7 +39,7 @@ class IntegrationTests(unittest.TestCase):
                     for t in ("msgs", "states", "labels", "membership", "counts")}
 
     def test_collect_pipeline_ledger_index_search_replay(self):
-        with appfix.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
+        with h.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(capture.main(["gmail", "--config", str(self.fx.config_path)]), 0)
         self.assertEqual(self.query("deployment")["total"], 2)
         self.assertFalse(h.invariants(self.fx)[0])
@@ -155,6 +154,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_frozen_peak_and_sync_config_fake_transport(self):
         cfg = Config(self.fx.config_path)
+        inputs = registry.get().apps[0].inputs
         self.assertEqual(inputs.resolve(cfg, "T1", self.fx.base)["gm_archive"], self.fx.base / "gm/archive")
         self.assertGreater(GmArchive().estimate_peak(type("Inputs", (), {"gm_archive": self.fx.root})()), 0)
         from gmail.api import GmailClient

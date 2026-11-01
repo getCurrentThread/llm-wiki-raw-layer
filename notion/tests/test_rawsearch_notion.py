@@ -5,7 +5,7 @@ from contextlib import closing
 from rawlayer.search import common
 from notion.search import SPEC, DRIVER, NotionApplier
 from .fixtures import Fixture, PID, BID, UID, OTHER, page, block
-from . import helpers as h
+from tests.core import appfix as h
 
 
 class SearchTests(unittest.TestCase):
@@ -26,8 +26,8 @@ class SearchTests(unittest.TestCase):
                     for t in ("nrows", "page_src", "page_order", "ds_src", "users", "pages", "counts")}
 
     def test_incremental_equals_rebuild_rounds_order_trash_restore_rename(self):
-        from .ledgerfix import rounds
-        rounds(self.fx)
+        edited = {BID: block(text="edited deployment"), OTHER: block(OTHER, "inserted")}
+        h.rounds(self.fx, [page(), page(blocks=edited), page(blocks=edited, order=[[OTHER, 0, None], [BID, 1, OTHER]])])
         common.update(self.fx.data_root, SPEC)
         for trash in (True, False):
             value = page(blocks={BID: block(text="edited deployment"), OTHER: block(OTHER, "inserted")},

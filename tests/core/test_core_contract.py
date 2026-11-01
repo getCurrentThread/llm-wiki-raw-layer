@@ -97,12 +97,14 @@ class TestProjectApps(unittest.TestCase):
         from rawlayer import registry  # noqa: PLC0415
         for name in registry.discover():
             with self.subTest(app=name):
-                for mod in ("__init__", "apps", "origins", "inputs", "vocab"):
+                for mod in ("__init__", "apps", "origins"):         # inputs, vocab and search are optional
                     self.assertTrue((REPO / name / (mod + ".py")).is_file(), mod)
                 app = registry.app_registry(name).apps[0]       # loaded on its own, never installed here
                 self.assertEqual((app.name, app.label), (name, name))
                 self.assertTrue(app.origins)
                 self.assertTrue(callable(app.inputs.resolve) and callable(app.inputs.static_roots))
+                if not (REPO / name / "inputs.py").is_file():
+                    self.assertTrue(app.archive, "without an inputs.py the app declares its archive")
                 self.assertTrue((REPO / name / "tests" / "__init__.py").is_file())
 
 

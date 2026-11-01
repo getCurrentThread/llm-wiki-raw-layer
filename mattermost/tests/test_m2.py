@@ -11,7 +11,7 @@ from pathlib import Path
 from rawlayer.capture import canon, fsio
 from mattermost.readers import archive as src_matter
 from mattermost.tests.fixtures import Fixture, mm_file, post
-from mattermost.tests.helpers import MM, _force, by_key, capture, invariants, manifests, records, replay_diff
+from tests.core.appfix import _force, by_key, capture, invariants, manifests, records, replay_diff
 
 LS = " "
 
@@ -38,7 +38,7 @@ class Base(unittest.TestCase):
 class TestMM(Base):
     def test_genesis_lines_and_rerun(self):
         self.fx.mm_write(std_channels(), partial_tail="c2", orphan=True)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         recs = by_key(records(self.fx))
         kinds = sorted(r[0]["kind"] for r in recs.values())
         self.assertEqual(kinds.count("post"), 6)
@@ -59,13 +59,13 @@ class TestMM(Base):
         c1 = m["containers"][canon.source_id("posts/o/c1.jsonl")]
         self.assertEqual(c1["kinds"]["post"]["n"], 5)
         self.assertEqual(c1["versions"], 6)
-        self.assertEqual(capture(self.fx, MM), 0)                 # V3b
+        self.assertEqual(capture(self.fx), 0)                 # V3b
         self.assertEqual(manifests(self.fx)[1]["segments"], [])
         self.assertEqual(replay_diff(self.fx), 0)
 
     def test_ledger_invariants(self):
         self.fx.mm_write(std_channels())
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         bad, nums = invariants(self.fx)
         self.assertEqual(bad, {})
         self.assertEqual(nums["containers_checked"], 5)        # manifest.json, 3 channel files, users.json
@@ -75,7 +75,7 @@ class TestMM(Base):
         """A post whose create_at is null or not an int is captured with ts_ms null, counted under day 'none'."""
         self.fx.mm_write({"c1": {"path": "o/c1.jsonl", "posts": [
             post("p1", "c1"), post("p5", "c1", create_at=None), post("p6", "c1", create_at="x")]}})
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         recs = by_key(records(self.fx))
         self.assertEqual([recs[k][0]["ts_ms"] for k in ("mm:post:p1", "mm:post:p5", "mm:post:p6")],
                          [1_600_000_000_000, None, None])
@@ -86,7 +86,7 @@ class TestMM(Base):
     def test_versions_order_q3(self):
         ch = {"c1": {"path": "c1.jsonl", "posts": [post("p1", "c1", msg=m) for m in ("1", "3", "1", "2")]}}
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         revs = [(r["rev"], r["native"]["message"]) for r in by_key(records(self.fx))["mm:post:p1"]]
         self.assertEqual(revs, [(1, "1"), (2, "3"), (3, "2")])
         self.assertEqual(manifests(self.fx)[0]["origins"]["mm_archive"]["containers"][
@@ -94,7 +94,7 @@ class TestMM(Base):
         # same versions, different last one: only the representative is re-put (a reverted edit)
         ch["c1"]["posts"] = [post("p1", "c1", msg=m) for m in ("2", "3", "1")]
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         revs = [(r["rev"], r["native"]["message"]) for r in by_key(records(self.fx))["mm:post:p1"]]
         self.assertEqual(revs[3:], [(4, "1")])
         self.assertEqual(invariants(self.fx)[0], {})
@@ -102,12 +102,12 @@ class TestMM(Base):
     def test_move_is_one_put_not_vanished(self):
         ch = std_channels()
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         moved = ch["c1"]["posts"].pop(1)
         ch["c2"]["posts"].append(moved)
         ch["c1"]["post_count"], ch["c2"]["post_count"] = 4, 2
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         new = [r for r in records(self.fx) if r["seq"] == 2]
         self.assertEqual([(r["key"], r["rev"], r["src"]) for r in new],
                          [("mm:post:p2", 2, canon.source_id("posts/d/dm.jsonl"))])
@@ -118,11 +118,11 @@ class TestMM(Base):
     def test_vanished_is_suspect(self):
         ch = std_channels()
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         ch["c1"]["posts"].pop(1)
         ch["c1"]["posts"][0]["message"] = "edited"
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 3)
+        self.assertEqual(capture(self.fx), 3)
         m = manifests(self.fx)[1]
         self.assertEqual(m["origins"]["mm_archive"]["status"], "suspect")
         self.assertEqual(m["origins"]["mm_archive"]["notes"]["vanished"], 1)
@@ -135,7 +135,7 @@ class TestMM(Base):
                   "f3": dict(good, path="files/f3/f3", sha256="x"), "f4": dict(good, path="files/f4/f4", size="3")}
         self.fx.mm_write(std_channels())
         self.fx.mm.joinpath("files.json").write_text(json.dumps(stored), encoding="utf-8")
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         recs = by_key(records(self.fx))
         self.assertEqual([(r["kind"], r["native"]) for r in recs["mm:blob:f1"]], [("blob", good)])
         self.assertFalse({"mm:blob:f2", "mm:blob:f3", "mm:blob:f4"} & set(recs))
@@ -145,16 +145,16 @@ class TestMM(Base):
         self.assertEqual(invariants(self.fx)[1]["containers_checked"], 6)
         # files.json never shrinks: a pointer that vanishes makes the origin suspect
         self.fx.mm.joinpath("files.json").write_text("{}", encoding="utf-8")
-        self.assertEqual(capture(self.fx, MM), 3)
+        self.assertEqual(capture(self.fx), 3)
         self.assertEqual(replay_diff(self.fx), 0)
 
     def test_missing_file_is_not_vanished(self):
         ch = std_channels()
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         ch["c2"]["posts"], ch["c2"]["post_count"] = None, 1
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         m = manifests(self.fx)[1]["origins"]["mm_archive"]
         self.assertEqual(m["containers"][canon.source_id("posts/d/dm.jsonl")]["status"], "missing")
         self.assertEqual(m["status"], "ok")
@@ -176,7 +176,7 @@ class TestMM(Base):
             return data
         src_matter.fsio.read_shared = flaky
         try:
-            self.assertEqual(capture(self.fx, MM), 75)       # unstable = skipped (SPEC 13)
+            self.assertEqual(capture(self.fx), 75)       # unstable = skipped (SPEC 13)
         finally:
             src_matter.fsio.read_shared = real
         m = manifests(self.fx)[0]
@@ -194,7 +194,7 @@ class TestMM(Base):
         cfg["mm_exclude_patterns"] = ["feedBack"]
         with self.fx.config_path.open("w", encoding="utf-8") as fh:
             json.dump(cfg, fh)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         keys = set(by_key(records(self.fx)))
         self.assertNotIn("mm:ch:c2", keys)
         self.assertNotIn("mm:post:p6", keys)

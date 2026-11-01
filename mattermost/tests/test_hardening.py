@@ -8,7 +8,7 @@ import unittest
 
 from rawlayer.capture.config import Config, ConfigError
 from mattermost.tests.fixtures import Fixture, post
-from mattermost.tests.helpers import MM, _force, capture, invariants, manifests, records
+from tests.core.appfix import _force, capture, invariants, manifests, records
 from mattermost.tests.test_m2 import std_channels
 
 
@@ -35,7 +35,7 @@ class Base(unittest.TestCase):
 class TestExit(Base):
     def test_every_origin_on_the_standard_inputs(self):
         """mm_archive on an empty archive (a manifest without channels): exit 0."""
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         m = manifests(self.fx)[-1]
         self.assertEqual({o: d["status"] for o, d in m["origins"].items()}, {"mm_archive": "ok"})
         self.assertEqual(invariants(self.fx)[0], {})
@@ -63,7 +63,7 @@ class TestMMChannelFiles(Base):
         ch["c2"]["display"] = "My FEEDback room"
         self.fx.mm_write(ch)
         set_cfg(self.fx, mm_exclude_patterns=["feedBack"])
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         notes = manifests(self.fx)[0]["origins"]["mm_archive"]["notes"]
         self.assertEqual((notes.get("excluded"), notes.get("orphan_file")), (1, None))
 
@@ -71,7 +71,7 @@ class TestMMChannelFiles(Base):
         ch = std_channels()
         ch["c9"] = {"path": "../evil.jsonl", "posts": [post("p99", "c9")]}
         self.fx.mm_write(ch)
-        self.assertEqual(capture(self.fx, MM), 0)
+        self.assertEqual(capture(self.fx), 0)
         self.assertNotIn("mm:post:p99", {r["key"] for r in records(self.fx)})
         self.assertGreaterEqual(manifests(self.fx)[0]["origins"]["mm_archive"]["notes"].get("bad_line"), 1)
 
