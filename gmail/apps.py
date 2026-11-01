@@ -15,8 +15,8 @@ def body_bytes(value):
 class GmailConfig(AppConfig):
     label = "gmail"
     archive = "gm"
-    options = (Option("gm_sync", False, boolean), Option("gm_client_file", "", text),
-               Option("gm_token_file", "", text), Option("gm_exclude_labels", EXCLUDED, identifiers),
+    options = (Option("gm_sync", False, boolean), Option("gm_imap_user", "", text),
+               Option("gm_imap_password_file", "", text), Option("gm_exclude_labels", EXCLUDED, identifiers),
                Option("gm_volatile_labels", ["UNREAD"], identifiers),
                Option("gm_body_max_bytes", 131072, body_bytes),
                Option("gm_partition_max_messages", 1000, nonnegative))
@@ -26,18 +26,18 @@ class GmailConfig(AppConfig):
                 "description": "Capture Gmail archive and update its search index"}
 
     def setup_defaults(self, cfg, note):
-        # the archive, the downloaded Desktop client JSON and the token --auth writes, all in the data root
-        defaults(cfg, note, data={"sources.gm_archive": "archive", "gm_client_file": "client.json",
-                                  "gm_token_file": "token.json"})
+        # the archive and the app password file, both in the data root
+        defaults(cfg, note, data={"sources.gm_archive": "archive", "gm_imap_password_file": "app_password.txt"})
 
     def task_checks(self, cfg):
         if not cfg.gm_sync:
             return []
-        from .auth import credential_path
+        if not cfg.gm_imap_user:
+            return ["gm_sync requires gm_imap_user"]
+        from appkit.archive import credential_path
         try:
-            for value in (cfg.gm_client_file, cfg.gm_token_file):
-                if not credential_path(value).is_file():
-                    return ["gm_sync requires client and token files"]
+            if not credential_path(cfg.gm_imap_password_file).is_file():
+                return ["gm_sync requires the app password file"]
         except ValueError:
-            return ["gm_sync requires protected client and token paths"]
+            return ["gm_sync requires a protected app password path"]
         return []

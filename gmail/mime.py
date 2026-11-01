@@ -1,5 +1,4 @@
 """Extract searchable content and attachment metadata; never persist raw MIME."""
-import base64
 import hashlib
 import re
 from email import policy
@@ -60,11 +59,11 @@ def extract(obj, body_max_bytes=131072):
     if gm_id(obj.get("id")) is None or gm_id(obj.get("threadId")) is None:
         raise FetchError("bad_response")
     try:
-        raw = obj["raw"]
-        data = base64.b64decode(raw + "=" * (-len(raw) % 4), altchars=b"-_", validate=True)
-        message = BytesParser(policy=policy.default).parsebytes(data)
-        timestamp = int(obj["internalDate"])
-        if not 0 <= timestamp <= MAX_MS or type(obj.get("sizeEstimate")) is not int:
+        if not isinstance(obj["raw"], bytes):
+            raise TypeError("raw")
+        message = BytesParser(policy=policy.default).parsebytes(obj["raw"])
+        timestamp = obj["internalDate"]
+        if type(timestamp) is not int or not 0 <= timestamp <= MAX_MS or type(obj.get("sizeEstimate")) is not int:
             raise ValueError("timestamp")
     except (KeyError, ValueError, TypeError):
         raise FetchError("bad_response") from None

@@ -9,16 +9,17 @@ from rawlayer.capture.config import Config
 from rawlayer.search import index
 from gmail.fetch import sync
 from gmail.search import SPEC
-from .fixtures import Fixture, Transport, MID, OTHER, THREAD, raw_message
+from gmail.imap import label_id
+from .fixtures import Fixture, Server, LABEL, MID, OTHER, THREAD, raw_message
 from tests.core import appfix as h
 
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
-        self.fx, self.http = Fixture(), Transport()
+        self.fx, self.imap = Fixture(), Server()
         self.addCleanup(h.force_rmtree, self.fx.base)
-        self.http.messages[OTHER] = raw_message(OTHER, labels=["INBOX", "Label_1"], attachment=b"synthetic")
-        sync(self.fx.root, self.http.client())
+        self.imap.messages[OTHER] = raw_message(OTHER, labels=["INBOX", LABEL], attachment=b"synthetic")
+        sync(self.fx.root, self.imap.client())
 
     def build(self):
         self.assertEqual(h.capture(self.fx), 0)
@@ -44,23 +45,23 @@ class IntegrationTests(unittest.TestCase):
     def test_modes_filters_and_shared_envelope(self):
         self.build()
         for mode in ("hits", "count", "timeline", "senders", "labels", "threads"):
-            result = self.query("배포", "--mode", mode, "--label", "Inbox", "--from", "sender@example.org", "--thread", THREAD,
+            result = self.query("배포", "--mode", mode, "--label", "INBOX", "--from", "sender@example.org", "--thread", THREAD,
                                 "--since", "2024-01", "--until", "2025-01")
             self.assertEqual(result["total"], 2)
             self.assertEqual(result["source"], "gmail")
             self.assertFalse(result["index"]["stale"])
-        self.assertEqual(self.query("deployment", "--label", "Label_1")["total"], 1)
-        self.assertEqual(self.query("deployment", "--label", "Synthetic label")["total"], 1)
+        self.assertEqual(self.query("deployment", "--label", label_id(LABEL))["total"], 1)
+        self.assertEqual(self.query("deployment", "--label", LABEL)["total"], 1)
         self.assertEqual(self.query("deployment", "--from", "absent@example.net")["total"], 0)
         self.assertEqual(self.query("synthetic.bin")["total"], 1)
         self.assertEqual(self.query("recipient@example.net")["total"], 2)
 
     def test_incremental_equals_rebuild_label_delete_rename(self):
         self.build()
-        self.http.history = [{"historyId": "12", "history": [{"labelsAdded": [{"message": {"id": MID}, "labelIds": ["TRASH"]}],
-                                                                  "messagesDeleted": [{"message": {"id": OTHER}}]}]}]
-        self.http.labels[-1]["name"] = "Renamed synthetic label"
-        sync(self.fx.root, self.http.client())
+        self.imap.messages[MID]["labelIds"] = ["INBOX", "TRASH"]
+        del self.imap.messages[OTHER]
+        self.imap.labels = ["Renamed synthetic label"]
+        sync(self.fx.root, self.imap.client())
         self.build()
         self.assertEqual(self.query("deployment")["total"], 0)
         self.assertEqual(self.query("deployment", "--include-removed")["total"], 2)
@@ -69,8 +70,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(incremental, self.snapshot())
 
     def test_hex_text_paging_and_context(self):
-        self.http.messages["ffffffffffffffff"] = raw_message("ffffffffffffffff")
-        sync(self.fx.root, self.http.client(), full=True)
+        self.imap.messages["ffffffffffffffff"] = raw_message("ffffffffffffffff")
+        sync(self.fx.root, self.imap.client())
         self.build()
         first = self.query("--thread", THREAD, "--limit", "1")
         self.assertEqual(first["rows"][0]["msg_id"], "ffffffffffffffff")
@@ -85,11 +86,10 @@ class IntegrationTests(unittest.TestCase):
         app, cfg = GmailConfig("gmail"), Config(self.fx.config_path)
         cfg.gm_sync = True
         self.assertTrue(app.task_checks(cfg))
-        cfg.gm_client_file, cfg.gm_token_file = str(self.fx.base / "client.json"), str(self.fx.base / "token.json")
-        for path in (cfg.gm_client_file, cfg.gm_token_file):
-            from pathlib import Path
-            Path(path).write_text("{}")
+        cfg.gm_imap_user, cfg.gm_imap_password_file = "owner@example.com", str(self.fx.base / "app_password.txt")
         with patch("rawlayer.capture.precheck.check"):
+            self.assertTrue(app.task_checks(cfg))
+            (self.fx.base / "app_password.txt").write_text("synthetic")
             self.assertEqual(app.task_checks(cfg), [])
         for value in (-1, True, 16 * 1024 * 1024 + 1):
             with self.assertRaises(ValueError):

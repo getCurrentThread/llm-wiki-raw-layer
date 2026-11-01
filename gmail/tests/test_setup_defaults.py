@@ -26,8 +26,7 @@ class SetupDefaults(unittest.TestCase):
     def test_fills_the_data_root_paths(self):
         self.fill()
         self.assertEqual(self.cfg["sources"]["gm_archive"], str(self.root / "archive"))
-        self.assertEqual(self.cfg["gm_client_file"], str(self.root / "client.json"))
-        self.assertEqual(self.cfg["gm_token_file"], str(self.root / "token.json"))
+        self.assertEqual(self.cfg["gm_imap_password_file"], str(self.root / "app_password.txt"))
         self.assertTrue((self.root / "archive").is_dir())
         self.assertFalse(any(str(self.root) in n for n in self.notes))
         self.assertIn("sources.gm_archive: folder created", self.notes)

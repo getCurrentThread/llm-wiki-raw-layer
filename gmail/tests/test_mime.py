@@ -1,4 +1,3 @@
-import base64
 from email import policy
 from email.message import EmailMessage
 import hashlib
@@ -12,7 +11,7 @@ from .fixtures import raw_message
 class MimeTests(unittest.TestCase):
     def wrap(self, data):
         obj = raw_message()
-        obj["raw"] = base64.urlsafe_b64encode(data).decode().rstrip("=")
+        obj["raw"] = data
         return obj
 
     def test_plain_headers_and_optional_bcc(self):
@@ -65,8 +64,8 @@ class MimeTests(unittest.TestCase):
         self.assertNotIn("synthetic attachment", obj["body_text"])
 
     def test_invalid_raw_and_ids(self):
-        for field, value in (("raw", "%%%"), ("id", "BAD"), ("threadId", "word"),
-                             ("internalDate", "-1"), ("internalDate", str(2 ** 63 - 1))):
+        for field, value in (("raw", "text"), ("id", "BAD"), ("threadId", "word"),
+                             ("internalDate", -1), ("internalDate", 2 ** 63 - 1), ("internalDate", "0")):
             obj = raw_message()
             obj[field] = value
             with self.assertRaises(FetchError):

@@ -6,15 +6,15 @@ from gmail.fetch import sync, main
 from gmail.readers.archive import containers, safe_rel
 from gmail.keys import gm_id
 from appkit.archive import load
-from .fixtures import Fixture, Transport, MID
+from .fixtures import Fixture, Server, MID
 from tests.core import appfix as h
 
 
 class HardeningTests(unittest.TestCase):
     def setUp(self):
-        self.fx, self.http = Fixture(), Transport()
+        self.fx = Fixture()
         self.addCleanup(h.force_rmtree, self.fx.base)
-        sync(self.fx.root, self.http.client())
+        sync(self.fx.root, Server().client())
 
     def manifest(self):
         return load(self.fx.root / "manifest.json")

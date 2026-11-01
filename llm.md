@@ -29,11 +29,11 @@ repeating them.
 - Run every command from `<PROJECT>`. Pass `--config <CFG>` to every command that accepts it: `check <app>`,
   `capture`, `search`, the fetch steps, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
   and `schedule remove` take none; `setup` writes `<CFG>` itself.
-- Placeholders appear bare in some commands and already inside quotes in others (for example 5.3, 6.1.3, 6.1.4,
-  6.2, 7.2, 7.3). Substitute every one before running a command:
+- Placeholders appear bare in some commands and already inside quotes in others (for example 5.3,
+  6.2 and 7.2). Substitute every one before running a command:
   - Wrap a bare path in single quotes.
-  - Where a placeholder is already quoted, replace only the placeholder and keep its quotes: 7.3's `'"<CFG>"'`
-    becomes `'"C:\...\config.json"'`.
+  - Where a placeholder is already quoted, replace only the placeholder and keep its quotes: 7.2's `'<CFG>'`
+    becomes `'C:\...\config.json'`.
   - Double every `'` inside a path: `'C:\Users\O''Brien\...'`.
   - A leftover `<` outside quotes is a redirection error. Inside quotes it silently becomes a literal path, so
     check before running.
@@ -62,7 +62,6 @@ repeating them.
 | `<HEAD_SEQ>`, `<TOTAL>` | the `head_seq` that `check <app>` printed and the `total` of the 5.5 timeline command, in the step that records them |
 | `<T0>` | the UTC start time printed in 5.8 step 1 |
 | `<W0>` | the write time printed by the discord token file handshake (6.2) |
-| `<SITE>`, `<site-repo>`, `<login>` | the site's new folder under `$env:TEMP`, its new repository name, and the owner's GitHub login, held in `$login` or passed through the clipboard and never printed or typed (6.1.4) |
 | `<task>` | a short name for the report file |
 
 ## 2. Ground rules
@@ -79,14 +78,13 @@ repeating them.
    summary lines only.
 3. **Report aggregates only.** Never write any of these into a message, a report (section 10) or a file in
    `<PROJECT>`, and never show them in quoted command output. Configs, credentials and archives under
-   `<DATA_PARENT>`, the browser download that 6.1.3 step 7 moves, and the temporary files that 7.2 and 7.3 delete
-   are the only files that may hold them:
+   `<DATA_PARENT>`, and the temporary files that 7.2 deletes, are the only files that may hold them:
    - message text, subjects, names, addresses or phone numbers;
    - message, thread, label, channel or page ids, and exclusion patterns;
-   - account emails, tokens, client JSON or consent URLs;
-   - Google Cloud project ids, the owner's Google or GitHub account names, or the Windows user name in paths.
+   - account emails, tokens or app passwords;
+   - the owner's Google account name, or the Windows user name in paths.
 
-   Credential download file names embed a client id, so only count them. The fetch steps' JSON lines, capture's
+   The fetch steps' JSON lines, capture's
    lines, the index count lines and the `timeline`/`count` search modes are aggregate-only by design; other
    search modes print private plaintext. An index failure line or a traceback in task.log can hold profile paths,
    so read task.log only through the section 3 reader, or the 5.9 poll, which prints step lines only. The 7.2
@@ -94,19 +92,17 @@ repeating them.
 4. Data, archives, configs and tokens live only under `<DATA_PARENT>`. The exceptions are sources read in place
    and never copied: the discord and notion desktop sources (`dc_desktop_path`, `nt_desktop_path`). Never copy any of them into the repository and never commit them
    (`config.json`, `raw/`, `index/`, `*.sqlite`, `*.jsonl` and `reports/` are gitignored).
-5. Never ask a human to paste a secret into chat. Credentials move as files (download, then copy into
-   `<DATA_ROOT>`), never as text.
+5. Never ask a human to paste a secret into chat. Credentials move as files (a token file handshake, 6.2,
+   or a download copied into `<DATA_ROOT>`), never as text.
 6. Always name the app in `schedule` commands. Without one, `install` and `status` act on every app with a
    schedule, kakaotalk included (`run` and `remove` refuse).
 7. Do not change code while operating. A bug found during operations is reported (symptom, command, exit code),
    not fixed.
 8. Apps in scope: claudecode, discord, gmail, mattermost, notion, and kakaotalk under rule 2. Do not create other apps; slack
    and telegram apps must not be implemented.
-9. Never commit or push this repository while operating. The only push allowed is the owner-approved public site
-   of 6.1.4, from its own folder.
+9. Never commit or push this repository while operating.
 10. Irreversible or replacing actions need the owner's explicit approval: `setup --force`,
-    `check --rebuild-state`, `--full`, `schedule remove`, a new Google Cloud project or client, `--auth` over a
-    working token. Never delete, move, rename or re-create by hand `<DATA_PARENT>` or anything in it. The commands
+    `check --rebuild-state`, `--full`, `schedule remove`, a new app password over one that signs in. Never delete, move, rename or re-create by hand `<DATA_PARENT>` or anything in it. The commands
     this file runs rewrite their own files there, at the steps that name them and with the approval above where it
     is listed; `capture --rebuild-index` needs none, because it rebuilds only the derived index from the ledger.
 
@@ -116,7 +112,6 @@ repeating them.
 |---|---|
 | `capture` | CORE.md ("What the core guarantees", Exit codes); 75 is also returned below the disk floor (nothing committed) |
 | `-m <app>.fetch` | 0 ok · 75 `errors` above 0, busy, a network or API failure, or another non-auth category · 2 `auth_required`, `auth_failed`, `account_changed` (the last only from a sync run, never from `--auth-check`) · 1 config or unexpected error · with `--capture`, a non-zero code of its `capture` step (the row above) is returned as is |
-| `-m gmail.fetch --auth` | 0 `auth_ready` · 2 every failure; `status` names the cause (7.3) |
 | `-m mattermost.fetch --login` | 0 `auth_ready` · 2 every failure; `status` names the cause (6.4) |
 | `search` | 0 (also for zero hits) · 2 usage, query or missing/outdated index · 75 retry later · 1 |
 | `embed` (section 12) | 0 ok, also with chunks left by `--limit` · 2 usage, no or another sqlite-vec, another model or dims without `--rebuild` · 75 another embed holds the lock, or the embedding server failed (what was embedded is kept) · 1 error |
@@ -217,7 +212,7 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 
 | step | action | gate |
 |---|---|---|
-| 0.1 | Prerequisites. This checkout sits under the owner's profile (`<HOME>\...`): outside a profile the owner's commands still work, but every SYSTEM run fails at start (`1 (capture error)`, no task.log block), so never move the checkout yourself. Git for Windows is installed machine-wide on PATH: the SYSTEM task's precheck runs `git` and refuses the data root when it cannot. PowerShell 7.3 or newer. `gh` (GitHub CLI) only for the site in 6.1.4; its block checks for it. The four apps use the standard library only; no pip installs. If `pwsh` or `git` is missing: **[human]** the owner installs it (the Microsoft Store package of PowerShell needs no UAC prompt; an MSI or a machine-wide Git install shows one), then restart the agent session in pwsh. | `git --version` succeeds; `([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';').Where({ $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }).Count` is 1 or more (the SYSTEM task sees only the machine PATH); `$PSVersionTable.PSVersion` is 7.3 or newer; `$PSNativeCommandArgumentPassing` is not `Legacy` |
+| 0.1 | Prerequisites. This checkout sits under the owner's profile (`<HOME>\...`): outside a profile the owner's commands still work, but every SYSTEM run fails at start (`1 (capture error)`, no task.log block), so never move the checkout yourself. Git for Windows is installed machine-wide on PATH: the SYSTEM task's precheck runs `git` and refuses the data root when it cannot. PowerShell 7.3 or newer. The four apps use the standard library only; no pip installs. If `pwsh` or `git` is missing: **[human]** the owner installs it (the Microsoft Store package of PowerShell needs no UAC prompt; an MSI or a machine-wide Git install shows one), then restart the agent session in pwsh. | `git --version` succeeds; `([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';').Where({ $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }).Count` is 1 or more (the SYSTEM task sees only the machine PATH); `$PSVersionTable.PSVersion` is 7.3 or newer; `$PSNativeCommandArgumentPassing` is not `Legacy` |
 | 0.2 | Choose `<PY>`. In a shell opened after any Python install: `python -s -B -c "import sys; print(sys.executable)"` (if `python` is missing or opens the Store, use `py -c ...`). `(Get-Command python).Source` is not the test: the python.org install manager's `python` is a `WindowsApps` alias that starts a real interpreter. If nothing qualifies: **[human]** install Python 3.12+ from python.org: the Python install manager needs no UAC prompt; the classic installer shows one unless **Use admin privileges when installing py.exe** is unticked. Then open a new shell and repeat. Wherever bare `python` does not start `<PY>`, run `& '<PY>' -s -B` in place of `python -s -B`. | `<PY>` is not under `\WindowsApps\`; `& '<PY>' -s -B --version` is 3.12 or newer |
 | 0.3 | `python -s -B manage.py check`, then `python -s -B -c "from pathlib import Path; from rawlayer import conf; print(Path(conf.PROJECT_DIR).is_relative_to(Path.home().resolve()))"` | exit 0 with `apps: 6 apps, no collision`, `check: ok errors=0 refused=0`; the second command prints `True` |
 | 0.4 | Optional: `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion`. This is the full suite an agent may run; every app's tests build synthetic data in temporary directories, kakaotalk's included. | exit 0 and the last line `test: core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok` |
@@ -239,7 +234,7 @@ its full path from anywhere. It prints key names and states, never config values
 - `checkpoint mark <app> <step> [--field NAME=VALUE ...]`: records a passed gate in
   `<DATA_ROOT>\reports\bootstrap.json`. It takes only these steps:
   - section 5: `5.1`, `5.2`, `5.3`, `5.4`, `5.5`, `genesis_complete` (5.5), `5.6`, `5.7`, `5.8`, `5.9`, `5.10`;
-  - gmail (6.1): `6.1.1`, `6.1.2`, `6.1.3`, `6.1.4`, `6.1.5`, `6.1.6`, `6.1.7`, `6.1.8`, `6.1.9`;
+  - gmail (6.1): `6.1.1`, `6.1.2`, `6.1.3`, `6.1.4`, `6.1.5`, `6.1.6`, `6.1.7`;
   - discord (6.2): `6.2`, `6.2.1`, `6.2.2`, `6.2.3`; notion (6.3): `6.3`, `6.3.1`, `6.3.2`, `6.3.3`;
     mattermost (6.4): `6.4`, `6.4.1`, `6.4.2`, `6.4.3`, `6.4.4`;
     claudecode (6.6): `6.6`, `6.6.1`, `6.6.2`, `6.6.3`;
@@ -353,7 +348,7 @@ Gates:
   `(Get-Content -LiteralPath '<CFG>' -Raw | ConvertFrom-Json).<sync_key>` prints `True`.
 - `check <app> --config <CFG>` exits 0 and prints no line starting with
   `note: schedule install would refuse this config:`. Examples of such a note:
-  `app gmail: gm_sync requires client and token files`,
+  `app gmail: gm_sync requires the app password file`,
   `app notion: nt_sync requires a user-account task (ntn keychain)`,
   `app discord: dc_sync requires an absolute dc_desktop_path to an existing folder (SYSTEM has another %APPDATA%)`.
 
@@ -422,213 +417,67 @@ alone, with a new `<T0>`.
 
 | app | task | start / every / limit | keys to set or check after `setup` (5.1) | sync option | details |
 |---|---|---|---|---|---|
-| gmail | `\llm-wiki\gmail-capture` | 00:44 / 3 h / 1 h | none: `setup` fills `sources.gm_archive`, `gm_client_file`, `gm_token_file` | `gm_sync` | [gmail/README.md](gmail/README.md) |
+| gmail | `\llm-wiki\gmail-capture` | 00:44 / 3 h / 1 h | `gm_imap_user` (the Gmail address); `setup` fills `sources.gm_archive` and `gm_imap_password_file` | `gm_sync` | [gmail/README.md](gmail/README.md) |
 | discord | `\llm-wiki\discord-capture` | 00:14 / 3 h / 1 h | `dc_source` (the example sets `desktop`), then `config defaults discord` after changing it; `dc_desktop_path` when the cache is not at its standard place | `dc_sync` | [discord/README.md](discord/README.md) |
 | notion | `\llm-wiki\notion-capture` | 03:29 / 6 h / 1 h | `nt_source` (the example sets `desktop`); `nt_desktop_path` when the database is not at its standard place | `nt_sync` | [notion/README.md](notion/README.md) |
 | mattermost | `\llm-wiki\mattermost-capture` | 02:14 / 3 h / 1 h | `mm_url`, `mm_exclude_patterns` (the owner's values) | `mm_sync` | [mattermost/README.md](mattermost/README.md) |
 | claudecode | `\llm-wiki\claudecode-capture` | 02:44 / 3 h / 1 h | none: `setup` fills `sources.cc_archive` and `cc_claude_dir` (`<HOME>\.claude`) | `cc_sync` | [claudecode/README.md](claudecode/README.md) |
 
-### 6.1 gmail (Gmail API, read-only OAuth)
+### 6.1 gmail (IMAP, app password)
 
-Values (5.1 fills them):
-- `sources.gm_archive` = `<DATA_ROOT>\archive`
-- `gm_client_file` = `<DATA_ROOT>\client.json`
-- `gm_token_file` = `<DATA_ROOT>\token.json`
+Values:
+- `sources.gm_archive` = `<DATA_ROOT>\archive` (5.1 fills it)
+- `gm_imap_password_file` = `<DATA_ROOT>\app_password.txt` (5.1 fills it)
+- `gm_imap_user` = the Gmail address to archive. The owner gives it; it is no secret, but never echo it in a
+  report (rule 3). Set it in 5.3.
 
-Keep `gm_sync` false until 6.1.8, and keep the default `gm_exclude_labels` ([gmail/README.md](gmail/README.md)).
+The fetch step signs in to Gmail's IMAP with a Google app password: no Cloud project, consent screen or OAuth
+client. It only reads (EXAMINE and `BODY.PEEK`, [gmail/README.md](gmail/README.md)). Keep `gm_sync` false until
+6.1.6, and keep the default `gm_exclude_labels`.
 
-**6.1.1** Run 5.1–5.3.
+**6.1.1** Run 5.1–5.3, with `gm_imap_user` in 5.3.
 
-**6.1.2 Already set up?**
-- If `Test-Path -LiteralPath <DATA_ROOT>\client.json` is True and
-  `python -s -B -m gmail.fetch --auth-check --config <CFG>` exits 0: run
-  `python -s -B manage.py check gmail --config <CFG>`, note its `head_seq`, and skip to 6.1.7.
-- If `client.json` exists but the check fails: use 6.1.9 instead.
-- Otherwise `client.json` is missing, which on a new machine happens even when this Google account already has the
-  project from an earlier bring-up. Ask the owner whether it does (an earlier bring-up report names it). If it
-  does, select that project by name and only check the gates of 6.1.3 steps 2, 4 and 5 (**Disable API** shown,
-  exactly the read-only scope, **In production**), changing nothing. Then, with the owner's approval (rule 10),
-  do 6.1.3 steps 6–7 to create and move one new Desktop client, and continue with 6.1.5. If it does not, continue
-  with 6.1.3.
+**6.1.2 Already set up?** If `Test-Path -LiteralPath <DATA_ROOT>\app_password.txt` is True and
+`python -s -B -m gmail.fetch --auth-check --config <CFG>` exits 0: run
+`python -s -B manage.py check gmail --config <CFG>`, note its `head_seq`, and skip to 6.1.5. If the file exists
+but the check fails, use 6.1.7 instead. Otherwise continue with 6.1.3.
 
-Never create another project or client, or run `--auth` over a working token, without the owner's explicit
-approval (rule 10).
+**6.1.3 [human] App password.** Never create another app password, or replace a file that signs in, without the
+owner's explicit approval (rule 10).
+1. Run the 6.2 token file handshake's command with `<DATA_ROOT>\app_password.txt` in place of
+   `<DATA_ROOT>\token.txt`, and keep its `<W0>`.
+2. **[human]** Ask the owner (7.1), e.g. "Google 계정에 2단계 인증이 켜져 있어야 합니다.
+   https://myaccount.google.com/apppasswords 에서 앱 이름(예: llm-wiki)을 입력하고 '만들기'를 누른 다음, 표시된
+   16자리 앱 비밀번호를 방금 열린 메모장 탭에 붙여넣고 Ctrl+S로 저장한 뒤 Ctrl+W로 그 탭을 닫아 주세요. 채팅에는
+   붙여넣지 마세요." If the page offers no app password (2-Step Verification with security keys only, a work or
+   school account, or Advanced Protection), stop and report: this account cannot use the gmail app.
+3. Gate: the handshake's gate, with the same path. Never open, print or read back the file, and take no
+   screenshot, snapshot or text dump of the app passwords page (7.3).
 
-**6.1.3 Google Cloud console** (once per Google account). Use the browser rules in 7.4; append `?hl=en` for
-English labels. Touch only the new project: no other project, IAM, billing or organization setting.
+**6.1.4** Run 5.4. Gate: exit 0 with `"status": "authenticated"`. Exit 2 `auth_required`: the address in
+`gm_imap_user` or the app password is wrong. Check the address with the owner without echoing it, correct it
+with 5.3, and run 5.4 again; if it still fails, repeat 6.1.3 once with the owner's approval (rule 10).
 
-1. Ask the owner first, in one message, to approve creating a dedicated project and to agree a short, neutral
-   project name and app name (step 3), with no names or emails in either. Then, at
-   `https://console.cloud.google.com/projectcreate?hl=en`, create the project with that name. Later pages must
-   have this project selected; select it by name and never report its id. Record the project name and the app
-   name (never the id) in the report, because a later recovery selects the project by that name.
-   Gate: the project picker shows the new project's name.
-2. `https://console.cloud.google.com/apis/library/gmail.googleapis.com?hl=en` → **Enable API**. Gate: **Disable
-   API** is shown.
-3. `https://console.cloud.google.com/auth/overview?hl=en`: **Get started**, then:
-   1. **App name**: the name agreed in step 1. **User support email**: open the dropdown and click the option that
-      contains `@` (the signed-in account), without reading, repeating or reporting its text. Then **Next**.
-   2. Audience **External**, then **Next**.
-   3. **[human]** **Contact email**: the owner types the same address and presses Enter so it becomes a chip, then
-      **Next**. Do not type it yourself: you would have to read the address from the page or from chat.
-   4. **[human]** **I agree to the Google API Services: User Data Policy.** The agent ticks it only when the owner
-      explicitly delegates it; match the checkbox on `User Data Policy`, because its accessible name varies in
-      spacing. Ask for 3 and 4 in one handshake.
-   5. **Continue**, then **Create**.
+**6.1.5 Bounded genesis.** `python -s -B -m gmail.fetch --max-items 200 --capture --config <CFG>`
+Gate: exit 0 and `"errors": 0`, then the 5.5 gates. `"limited": true` means messages remain. On a new archive,
+`"messages_written"` must be above 0. When 6.1.2 sent you here with a `head_seq` of 1 or more,
+`"messages_written": 0` is fine (no new mail since the last sync).
 
-   Gate: stay on the tab until the overview shows the configured app, and **Branding**
-   (`https://console.cloud.google.com/auth/branding?hl=en`) no longer offers **Get started**. Navigating away
-   during the save can cancel it; if **Get started** reappears, re-enter the same data in the same project.
-4. `https://console.cloud.google.com/auth/scopes?hl=en`:
-   1. **Add or remove scopes**.
-   2. Under **Manually add scopes**, paste `https://www.googleapis.com/auth/gmail.readonly` into the
-      **Manually paste scopes** box, then **Add to table**.
-   3. Confirm that its row is ticked, then **Update**.
-   4. Wait for the side panel to close, then **Save**.
-
-   Gate: exactly one scope, the read-only one.
-5. `https://console.cloud.google.com/auth/audience?hl=en`: **Publish app** → **Confirm**. Gate: the status is
-   **In production**. Do not submit for verification; a personal app runs unverified and shows Google's warning.
-   Testing-mode refresh tokens expire after seven days ([gmail/README.md](gmail/README.md)), so this step is
-   required.
-
-   **Publish app** can be disabled while showing only `aria-disabled=true`; do not keep clicking it. Then
-   **Branding** (`https://console.cloud.google.com/auth/branding?hl=en`) needs an **Application home page**, an
-   **Application privacy policy link** and an **Authorized domain**. If the owner has none, do 6.1.4 first. Stop
-   and ask if Google demands domain-ownership verification.
-6. `https://console.cloud.google.com/auth/clients?hl=en`: **Create client** → Application type **Desktop app** →
-   name → **Create** → **Download JSON** (7.4). Never read, screenshot or dump the dialog or page that shows the
-   client id and secret. If the dialog closed without a download, do not reopen the client to read it. Ask the
-   owner (rule 10); with their approval, create another Desktop client and download from its creation dialog, and
-   tell the owner that the first client can be deleted on the Clients page. Gate: step 7's count.
-7. Move the file. The file name embeds the client id, so the commands below print only counts:
-
-   ```powershell
-   $dest = '<DATA_ROOT>\client.json'
-   $dl = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
-   $hits = @(Get-ChildItem -LiteralPath $dl, ([Environment]::GetFolderPath('Desktop')) -File -Filter 'client_secret_*.json' -ErrorAction SilentlyContinue)
-   "matches=$($hits.Count) client_exists=$(Test-Path -LiteralPath $dest)"
-   if ($hits.Count -eq 1 -and -not (Test-Path -LiteralPath $dest)) { Copy-Item -LiteralPath $hits[0].FullName -Destination $dest -ErrorAction Stop; Remove-Item -LiteralPath $hits[0].FullName -ErrorAction Stop }
-   ```
-
-   - With 0 or several matches, ask the owner.
-   - With `client_exists=True`, never replace the file: stop and ask.
-   - If `Copy-Item` reports an error, the download stays where it is: stop and report.
-   - The copy inherits the data root's ACL. Never open, print or hash the file.
-
-   Gate: `Test-Path -LiteralPath <DATA_ROOT>\client.json` is True, and running the block again prints
-   `matches=0 client_exists=True`.
-
-**6.1.4 Public site for the consent screen** (only when 6.1.3 step 5 needs it).
-1. Ask first. Propose a separate public static site with only two pages: a new GitHub Pages repository,
-   published through the owner's logged-in `gh`.
-2. Show the owner both pages' text and get approval before publishing. The pages must contain no names, emails or
-   ids.
-   - Home page: a personal, single-user tool through which the owner archives their own Gmail read-only to their
-     own computer.
-   - Privacy page: only the `gmail.readonly` scope for the owner's account; data kept only on the owner's
-     machine; nothing sold, shared, or used for ads or AI training; revocation at
-     `https://myaccount.google.com/permissions`; adherence to the Google API Services User Data Policy, including
-     Limited Use.
-3. Create a new, empty folder `<SITE>` under `$env:TEMP`, never inside `<PROJECT>` or any other repository; the
-   run-from-`<PROJECT>` rule does not apply here. Write the two approved pages there as `index.html` and
-   `privacy.html`, then run the block below.
-   - The output of `git` and `gh` names the owner's account, so the block prints only booleans and exit codes.
-   - Each step runs only when the one before it succeeded. If `Push-Location` fails, nothing runs.
-   - The neutral commit identity keeps the owner's name and email out of the public commit metadata. Add no AI
-     attribution lines.
-   - `<site-repo>` must be a repository name that does not exist yet; never overwrite or delete a repository.
-   - Never add a remote to this checkout, push it or enable Pages on it. This is the only push allowed (rule 9).
-
-   ```powershell
-   Push-Location -LiteralPath '<SITE>' -ErrorAction Stop
-   try {
-     $ok = [bool](Get-Command gh -ErrorAction SilentlyContinue); "gh_found=$ok"
-     if ($ok) { $LASTEXITCODE = 0; git rev-parse --git-dir *> $null; $ok = $LASTEXITCODE -ne 0; "outside_any_repo=$ok" }
-     if ($ok) { gh auth status *> $null; "gh_auth=$LASTEXITCODE"; $ok = $LASTEXITCODE -eq 0 }
-     if ($ok) { git init -b main *> $null; git add index.html privacy.html; git -c user.name=Site -c user.email=site@example.invalid -c commit.gpgsign=false commit -m 'Add homepage and privacy policy' *> $null; "commit=$LASTEXITCODE"; $ok = $LASTEXITCODE -eq 0 }
-     if ($ok) { gh repo create '<site-repo>' --public --source . --remote origin --push *> $null; "create=$LASTEXITCODE"; $ok = $LASTEXITCODE -eq 0 }
-     if ($ok) { gh api -X POST 'repos/{owner}/{repo}/pages' -f 'source[branch]=main' -f 'source[path]=/' *> $null; "pages=$LASTEXITCODE" }
-   } finally { Pop-Location }
-   ```
-
-   Gate: `gh_found=True`, `outside_any_repo=True`, then `gh_auth`, `commit`, `create` and `pages` all 0. The
-   block returns to the previous folder. Otherwise, by the first failing value:
-   - `gh_found=False`: **[human]** the owner installs GitHub CLI. Then rerun the block.
-   - `outside_any_repo=False`: `<SITE>` is inside a repository (perhaps `<PROJECT>`) or was used before. Create
-     a new empty folder under `$env:TEMP`, write the pages again and start over.
-   - `gh_auth` not 0: **[human]** the owner runs `gh auth login`. Then rerun the block.
-   - `commit` not 0: stop and report.
-   - `create` not 0: stop and ask the owner. The repository may already exist: never run `create` for it again,
-     and never overwrite or delete it.
-   - `pages` not 0: once the cause is fixed, run only
-     `Push-Location -LiteralPath '<SITE>' -ErrorAction Stop; try { gh api -X POST 'repos/{owner}/{repo}/pages' -f 'source[branch]=main' -f 'source[path]=/' *> $null; "pages=$LASTEXITCODE" } finally { Pop-Location }`
-     (`gh` resolves `{owner}/{repo}` from `<SITE>`).
-4. Every 30 s, for at most 10 minutes, check both pages; the block prints only status numbers:
-
-   ```powershell
-   $login = gh api user --jq .login
-   foreach ($u in "https://$login.github.io/<site-repo>/", "https://$login.github.io/<site-repo>/privacy.html") { try { (Invoke-WebRequest -Uri $u -Method Head -SkipHttpErrorCheck -ErrorAction Stop).StatusCode } catch { 'request failed' } }
-   ```
-
-   Gate: both print 200.
-5. In **Branding** (`https://console.cloud.google.com/auth/branding?hl=en`), fill the three fields from the
-   clipboard, so that the login never appears in your output or your tool calls. For each value, run the one
-   command, which prints nothing, then click the field and press Ctrl+V:
-   1. **Application home page**: `Set-Clipboard -Value "https://$(gh api user --jq .login).github.io/<site-repo>/"`
-   2. **Application privacy policy link**:
-      `Set-Clipboard -Value "https://$(gh api user --jq .login).github.io/<site-repo>/privacy.html"`
-   3. **Add domain**, then **Authorized domain 1**: `Set-Clipboard -Value "$(gh api user --jq .login).github.io"`
-
-   If your browser tool cannot paste the system clipboard, make each paste a **[human]** step ("방금 복사한 값을 이
-   칸에 Ctrl+V로 붙여넣어 주세요"). Then **Save**, and clear the clipboard with `Set-Clipboard -Value ' '`. Never
-   read back, quote or report the host or the URLs.
-   Gate: after a reload, each of the three fields is non-empty (check only that), and **Publish app** in 6.1.3
-   step 5 is no longer `aria-disabled=true`.
-6. Return to 6.1.3 step 5 and publish the app.
-
-If the owner declines the site and has no home page and privacy page on a domain they control, stop and report
-that the app cannot be published. Continue in Testing only if the owner explicitly chooses it:
-- **[human]** the owner adds their account under Audience → **Test users**.
-- Refresh tokens then expire after seven days. Scheduled runs fail with capture 75 until 6.1.5 is repeated.
-
-**6.1.5 [human] Consent.**
-1. Handshake first (7.1). The browser will open. Within five minutes the owner:
-   - picks the account to archive (in a recovery, the same account as before);
-   - on the unverified-app warning, clicks **Advanced**, then **Go to <app name> (unsafe)**;
-   - then clicks **Continue** (or **Allow**).
-
-   Wait for the owner's reply that they are at this machine, then run 7.3 at once: the five minutes start when it
-   starts.
-2. Run 7.3. It starts `gmail.fetch --auth`, which waits at most five minutes on a `127.0.0.1` loopback with
-   PKCE, opens the consent URL and removes its temp files afterwards.
-
-Gate: `opened=True auth_exit=0 status=auth_ready`.
-- `opened=True auth_exit=2 status=auth_timeout`: retry once with a fresh run. Never reuse an old URL.
-- `opened=False`, any other status, or a second failure: stop and report.
-
-**6.1.6** Gate: `python -s -B -m gmail.fetch --auth-check --config <CFG>` exits 0. This is the real token
-check. `--auth` writes the token file only when it succeeds, so after a failed or timed-out attempt the old,
-possibly revoked, token is still there and its existence proves nothing.
-
-**6.1.7 Bounded genesis.** `python -s -B -m gmail.fetch --max-items 200 --capture --config <CFG>`
-Gate: exit 0 and `"errors": 0`, then the 5.5 gates. `"limited": true` means messages remain. On a new archive
-(6.1.3–6.1.6 just ran), `"messages_written"` must be above 0. When 6.1.2 sent you here with a `head_seq` of 1 or
-more, `"messages_written": 0` is fine (no new mail since the last sync).
-
-Repeat with a larger bound until `"limited": false`, before 6.1.8, then record it:
+Repeat with a larger bound until `"limited": false`, before 6.1.6, then record it:
 `python -s -B tools/bootstrap.py checkpoint mark gmail genesis_complete --field limited=false --field head_seq=<HEAD_SEQ>`
-(doctor's `next` names these steps 6.1.7 and 6.1.8). `--max-items 1000` takes about four minutes
-at the client's throttle of roughly 250 message fetches per minute: give it a long tool timeout, or run it in the
-background and wait. A run stops fetching 3000 seconds after it starts. The listing counts toward that time but
-is never cut short, and the capture and index that follow the sync are outside it, so a scheduled run that still
-has genesis work can pass the one-hour limit.
+(doctor's `next` names these steps 6.1.5 and 6.1.6). Every run first lists the whole mailbox, then fetches one
+message per IMAP round trip: give `--max-items 1000` a long tool timeout, or run it in the background and wait.
+A run stops fetching 3000 seconds after it starts. The listing counts toward that time but is never cut short,
+and the capture and index that follow the sync are outside it. Gmail allows about 2,500 MB of IMAP downloads a
+day, so a large mailbox may take several days; a capped day shows as exit 75 `api_error` or `transport_error`.
 
-**6.1.8** Only after genesis is complete (`"limited": false` in 6.1.7), run 5.6 with `gm_sync`. `task_checks`
-refuses the install unless the client and token files exist at protected paths. Then run 5.7–5.10.
+**6.1.6** Only after genesis is complete (`"limited": false` in 6.1.5), run 5.6 with `gm_sync`. `task_checks`
+refuses the install unless `gm_imap_user` is set and the app password file exists at a protected path. Then run
+5.7–5.10.
 
-**6.1.9 Recovery.** Use it when the gmail task shows a non-ok last result. When the owner reports a revocation, a
-password change or a Google account problem, start at step 3 without waiting for a failed run.
+**6.1.7 Recovery.** Use it when the gmail task shows a non-ok last result. When the owner reports a Google
+password change, a removed app password or a Google account problem, start at step 3 without waiting for a
+failed run.
 1. If `last result:` is `the interpreter or a file the action names was not found`, the run never started and
    task.log has no block for it: use that section 9 row. For `stopped (time limit, or by hand)`, use its row.
 2. Read the newest block with the section 3 reader. Under `step=capture`:
@@ -640,46 +489,37 @@ password change or a Google account problem, start at step 3 without waiting for
    - rc 3 with `gm_archive status=suspect`: use the section 9 suspect row; do not continue to step 3.
    - `origin error gm_archive ...` and `gm_archive status=error`: the sync inside capture failed. Go to step 3.
 3. Run `python -s -B -m gmail.fetch --auth-check --config <CFG>`.
-   - **Exit 2 `auth_required`:** the token expired or was revoked (a password change, a revocation at the
-     permissions page, an app still in Testing), or `client.json` or `token.json` is missing or unreadable.
-     1. Confirm **In production** on the Audience page. Select the project by the name in the bring-up report.
-     2. If `client.json` is missing, ask the owner (rule 10); with their approval, redo 6.1.3 steps 6–7 in the
-        same project.
-     3. Repeat 6.1.5, asking for the same account as before without naming it, e.g. "이전에 연결한 것과 같은
-        Gmail 계정을 선택해 주세요".
-     4. Then 6.1.6 and step 4.
-   - **Exit 2 `auth_failed`, or exit 1:** stop and report.
-   - **Exit 75 `transport_error` or `api_error`:** network or Google trouble. `"http_status": 403` can mean that
-     the Gmail API was disabled. Retry once later, then report `status` and `http_status`. Exit 75 with any other
-     status: stop and report.
+   - **Exit 2 `auth_required`:** the app password was revoked (a Google password change revokes every app
+     password, or the owner removed it), or the file is missing or unreadable. With the owner's approval
+     (rule 10), redo 6.1.3: a new app password into the same file, which the handshake reopens. Then 6.1.4 and
+     step 4.
+   - **Exit 1:** stop and report.
+   - **Exit 75 `transport_error` or `api_error`:** network trouble, or Gmail's daily IMAP limit. Retry once
+     later, then report `status`. Exit 75 with any other status: stop and report.
    - **Exit 0:** go to step 4.
-4. `--auth-check` proves that the token refreshes, not which account it belongs to. Only a sync compares the
+4. `--auth-check` proves the sign-in, not that the account is the archive's. Only a sync compares the
    account with the archive's binding. While no run is in progress (the section 3 reader's newest block has its
    `step=index` line), run `python -s -B -m gmail.fetch --max-items 200 --config <CFG>`. It runs without
    `--capture`; the next scheduled run captures what it writes.
-   - **Exit 0:** after a fix in step 3 (a re-consent, a restored `client.json`), go to step 5. With no fix, the
+   - **Exit 0:** after a fix in step 3 (a new app password), go to step 5. With no fix, the
      cause was probably transient (network, quota, busy). If the two newest scheduled runs have both failed (the
      section 3 reader with `$k = 2`), stop now. Otherwise watch the next run, and stop if it fails too. When you
      stop, report (section 10) each failing block's step and reason lines, `head_seq` and `total`, and ask before
      any repair.
-   - **Exit 2 `account_changed`:** the owner chose another account at consent, and `token.json` now holds that
-     account's working token. Replacing it is `--auth` over a working token (rule 10): ask for approval in the
-     same 7.1 message as the consent handshake. Then repeat 6.1.5 once with the original account, then 6.1.6 and
-     step 4 again. If it persists, stop: the archive is bound to its first account, and another mailbox needs its
-     own data root.
+   - **Exit 2 `account_changed`:** `gm_imap_user` names another account than the one the archive is bound
+     to. Ask the owner for the original address without naming it, e.g. "이전에 연결한 것과 같은 Gmail 주소를
+     확인해 주세요", and correct it with 5.3; the app password must be that account's (6.1.3). If it persists,
+     stop: the archive is bound to its first account, and another mailbox needs its own data root.
    - **Exit 75 with `"limited": true`:** more new mail than the bound; what was fetched is kept. It is not a
      stall. Run it again (a larger bound such as `--max-items 1000` is fine) until it exits 0, then follow the
      exit 0 bullet.
-   - **Exit 75 with `"errors": 1` and `"limited": false`:** run the same command once more, right away. If that
-     second run exits 75 with `"errors": 1`, `"messages_written": 0` and `"limited": false`, a pending plan is
-     stalled on a message deleted before genesis fetched it. With the owner's approval (rule 10), run once
-     `python -s -B -m gmail.fetch --full --max-items 200 --capture --config <CFG>`, then go to step 5.
-     `--full` forces a fresh listing and never rewrites captured content. Any other result of the second run is
-     handled by these bullets, without a third run.
-   - **Exit 2 `auth_required`:** the token failed in the meantime. Go back to step 3.
+   - **Exit 75 with `"errors": 1` and `"limited": false`:** run the same command once more, later. Every run
+     lists the mailbox afresh, so a message that vanished between a listing and its fetch is gone from the next
+     one. If that second run exits 75 too, stop and report.
+   - **Exit 2 `auth_required`:** the app password failed in the meantime. Go back to step 3.
    - **`collector_busy`:** another fetch run, scheduled or manual, holds the lock. Retry after it.
-   - **Anything else** (exit 75 with another `status`, exit 1): stop and report `status`, `http_status`,
-     `errors`, `limited` and `messages_written`.
+   - **Anything else** (exit 75 with another `status`, exit 1): stop and report `status`, `errors`,
+     `limited` and `messages_written`.
 5. After any fix, prove it under SYSTEM. After a disk-floor skip, check both numbers of the section 9 disk row
    first. Print `<T0>` (5.8 step 1), then run one 7.2 batch with `run gmail`, then 5.9 and 5.10.
 
@@ -717,7 +557,7 @@ config that `setup` writes from the example sets `desktop`.
    Open the generated URL and add the bot to each server to archive (this needs Manage Server there). A bot sees
    only the servers it was added to, never the owner's DMs.
 4. **Bot** → **Reset Token**. The owner puts it into the token file (the handshake below), never into chat. Take
-   no screenshot, snapshot or text dump of that page (7.4).
+   no screenshot, snapshot or text dump of that page (7.3).
 
 Gates: 5.4 prints `"status": "authenticated"` and `"token_type": "bot"`; after 5.5, `"channels"` is above 0.
 
@@ -914,18 +754,15 @@ counts only. Source files removed by Claude Code's cleanup remain archived; do n
 
 **7.1 Asking.**
 - Send one short message in the owner's language: what to do, where, and any time limit. Then wait for the reply.
-  Wait for it before a step with a deadline (6.1.5) and before launching 7.2, whose UAC prompt appears at once.
+  Wait for it before launching 7.2, whose UAC prompt appears at once.
 - For steps without a deadline, prefer polling an observable result (e.g. `Test-Path`) over asking again.
 - Never ask for secrets. Name folders as `%USERPROFILE%\...`, never with the user name.
 - Human-only steps:
   - sign-ins, passwords, 2-Step codes, CAPTCHAs, phone verification, billing
   - terms or policy checkboxes, unless explicitly delegated
-  - choosing the account and clicking **Continue** or **Allow** on a consent page
+  - creating an app password and pasting it into a file handshake's Notepad tab
   - every UAC **Yes**
   - installing or connecting browser extensions
-- Example ask (`<앱 이름>` is the App name of 6.1.3 step 3): "기본 브라우저에 Google 로그인 창이 열립니다. 지금부터
-  5분 안에 진행해 주세요: 보관할 Gmail 계정 선택 → 'Google에서 확인하지 않은 앱' 화면에서 '고급' →
-  '<앱 이름>(으)로 이동(안전하지 않음)' → '계속'(또는 '허용')."
 
 **7.2 Elevation.** Typing `! <command>` into an agent chat is not elevated. Launch one Administrator PowerShell
 per batch of `schedule` subcommands. It writes each command's output, followed by an `rc=N` line, to a temp file,
@@ -985,57 +822,19 @@ if (Test-Path -LiteralPath $out) {
     Clear it the same way when an elevated `status` shows a task deleted outside this file.
   - To bring the task back, run 5.7–5.10; 5.10 records the checkpoint again.
 
-**7.3 Consent (gmail `--auth`).** The script runs the blocking command and waits until the consent URL appears.
-It checks the URL's shape, opens it and never prints it. At the end it prints only `opened`, the exit code and
-the `status`:
-
-```powershell
-$id = [guid]::NewGuid()
-$err = Join-Path $env:TEMP "llm-wiki-consent-$id.err"; $out = Join-Path $env:TEMP "llm-wiki-consent-$id.out"
-try {
-  $p = Start-Process '<PY>' -ArgumentList '-s', '-B', '-m', 'gmail.fetch', '--auth', '--config', '"<CFG>"' `
-       -WorkingDirectory '<PROJECT>' -RedirectStandardError $err -RedirectStandardOutput $out -NoNewWindow -PassThru
-  $null = $p.Handle; $opened = $false
-  while (-not $p.HasExited) {
-    if (-not $opened -and (Test-Path -LiteralPath $err)) {
-      $u = Get-Content -LiteralPath $err | Where-Object { $_ -match '^https://accounts\.google\.com/' } | Select-Object -First 1
-      if ($u -and $u -match 'redirect_uri=http%3A%2F%2F127\.0\.0\.1' -and $u -match 'gmail\.readonly') { Start-Process $u; $opened = $true }
-      $u = $null
-    }
-    Start-Sleep -Milliseconds 500
-  }
-  $p.WaitForExit()
-  $st = (Get-Content -LiteralPath $out -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue).status
-  "opened=$opened auth_exit=$($p.ExitCode) status=$st"
-} finally { Remove-Item -LiteralPath $err, $out -ErrorAction SilentlyContinue }
-```
-
-- `--auth` exits 0 with `status=auth_ready`, and 2 for every failure. `status` names the cause:
-  - `auth_timeout`: no consent within five minutes.
-  - `auth_failed`: consent denied, or the code exchange failed.
-  - `auth_required`: `client.json` is unusable, or Google returned no refresh token.
-  - `state_mismatch`, `unsafe_token_path`, `transport_error` or `error`.
-
-  With `opened=False`, the URL never appeared or failed the shape check: do not retry.
-- The script blocks until the fetch step exits: up to five minutes for the owner, plus up to one minute for the
-  token exchange. Run it as one command with a timeout of at least 420 s, or in the background and wait for it.
-- If the script is killed anyway, its `finally` does not run. Stop the leftover process with
-  `Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'gmail\.fetch\s.*--auth(\s|$)' } | ForEach-Object { Stop-Process -Id $_.ProcessId }`.
-  Then delete `$env:TEMP\llm-wiki-consent-*` without reading the files: they hold the consent URL.
-- If your sandbox refuses to open a browser, ask the owner to run this script. Never pass the URL through chat.
-
-**7.4 Browser automation.**
+**7.3 Browser automation.**
 - Use your own browser extension or integration that drives the owner's signed-in browser. Do not enable Chrome
   remote debugging (CDP) or start a separate profile unless the owner asks.
 - Work in a new tab. Never read cookies, storage or saved passwords, and never report the titles or URLs of
   existing tabs.
-- Report progress as booleans. Console URLs carry project ids, so do not print them.
-- Console pages show the signed-in account's name and email, in the account button and the support-email
-  dropdown. Find controls by their label with a targeted element query (find by text or role) rather than with
-  full-page snapshots or screenshots. Never quote snapshot text in messages or reports.
-- On pages that show a client id or secret, take no screenshot, accessibility snapshot or page-text dump. Locate
-  only the control labelled `Download JSON` with a targeted query, click it, and read nothing else that the query
-  returns. If your browser tool cannot click without a snapshot, make this one click a **[human]** step.
+- Report progress as booleans. Account and developer-portal URLs can carry account or application ids, so do not
+  print them.
+- Those pages show the signed-in account's name and email. Find controls by their label with a targeted element
+  query (find by text or role) rather than with full-page snapshots or screenshots. Never quote snapshot text in
+  messages or reports.
+- On pages that show a token, an app password or another secret (6.1.3, 6.2 bot setup step 4), take no
+  screenshot, accessibility snapshot or page-text dump. The owner copies the secret into the token file
+  handshake's Notepad tab (6.2) themselves.
 
 ## 8. Steady-state health routine
 
@@ -1044,7 +843,7 @@ Run this per app after a scheduled run or when asked.
 0. `python -s -B '<PROJECT>\tools\bootstrap.py' doctor`, without elevation. An app whose `next` is `8` has
    nothing outstanding that doctor can see. Any other `next` names the step or section 9 row to go to first.
    Doctor's task lines are `registration unknown` without elevation: step 2 is still the proof. An app that went
-   live before this tool has no `5.10` checkpoint, so its `next` is `5.7` (`5.5`, or gmail's `6.1.7`, when its
+   live before this tool has no `5.10` checkpoint, so its `next` is `5.7` (`5.5`, or gmail's `6.1.5`, when its
    sync is off, as notion's `api` source keeps it): run this routine, and once steps 2–5 pass, record `5.10` with
    the command at the end of 5.10 (`<HEAD_SEQ>` from step 4, `<TOTAL>` from step 5). A recorded 5.10 also stands
    for genesis, which 5.5 finishes before 5.8.
@@ -1088,20 +887,19 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | `search` exit 2, index damaged or another version | outdated or broken index | `capture <app> --config <CFG> --rebuild-index` |
 | `check` exit 1, `differing_rows>0` | folded state disagrees with the ledger | report it. With the owner's approval (it rebuilds the folded state from the ledger and changes neither the ledger nor the index), run `check <app> --config <CFG> --rebuild-state`. It prints `replay check=no differing_rows=N head_seq=N`, where N is what it found before rebuilding, and exits 0. `ledger busy` instead means nothing was rebuilt: retry after the run. A `seal` line with a count above 0 also blocks it (exit 1, nothing rebuilt): stop and report. Then `check` again: `differing_rows=0`, `head_seq` unchanged. If it still differs, stop and report |
 | capture 75 on a first run | empty archive (no manifest yet) | run the fetch step before `capture` |
-| capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.9 step 5), check both numbers again |
+| capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.7 step 5), check both numbers again |
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`capture`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
-| `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires client and token files`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
+| `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires gm_imap_user`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
 | Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch. kakaotalk's task needs the same: tell the owner (rule 2) |
 | elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task, and tell the owner that kakaotalk's task needs the same (rule 2) |
 | `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `capture` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
 | `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded fetch runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
 | non-elevated status exit 3, `not registered, or not readable from this prompt` | SYSTEM task not readable without elevation | elevated status (7.2) |
-| gmail not-ok last result; `--auth-check` exit 2 | `auth_required` (token expired or revoked), or `auth_failed` (stop) | 6.1.9 |
+| gmail not-ok last result; `--auth-check` exit 2 | `auth_required` (app password revoked, or its file missing) | 6.1.7 |
 | discord fetch step `"channels": 0` with `"errors": 0` (bot) | the bot was added to no server | **[human]** step 3 of the bot setup in 6.2 |
-| Google **Publish app** disabled | no home page, privacy link or authorized domain | 6.1.3 step 5, then 6.1.4 |
-| Google console back at **Get started** | navigation during the save cancelled it | re-enter in the same project and wait for the overview |
+
 
 ## 10. Reporting
 

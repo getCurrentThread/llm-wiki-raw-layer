@@ -1,18 +1,22 @@
 import base64
-import copy
+import datetime as dt
 from email import policy
 from email.message import EmailMessage
-import io
+import imaplib
 import json
 from pathlib import Path
+import re
 import tempfile
-from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlsplit
 from rawlayer.capture import paths
-from gmail.api import GmailClient
+from gmail.imap import CATEGORIES, ImapClient
 
 paths.DATA_PARENT = Path(tempfile.gettempdir())
 MID, OTHER, THREAD = "abc123", "abc124", "def123"
+USER, PASSWORD, LABEL = "owner@example.com", "synthetic-app-password", "Synthetic label"
+# system label IDs -> the X-GM-LABELS names Gmail sends
+NAMES = {"INBOX": "\\Inbox", "SENT": "\\Sent", "IMPORTANT": "\\Important", "STARRED": "\\Starred", "DRAFT": "\\Draft"}
+FOLDERS = {'"[Gmail]/All Mail"': None, '"[Gmail]/Trash"': "TRASH", '"[Gmail]/Spam"': "SPAM"}
+MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 
 
 def raw_message(ident=MID, body="synthetic deployment 배포계획", labels=None, html=None, attachment=None,
@@ -29,82 +33,84 @@ def raw_message(ident=MID, body="synthetic deployment 배포계획", labels=None
     if attachment is not None:
         msg.add_attachment(attachment, maintype="application", subtype="octet-stream", filename="synthetic.bin")
     data = msg.as_bytes()
-    return {"id": ident, "threadId": THREAD, "internalDate": "1727740800000", "sizeEstimate": len(data),
-            "labelIds": ["INBOX"] if labels is None else labels,
-            "raw": base64.urlsafe_b64encode(data).decode().rstrip("=")}
+    return {"id": ident, "threadId": THREAD, "internalDate": 1727740800000, "sizeEstimate": len(data),
+            "labelIds": ["INBOX"] if labels is None else labels, "raw": data}
 
 
-class Response:
-    def __init__(self, value, headers=None):
-        self.data, self.headers = json.dumps(value).encode(), headers or {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        pass
-
-    def read(self):
-        return self.data
+def utf7(name):
+    """Modified UTF-7, as Gmail encodes label names."""
+    return re.sub(r"[^ -~]+|&", lambda m: "&-" if m[0] == "&" else "&" + base64.b64encode(
+        m[0].encode("utf-16-be")).decode().rstrip("=").replace("/", ",") + "-", name)
 
 
-def http_error(status, reason="synthetic", headers=None):
-    return HTTPError("https://example.com", status, "synthetic", headers or {},
-                     io.BytesIO(json.dumps({"error": {"errors": [{"reason": reason}]}}).encode()))
+class Server:
+    """A fake imaplib connection over raw_message objects. Their labelIds hold system label IDs, CATEGORY_* (which
+    X-GM-RAW answers), TRASH or SPAM (the folder), UNREAD (no \\Seen) and user label names. `fail` holds "scan" (the
+    folder scan answers NO) and message IDs (their fetch answers NO)."""
 
-
-class Transport:
     def __init__(self):
         self.messages = {MID: raw_message()}
-        self.labels = [{"id": "INBOX", "name": "Inbox", "type": "system"},
-                       {"id": "SPAM", "name": "Spam", "type": "system"},
-                       {"id": "TRASH", "name": "Trash", "type": "system"},
-                       {"id": "UNREAD", "name": "Unread", "type": "system"},
-                       {"id": "Label_1", "name": "Synthetic label", "type": "user"}]
-        self.profile = {"historyId": "10", "emailAddress": "owner@example.com"}
-        self.history = [{"historyId": "11", "history": []}]
-        self.calls, self.failures = [], {}
-        self.list_page_size, self.t, self.delays = 500, 0.0, []
+        self.labels = [LABEL]
+        self.calls, self.fail, self.selected = [], set(), None
 
-    def sleep(self, seconds):
-        self.delays.append(seconds)
-        self.t += seconds
+    def client(self, user=USER, password=PASSWORD):
+        return ImapClient(user, password, connect=lambda: self)
 
-    def client(self):
-        return GmailClient("synthetic-access-token", opener=self, sleep=self.sleep, clock=lambda: self.t)
+    def login(self, user, password):
+        self.calls.append(("login",))
+        if password != PASSWORD:
+            raise imaplib.IMAP4.error("synthetic")
+        return "OK", [b""]
 
-    def __call__(self, req, timeout=None):
-        url = urlsplit(req.full_url)
-        path = url.path.removeprefix("/gmail/v1/users/me")
-        q = parse_qs(url.query)
-        self.calls.append((path, q))
-        failures = self.failures.get(path)
-        if failures:
-            status = failures.pop(0)
-            if status:
-                raise http_error(status)
-        if path == "/profile":
-            return Response(self.profile)
-        if path == "/labels":
-            return Response({"labels": self.labels})
-        if path == "/history":
-            index = int(q.get("pageToken", ["0"])[0])
-            return Response(copy.deepcopy(self.history[index]))
-        if path == "/messages":
-            rows = [v for _, v in sorted(self.messages.items()) if not q.get("labelIds") or
-                    set(q["labelIds"]) <= set(v["labelIds"])]
-            index = int(q.get("pageToken", ["0"])[0])
-            end = index + self.list_page_size
-            out = {"messages": [{"id": v["id"], "threadId": v["threadId"]} for v in rows[index:end]]}
-            if end < len(rows):
-                out["nextPageToken"] = str(end)
-            return Response(out)
-        if path.startswith("/messages/"):
-            ident = path.split("/")[-1]
-            if ident not in self.messages:
-                raise http_error(404)
-            return Response(copy.deepcopy(self.messages[ident]))
-        raise AssertionError("unexpected synthetic endpoint")
+    def noop(self):
+        self.calls.append(("noop",))
+        return "OK", [b""]
+
+    def logout(self):
+        self.calls.append(("logout",))
+        return "BYE", [b""]
+
+    def list(self):
+        self.calls.append(("list",))
+        rows = [b'(\\HasNoChildren) "/" "INBOX"', b'(\\Noselect \\HasChildren) "/" "[Gmail]"',
+                b'(\\HasNoChildren \\All) "/" "[Gmail]/All Mail"', b'(\\HasNoChildren \\Trash) "/" "[Gmail]/Trash"',
+                b'(\\HasNoChildren \\Junk) "/" "[Gmail]/Spam"']
+        return "OK", rows + [f'(\\HasNoChildren) "/" "{utf7(n)}"'.encode() for n in self.labels]
+
+    def select(self, mailbox, readonly=False):
+        self.calls.append(("select", mailbox, readonly))
+        self.selected = FOLDERS[mailbox]
+        return "OK", [str(len(self.folder())).encode()]
+
+    def folder(self):
+        return {str(int(m["id"], 16) & 0xFFFFFFFF): m for _, m in sorted(self.messages.items())  # UIDs are 32-bit
+                if next((f for f in ("TRASH", "SPAM") if f in m["labelIds"]), None) == self.selected}
+
+    def attrs(self, uid, m):
+        labels = [NAMES.get(v) or f'"{utf7(v)}"' for v in m["labelIds"]
+                  if v in NAMES or v not in ("UNREAD", "TRASH", "SPAM") and not v.startswith("CATEGORY_")]
+        flags = "" if "UNREAD" in m["labelIds"] else "\\Seen"
+        return f"{uid} (UID {uid} X-GM-MSGID {int(m['id'], 16)} X-GM-LABELS ({' '.join(labels)}) FLAGS ({flags})"
+
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        folder = self.folder()
+        if command == "SEARCH":
+            label = next(k for k, v in CATEGORIES.items() if args[1] == f'"category:{v}"')
+            return "OK", [" ".join(u for u, m in folder.items() if label in m["labelIds"]).encode()]
+        if args[0] == "1:*":
+            return ("NO", [b"synthetic"]) if "scan" in self.fail else \
+                ("OK", [(self.attrs(u, m) + ")").encode() for u, m in folder.items()])
+        m = folder.get(args[0])
+        if m is None:
+            return "OK", [None]
+        if m["id"] in self.fail:
+            return "NO", [b"synthetic"]
+        d = dt.datetime.fromtimestamp(m["internalDate"] // 1000, dt.timezone.utc)
+        head = (self.attrs(args[0], m) + f" X-GM-THRID {int(m['threadId'], 16)} INTERNALDATE "
+                f'"{d.day:02d}-{MONTHS[d.month - 1]}-{d.year} {d:%H:%M:%S} +0000" '
+                f"RFC822.SIZE {len(m['raw'])} BODY[] {{{len(m['raw'])}}}")
+        return "OK", [(head.encode(), m["raw"]), b")"]
 
 
 class Fixture:

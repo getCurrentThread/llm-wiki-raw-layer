@@ -49,12 +49,12 @@ CORE_KEYS = ("v", "impl", "data_root", "inputs_root")
 SHOWN = ("_source", "_token_type")      # options whose values are a fixed vocabulary, which `config get` prints
 CHECKPOINT = "bootstrap.json"
 PROBE_TIMEOUT = 300
-# gmail's card has its own steps for the genesis (6.1.7) and turning sync on (6.1.8)
-CARD_STEPS = {"gmail": {"5.5": "6.1.7", "5.6": "6.1.8"}}
+# gmail's card has its own steps for the genesis (6.1.5) and turning sync on (6.1.6)
+CARD_STEPS = {"gmail": {"5.5": "6.1.5", "5.6": "6.1.6"}}
 # The step ids `checkpoint mark` takes, as llm.md 5.0 lists them: the steps of sections 5 and 8, gmail's numbered
 # steps, the other cards (6.2-6.4, 6.6) and their numbered steps (6.<card>.<step>), and genesis_complete (5.5)
 GATES = ("5.1", "5.2", "5.3", "5.4", "5.5", "genesis_complete", "5.6", "5.7", "5.8", "5.9", "5.10",
-         "6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.6", "6.1.7", "6.1.8", "6.1.9",
+         "6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.6", "6.1.7",
          "6.2", "6.2.1", "6.2.2", "6.2.3", "6.3", "6.3.1", "6.3.2", "6.3.3", "6.4", "6.4.1", "6.4.2", "6.4.3", "6.4.4",
          "6.6", "6.6.1", "6.6.2", "6.6.3", "8")
 FIELDS = ("rc", "head_seq", "total", "errors", "limited", "messages_written", "posts_written", "channels", "pages",
@@ -65,9 +65,9 @@ FIELDS = ("rc", "head_seq", "total", "errors", "limited", "messages_written", "p
 NEEDS = {
     "claudecode": {None: [("cc_claude_dir", "dir", "6.6", "the Claude Code source folder is not set or not there: "
                            "run config defaults claudecode, then check cc_claude_dir")]},
-    "gmail": {None: [("gm_client_file", "file", "6.1.2", "the Desktop client JSON is not in place yet: start at 6.1.2 "
-                      "(ask whether the Google account already has the project before 6.1.3 creates one)"),
-                     ("gm_token_file", "file", "6.1.5", "no token yet: the owner's consent (7.3)")]},
+    "gmail": {None: [("gm_imap_user", "value", "6.1.3", "gm_imap_user is empty: the Gmail address to archive"),
+                     ("gm_imap_password_file", "file", "6.1.3", "no app password file yet: the owner creates one and "
+                      "saves it through the token file handshake")]},
     "mattermost": {None: [("mm_url", "value", "6.4", "mm_url is empty: the owner gives the server's https:// address"),
                           ("mm_token_file", "file", "6.4", "no session token yet: the owner signs in (--login)")]},
     "discord": {"desktop": [("dc_desktop_path", "dir", "6.2", "the Discord desktop cache folder is not set or not "

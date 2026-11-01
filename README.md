@@ -54,7 +54,7 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
   mattermost/                  app package (see mattermost/README.md)
   discord/                     DCE JSON archive reader and message/thread search (see discord/README.md)
   notion/                      page snapshot reader and block search (see notion/README.md)
-  gmail/                       Gmail API archive reader and mail/thread search (see gmail/README.md)
+  gmail/                       Gmail IMAP archive reader and mail/thread search (see gmail/README.md)
   claudecode/                  Claude Code conversation archive and session/project search (see claudecode/README.md)
     apps.py                    AppConfig: label, source keys, options, schedule and task checks
     origins.py                 origins in processing and commit order
@@ -187,7 +187,7 @@ Discord, Notion, Gmail, Mattermost and Claude Code include app-owned fetch steps
 `cc_claude_dir` (setup fills `<HOME>\.claude`) without credentials:
 `python -s -B -m claudecode.fetch [--max-items N] [--capture]`.
 Discord and Notion support token-free desktop-cache sources; their API sources use Discord credentials or the official `ntn` keychain. Desktop caches provide partial coverage and never
-treat eviction as deletion. Gmail reads the Gmail API with a read-only OAuth token, and Mattermost's fetch step (a
+treat eviction as deletion. Gmail reads IMAP, read-only, with a Google app password, and Mattermost's fetch step (a
 port of the mattertok archiver, REST API v4 with a session token) writes mattertok's archive format. Their READMEs
 define the options, archive contracts and authentication boundaries.
 

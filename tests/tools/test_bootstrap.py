@@ -95,8 +95,8 @@ TASK = {"registered": True, "enabled": True, "definition": "current", "result_ok
 def probe(**over):
     """A doctor probe of a live gmail-like app, with `over` merged into its config (None removes a key)."""
     c = {"exists": True, "readable": True, "placeholders": [], "valid": True, "sync_key": "gm_sync", "sync": True,
-         "source": None, "files": {"sources.gm_archive": "there", "gm_client_file": "there", "gm_token_file": "there"},
-         "values_set": ["gm_client_file", "gm_token_file"], "task_problems": []}
+         "source": None, "files": {"sources.gm_archive": "there", "gm_imap_password_file": "there"},
+         "values_set": ["gm_imap_user", "gm_imap_password_file"], "task_problems": []}
     top = {k: over.pop(k) for k in ("task", "log", "checkpoints", "error") if k in over}
     c.update(over)
     p = {"config": c, "task": dict(TASK),
@@ -122,8 +122,8 @@ class NextStep(unittest.TestCase):
             ("unreadable", "gmail", {"config": {"exists": True, "readable": False}}, None, "9"),
             ("placeholders", "gmail", probe(placeholders=["sources.gm_archive"]), None, "5.3"),
             ("refused", "gmail", probe(valid=False, refused="x"), None, "5.3"),
-            ("client", "gmail", probe(files={"gm_client_file": "missing", "gm_token_file": "missing"}), None, "6.1.2"),
-            ("token", "gmail", probe(files={"gm_client_file": "there", "gm_token_file": "unset"}), None, "6.1.5"),
+            ("address", "gmail", probe(values_set=["gm_imap_password_file"]), None, "6.1.3"),
+            ("app password", "gmail", probe(files={"gm_imap_password_file": "missing"}), None, "6.1.3"),
             ("mm_url", "mattermost", probe(values_set=["mm_token_file"],
                                            files={"mm_token_file": "there"}), OK_INDEX, "6.4"),
             ("mm token", "mattermost", probe(values_set=["mm_url", "mm_token_file"],
@@ -138,14 +138,14 @@ class NextStep(unittest.TestCase):
             ("nt api, no login", "notion", probe(source="api", files={}), {"state": "missing"}, "6.3"),
             ("nt api, login", "notion", probe(source="api", files={}, checkpoints={"5.4": {}}), {"state": "missing"},
              "5.5"),
-            ("empty index", "gmail", probe(), {"state": "ok", "total": 0}, "6.1.7"),
+            ("empty index", "gmail", probe(), {"state": "ok", "total": 0}, "6.1.5"),
             ("empty index, another card", "discord", probe(source="desktop", files={"dc_desktop_path": "there"}),
              {"state": "ok", "total": 0}, "5.5"),
             ("outdated", "gmail", probe(), {"state": "outdated"}, "9"),
             ("unreadable", "gmail", probe(), {"state": "unreadable"}, "9"),
             ("search error", "gmail", probe(), {"state": "error", "why": "x"}, "9"),
-            ("genesis", "gmail", probe(sync=False), OK_INDEX, "6.1.7"),
-            ("sync", "gmail", probe(sync=False, checkpoints={"genesis_complete": {}}), OK_INDEX, "6.1.8"),
+            ("genesis", "gmail", probe(sync=False), OK_INDEX, "6.1.5"),
+            ("sync", "gmail", probe(sync=False, checkpoints={"genesis_complete": {}}), OK_INDEX, "6.1.6"),
             ("sync, another card", "mattermost", probe(sync=False, checkpoints={"genesis_complete": {}},
                                                        values_set=["mm_url", "mm_token_file"],
                                                        files={"mm_token_file": "there"}), OK_INDEX, "5.6"),
@@ -156,7 +156,7 @@ class NextStep(unittest.TestCase):
             ("nt api live, 5.10", "notion", probe(source="api", sync=False, files={}, checkpoints={"5.10": {}},
                                                   task={"registered": "unknown"}), OK_INDEX, "8"),
             ("nt api live, nothing recorded", "notion", probe(source="api", sync=False, files={}), OK_INDEX, "5.5"),
-            ("task checks", "gmail", probe(task_problems=["app gmail: x"]), OK_INDEX, "6.1.8"),
+            ("task checks", "gmail", probe(task_problems=["app gmail: x"]), OK_INDEX, "6.1.6"),
             ("task checks, another card", "notion", probe(source="desktop", files={"nt_desktop_path": "there"},
                                                           task_problems=["app notion: x"]), OK_INDEX, "5.6"),
             ("no task", "gmail", probe(task={"registered": False}), OK_INDEX, "5.7"),
