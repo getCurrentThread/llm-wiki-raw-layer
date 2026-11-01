@@ -14,8 +14,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from kakaotalk import katok_decrypt as kd
-from kakaotalk import keychain, keystore_v2, provision
+from kakaotalk import wincrypt as kd
+from kakaotalk import keychain, keystore, provision
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture
 from kakaotalk.tests.test_selfderive import ROOT, SALT, quiet, wrap_dek, write_appstate
@@ -248,7 +248,7 @@ class TestSetupCommand(unittest.TestCase):
         with quiet():
             self.assertEqual(provision.write_keystore_for(
                 cfgdict, lambda m: None, ROOT,
-                keystore_v2.load_store(str(self.fx.user_dir / "appstate.dat")), str(self.fx.user_dir)), [])
+                keystore.load_store(str(self.fx.user_dir / "appstate.dat")), str(self.fx.user_dir)), [])
 
 
 class TestRestartClient(unittest.TestCase):

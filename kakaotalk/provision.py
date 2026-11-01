@@ -48,9 +48,9 @@ from pathlib import Path
 
 from rawlayer.capture import paths
 
-from . import katok_decrypt as kd
+from . import wincrypt as kd
 from . import keychain
-from . import keystore_v2 as kv
+from . import keystore as kv
 
 # where a root copy may sit, in the order they are tried (adoption verifies before installing)
 ROOT_FILES = (
@@ -332,7 +332,7 @@ def run_macdb(cfg, note, uuid=None, user_id=None, db=None, home=None, brute_limi
     userId (the kakaocli port), decrypt it in one consistent snapshot into the configured mac_db path. Counts
     only, never the key. 0 ok · 2 refusal (mac_db unset or outside the data root, no uuid/userId/database) ·
     3 the key opens nothing."""
-    from . import kakaocli
+    from . import maccrypt
     out = cfg.get("mac_db")
     if not out:
         note('the config sets no "mac_db": the macOS database is not captured on this machine')
@@ -341,26 +341,26 @@ def run_macdb(cfg, note, uuid=None, user_id=None, db=None, home=None, brute_limi
         note('"mac_db" is not inside the data root: the decrypted database is written only there')
         return 2                                    # plaintext lives only under the app's data root
     home = home or os.path.expanduser("~")
-    uuid = uuid or kakaocli.platform_uuid()
+    uuid = uuid or maccrypt.platform_uuid()
     if uuid is None:
         note("no IOPlatformUUID (ioreg): not macOS, or pass the uuid")
         return 2
     uid = user_id
     if uid is None:
-        uid = kakaocli.user_id(home, brute_limit=brute_limit or kakaocli.BRUTE_DEFAULT)
+        uid = maccrypt.user_id(home, brute_limit=brute_limit or maccrypt.BRUTE_DEFAULT)
         if uid is None:
             note(f"no userId in the KakaoTalk plists under {home} (strategies 1/2/3/4)")
             return 2
-    db = db or kakaocli.discover_database_file(kakaocli.container_path(home), uid, uuid)
+    db = db or maccrypt.discover_database_file(maccrypt.container_path(home), uid, uuid)
     if db is None or not os.path.exists(db):
-        note(f"no encrypted database found for user {uid} in {kakaocli.container_path(home)}")
+        note(f"no encrypted database found for user {uid} in {maccrypt.container_path(home)}")
         return 2
     note(f"database: {os.path.basename(db)} (user {uid})")
-    main_bytes, wal, stable = kakaocli.read_stable(db)
+    main_bytes, wal, stable = maccrypt.read_stable(db)
     if not stable:
         note("no consistent snapshot of the database (KakaoTalk is writing): retry")
         return 3
-    image, facts = kakaocli.decrypt_db(main_bytes, wal, kakaocli.secure_key(uid, uuid))
+    image, facts = maccrypt.decrypt_db(main_bytes, wal, maccrypt.secure_key(uid, uuid))
     del main_bytes, wal
     if image is None:
         note("the derived key opens no SQLCipher page (wrong uuid/userId, or a new scheme)")

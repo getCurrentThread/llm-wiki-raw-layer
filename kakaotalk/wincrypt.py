@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-katok_decrypt.py — Windows 카카오톡 로컬 DB(.edb) 연구용 복호화 툴킷
+wincrypt.py — Windows 카카오톡 로컬 DB(.edb) 연구용 복호화 툴킷
 ================================================================
 kakatok(sample/kakatok/katok_decrypt.py)에서 kakaotalk app으로 옮겼다(독립화, 2026-10).
 CLI(info/userid/backup/live)는 setup 프로비저닝(`manage.py setup kakaotalk --provision`, kakaotalk/backup.py)이 대신한다.
@@ -125,7 +125,7 @@ def _userid_of(dec):
 def get_userid_live(p=None):
     """라이브 ActionLogDB(SQLCipher4 + SIMON_IS_FREE) → Common.userid.
     p 를 주면 그 파일(카톡 users 루트의 ActionLogDB.edb)을, 없으면 LOCALAPPDATA 기준 경로를 쓴다."""
-    from . import keystore_v2 as _kv  # noqa: PLC0415
+    from . import keystore as _kv  # noqa: PLC0415
     p = p or os.path.join(_kv.users_dir(), "ActionLogDB.edb")
     data = read_shared(p); key = sqlcipher_key_from_passphrase("SIMON_IS_FREE", data[:16])
     return _userid_of(sqlcipher_decrypt(data, key))

@@ -4,7 +4,7 @@
 kakatok(sample/kakatok/keychain.py)에서 kakaotalk app으로 옮겼다(독립화, 2026-10).
 CLI(verify/fingerprint)는 setup 프로비저닝(`manage.py setup kakaotalk --provision`, kakaotalk/provision.py)이 대신한다.
 
-루트 → DEK 언랩 (keystore_v2.store 기반, 전 방 동시 파생)
+루트 → DEK 언랩 (keystore.store 기반, 전 방 동시 파생)
 --------------------------------------------------------
 카톡은 방마다 SQLCipher4 raw DEK(32B)를 쓰고, 그 DEK를 per-entry로 래핑해
 appstate.dat(v2) / keystore.bin(v1)의 wrapped_dek_map 에 넣는다.
@@ -39,7 +39,7 @@ last_pc_login.dat)의 (sha256, size, mtime)을 찍어 둔다. 2026-10-03 실험:
 fingerprint() → diff_fingerprint() 로 이전 상태와 비교해 어떤 파일이 언제 바뀌었는지
 돌려준다.
 
-의존성: 표준 라이브러리 + pycryptodome(AES). keystore_v2(CBOR 파서) 재사용.
+의존성: 표준 라이브러리 + pycryptodome(AES). keystore(CBOR 파서) 재사용.
 프라이버시: DEK·루트는 키 자격증명 — 로그에는 절대 찍지 않고(개수/해시카운트만),
 보호된 data root 안에서만 다룬다.
 Scope: the owner's own, signed-in account's keystore on this machine (offline personal archival); keys never
@@ -53,7 +53,7 @@ import json
 import os
 import struct
 
-from . import keystore_v2 as kv
+from . import keystore as kv
 
 from Crypto.Cipher import AES
 

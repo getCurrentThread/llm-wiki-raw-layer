@@ -2,7 +2,7 @@
 """The decrypted backup of the PC client's backup user directory (the old `manage.py backup kakaotalk` command,
 now setup's provisioning step).
 
-The EvaSQLite scheme of pre-25.7.2 KakaoTalk backups, ported from kakatok (kakaotalk/katok_decrypt.py): the
+The EvaSQLite scheme of pre-25.7.2 KakaoTalk backups, ported from kakatok (kakaotalk/wincrypt.py): the
 HKCU Software\\Kakao\\KakaoTalk\\DeviceInfo registry values make the machine's pragma, the userId comes from the
 backup's ActionLogDB (users/ActionLogDB.edb_*.backup, EvaSQLite with the fixed SIMON_IS_FREE passphrase) or the
 live ActionLogDB next to the configured users directory, and every chat_data/chatLogs_<chatId>.edb decrypts with
@@ -31,8 +31,8 @@ import sqlite3
 
 from rawlayer.capture import fsio
 
-from . import katok_decrypt as kd
-from . import keystore_v2 as kv
+from . import wincrypt as kd
+from . import keystore as kv
 from . import roomlist
 
 _ROOM = re.compile(r"^chatLogs_(\d+)\.edb$", re.IGNORECASE)

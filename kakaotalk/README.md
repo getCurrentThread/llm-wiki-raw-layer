@@ -27,9 +27,9 @@ the provisioning of the root key, keystore, backup and macOS database), `backup.
 decryption), `admin.py` (the write side — scriptable sending), `tests/`, and `config.example.json`. `state.py`
 declares the `schema_base` and `edb_salt` state
 tables.
-`katok_decrypt.py`, `keystore_v2.py` and `keychain.py` are the in-repo key derivation and decryption toolkit
+`wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit
 ported from kakatok (the owner's prior research project; its notes live outside this repository), and
-`kakaocli.py` is the macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the
+`maccrypt.py` is the macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the
 macOS section below). Core tests are at `<PROJECT>/tests/core/`;
 app tests are at `<PROJECT>/kakaotalk/tests/`. The slash command is
 `<PROJECT>/.claude/commands/raw-search.md` (shared with mattermost).
@@ -91,9 +91,9 @@ package:
 
 | module | what it does |
 |---|---|
-| `kakaotalk/keystore_v2.py` | parses the client's CBOR keystore `appstate.dat` / `keystore.bin` (`info_prefix`, `salt`, `wrapped_dek_map`); the authoritative room inventory |
+| `kakaotalk/keystore.py` | parses the client's CBOR keystore `appstate.dat` / `keystore.bin` (`info_prefix`, `salt`, `wrapped_dek_map`); the authoritative room inventory |
 | `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek`; the key-source rotation fingerprint |
-| `kakaotalk/katok_decrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
+| `kakaotalk/wincrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
 
 The toolkit is self-contained: the rest of the app — readers, capture, search — reaches it only through the
 entry points above, so work outside these four modules never touches key material.
@@ -144,7 +144,7 @@ no command can read anywhere else, the root key:
 
 ## macOS support (the kakaocli port)
 
-`kakaotalk/kakaocli.py` is the Python port of [Jaeha0526/kakaocli](https://github.com/Jaeha0526/kakaocli)
+`kakaotalk/maccrypt.py` is the Python port of [Jaeha0526/kakaocli](https://github.com/Jaeha0526/kakaocli)
 (branch `kakao-mcp`, MIT License; the key derivation goes back to
 [this gist](https://gist.github.com/blluv/8418e3ef4f4aa86004657ea524f2de14)). On macOS the KakaoTalk client
 keeps one SQLCipher database of `NT*` tables in the app container, and both its 78-hex-character filename and

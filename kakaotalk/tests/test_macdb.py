@@ -24,7 +24,7 @@ from pathlib import Path
 
 from Crypto.Cipher import AES
 
-from kakaotalk import kakaocli, provision
+from kakaotalk import maccrypt, provision
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture, T0
 from kakaotalk.tests.helpers import _force, capture, manifests, records
@@ -95,23 +95,23 @@ def sid(path):
 class TestDerivation(unittest.TestCase):
     def test_pinned_vectors(self):
         """The port's derivation is pinned: these change if any string step drifts from the Swift original."""
-        self.assertEqual(kakaocli.database_name(UID, UUID), DB_NAME)
-        self.assertEqual(kakaocli.secure_key(UID, UUID)[:64], KEY_HEAD)
-        self.assertEqual(len(kakaocli.secure_key(UID, UUID)), 256)
-        self.assertEqual(kakaocli.hashed_device_uuid(UUID),
+        self.assertEqual(maccrypt.database_name(UID, UUID), DB_NAME)
+        self.assertEqual(maccrypt.secure_key(UID, UUID)[:64], KEY_HEAD)
+        self.assertEqual(len(maccrypt.secure_key(UID, UUID)), 256)
+        self.assertEqual(maccrypt.hashed_device_uuid(UUID),
                          "tnouDovTnftjDguBiMkP1IqMwcW4lZn/cNHGi1R5V7weaNsTf1NmSUehTkQJqbzAMrEGwQ==")
 
     def test_selftest(self):
-        self.assertTrue(kakaocli._selftest())
+        self.assertTrue(maccrypt._selftest())
 
     def test_discover_prefers_the_derived_name(self):
         tmp = Path(tempfile.mkdtemp(prefix="llmw-cont-"))
         self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / ("0" * 78)).write_bytes(b"x")
         (tmp / DB_NAME).write_bytes(b"x")
-        self.assertEqual(os.path.basename(kakaocli.discover_database_file(str(tmp), UID, UUID)), DB_NAME)
-        self.assertEqual(os.path.basename(kakaocli.discover_database_file(str(tmp))), "0" * 78)
-        self.assertIsNone(kakaocli.discover_database_file(str(tmp / "gone")))
+        self.assertEqual(os.path.basename(maccrypt.discover_database_file(str(tmp), UID, UUID)), DB_NAME)
+        self.assertEqual(os.path.basename(maccrypt.discover_database_file(str(tmp))), "0" * 78)
+        self.assertIsNone(maccrypt.discover_database_file(str(tmp / "gone")))
 
 
 class TestUserId(unittest.TestCase):
@@ -127,38 +127,38 @@ class TestUserId(unittest.TestCase):
         return str(tmp)
 
     def test_strategy_1_transparency_suffix(self):
-        self.assertEqual(kakaocli.user_id(self.home(
+        self.assertEqual(maccrypt.user_id(self.home(
             {"FSChatWindowTransparency77": 1, "FSChatWindowTransparencyA77": 1, "other": 2})), 77)
 
     def test_strategy_2_direct_key(self):
-        self.assertEqual(kakaocli.user_id(self.home({"userId": 123})), 123)
-        self.assertEqual(kakaocli.user_id(self.home({"user_id": "456"})), 456)
+        self.assertEqual(maccrypt.user_id(self.home({"userId": 123})), 123)
+        self.assertEqual(maccrypt.user_id(self.home({"user_id": "456"})), 456)
 
     def test_strategy_3_candidates_then_bruteforce(self):
         h = hashlib.sha512(b"555").hexdigest()
         home = self.home({"DESIGNATEDFRIENDSREVISION:" + h: 3, "AlertKakaoIDsList": [9, 555]})
-        self.assertEqual(kakaocli.user_id(home), 555)                     # verified candidate, no scan
+        self.assertEqual(maccrypt.user_id(home), 555)                     # verified candidate, no scan
         home = self.home({"DESIGNATEDFRIENDSREVISION:" + h: 3})           # no candidates: bounded scan
-        self.assertEqual(kakaocli.user_id(home, brute_limit=1000), 555)
-        home = self.home({"DESIGNATEDFRIENDSREVISION:" + kakaocli.EMPTY_SHA512: 3})   # empty account: skipped
-        self.assertIsNone(kakaocli.user_id(home, brute_limit=10))
-        self.assertEqual(kakaocli.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 100), 42)
-        self.assertIsNone(kakaocli.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 10))
+        self.assertEqual(maccrypt.user_id(home, brute_limit=1000), 555)
+        home = self.home({"DESIGNATEDFRIENDSREVISION:" + maccrypt.EMPTY_SHA512: 3})   # empty account: skipped
+        self.assertIsNone(maccrypt.user_id(home, brute_limit=10))
+        self.assertEqual(maccrypt.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 100), 42)
+        self.assertIsNone(maccrypt.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 10))
 
     def test_strategy_4_window_frame_suffix(self):
-        self.assertEqual(kakaocli.user_id(self.home(
+        self.assertEqual(maccrypt.user_id(self.home(
             {"NSWindow Frame FSChatWindowFrame_88": "1 2 3 4",
              "NSWindow Frame FSChatWindowFrame_A88": "5 6 7 8"})), 88)
 
     def test_no_user_id(self):
-        self.assertIsNone(kakaocli.user_id(self.home({"unrelated": 1})))
+        self.assertIsNone(maccrypt.user_id(self.home({"unrelated": 1})))
 
 
 @unittest.skipIf(os.name != "nt", "synthetic SQLCipher databases need the sqlite3.dll of a Windows Python")
 class TestCipher(unittest.TestCase):
     """decrypt_db on synthetic SQLCipher databases (edbfix builds the 80-reserve plaintext geometry)."""
 
-    PASS = kakaocli.secure_key(UID, UUID)
+    PASS = maccrypt.secure_key(UID, UUID)
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="llmw-cip-"))
@@ -182,7 +182,7 @@ class TestCipher(unittest.TestCase):
         E.PlainRoom(work, [(1, 51, 1, 7, "w1", None, T0 + 60, 0, 0, 0, 0)]).close()
         salt = hashlib.sha256(b"mac-salt").digest()[:16]
         main = work.read_bytes()
-        image, facts = kakaocli.decrypt_db(E.enc_main(self._key(salt), salt, main), b"", self.PASS)
+        image, facts = maccrypt.decrypt_db(E.enc_main(self._key(salt), salt, main), b"", self.PASS)
         self.assertEqual(facts["cipher"], "sqlcipher4")
         self.assertEqual(facts["pages"], len(main) // 4096)
         self.assertEqual(facts["wal"]["state"], "none")
@@ -196,7 +196,7 @@ class TestCipher(unittest.TestCase):
         pr.close()
         salt = hashlib.sha256(b"mac-salt").digest()[:16]
         key = self._key(salt)
-        image, facts = kakaocli.decrypt_db(E.enc_main(key, salt, main), E.enc_wal(key, salt, wal), self.PASS)
+        image, facts = maccrypt.decrypt_db(E.enc_main(key, salt, main), E.enc_wal(key, salt, wal), self.PASS)
         self.assertEqual((facts["cipher"], facts["wal"]["state"], facts["wal"]["frames_applied"]),
                          ("sqlcipher4", "ok", facts["wal"]["frames_total"]))
         self.assertEqual(self._open_image(image), [(1, "w1"), (2, "w2-in-wal")])
@@ -205,14 +205,14 @@ class TestCipher(unittest.TestCase):
         work = self.tmp / "room.sqlite"
         E.PlainRoom(work, [(1, 51, 1, 7, "w1", None, T0 + 60, 0, 0, 0, 0)]).close()
         salt = hashlib.sha256(b"mac-salt").digest()[:16]
-        image, facts = kakaocli.decrypt_db(E.enc_main(self._key(salt), salt, work.read_bytes()), b"",
-                                           kakaocli.secure_key(1, UUID))
+        image, facts = maccrypt.decrypt_db(E.enc_main(self._key(salt), salt, work.read_bytes()), b"",
+                                           maccrypt.secure_key(1, UUID))
         self.assertIsNone(image)
         self.assertIsNone(facts["cipher"])
 
     def test_v3_page_detection(self):
         """compatibility-3 geometry (1024/48/SHA1): page-level detection under the v3 default parameters."""
-        c = kakaocli.CIPHERS[1]
+        c = maccrypt.CIPHERS[1]
         key = hashlib.pbkdf2_hmac(c["hash"], b"p", b"K" * 16, c["iters"], 32)
         body = bytearray(c["page"] - 16 - c["reserve"])
         body[0:2] = (1024).to_bytes(2, "big")
@@ -221,7 +221,7 @@ class TestCipher(unittest.TestCase):
         body[5:8] = b"\x40\x20\x20"
         iv = bytes(range(16))
         page = b"K" * 16 + AES.new(key, AES.MODE_CBC, iv).encrypt(bytes(body)) + iv + bytes(c["reserve"] - 16)
-        image, facts = kakaocli.decrypt_db(page, b"", "p")
+        image, facts = maccrypt.decrypt_db(page, b"", "p")
         self.assertEqual(facts["cipher"], "sqlcipher3")
         self.assertEqual(image[16:24], bytes(body[0:8]))
 
@@ -308,7 +308,7 @@ class TestMacdbCommand(Base):
         finally:
             con.close()
         salt = hashlib.sha256(b"mac-salt").digest()[:16]
-        key = hashlib.pbkdf2_hmac("sha512", kakaocli.secure_key(uid, uuid).encode(), salt, 256000, 32)
+        key = hashlib.pbkdf2_hmac("sha512", maccrypt.secure_key(uid, uuid).encode(), salt, 256000, 32)
         self.enc.write_bytes(E.enc_main(key, salt, plain.read_bytes()))
         plain.unlink()
 

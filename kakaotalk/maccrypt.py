@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""kakaocli.py — macOS 카카오톡 DB 키 유도 + SQLCipher 복호화 (Python 포트).
+"""maccrypt.py — macOS 카카오톡 DB 키 유도 + SQLCipher 복호화 (Python 포트).
 
 Jaeha0526/kakaocli 의 kakao-mcp 브랜치(Sources/KakaoCore/Database/{KeyDerivation,DeviceInfo}.swift,
 MIT License, Copyright (c) 2026 Silver Flight Group, LLC — 원 알고리즘은
 https://gist.github.com/blluv/8418e3ef4f4aa86004657ea524f2de14)를 kakaotalk app으로 옮겼다
-(macOS 지원, 2026-10). Windows 쪽(katok_decrypt/keychain/keystore_v2)과 대비된다:
+(macOS 지원, 2026-10). Windows 쪽(wincrypt/keychain/keystore)과 대비된다:
 
   macOS(kakaocli)                                  Windows(25.7.2+, kakatok)
   ------------------------------------------       ------------------------------------------

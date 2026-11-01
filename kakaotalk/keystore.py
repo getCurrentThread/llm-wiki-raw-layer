@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""keystore_v2.py — 카카오톡 v2/v1 키저장소(CBOR) 파서 + 방 전체 인벤토리.
+"""keystore.py — 카카오톡 v2/v1 키저장소(CBOR) 파서 + 방 전체 인벤토리.
 
 kakatok(sample/kakatok/keystore_v2.py)에서 kakaotalk app으로 옮겼다(독립화, 2026-10).
 

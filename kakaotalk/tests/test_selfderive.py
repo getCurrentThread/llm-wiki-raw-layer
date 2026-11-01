@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The kakatok port that makes the app self-sufficient (2026-10): the deterministic crypto vectors of
-kakaotalk/keychain.py and kakaotalk/keystore_v2.py, the keystore derivation setup provisions against a
+kakaotalk/keychain.py and kakaotalk/keystore.py, the keystore derivation setup provisions against a
 synthetic appstate.dat wrapping the keys of synthetic SQLCipher-4 rooms (kakaotalk/tests/edbfix.py), and the
 backup decryption against a synthetic EvaSQLite-encrypted backup user directory. Nothing here touches the
 real client, its files or the registry: read_deviceinfo and get_userid_live are patched, and every input is
@@ -19,8 +19,8 @@ from unittest import mock
 from Crypto.Cipher import AES
 
 from kakaotalk import backup as backup_mod
-from kakaotalk import katok_decrypt as kd
-from kakaotalk import keychain, keystore_v2, provision
+from kakaotalk import wincrypt as kd
+from kakaotalk import keychain, keystore, provision
 from kakaotalk.readers.edb import load_keystore
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.fixtures import Fixture
@@ -79,7 +79,7 @@ def write_appstate(udir, wrapped):
 
 
 def eva_encrypt(data, dbtype, pragma, userid):
-    """Inverse of katok_decrypt.eva_decrypt: page-wise AES-CBC under the fixed EvaSQLite key/iv."""
+    """Inverse of wincrypt.eva_decrypt: page-wise AES-CBC under the fixed EvaSQLite key/iv."""
     key, iv = kd.eva_key_iv(kd.eva_passphrase(dbtype, pragma, userid))
     out = bytearray()
     for pos in range(0, len(data), kd.PAGE):
@@ -114,9 +114,9 @@ class TestVectors(unittest.TestCase):
         """RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract."""
         self.assertTrue(keychain._selftest())
 
-    def test_keystore_v2_selftest(self):
+    def test_keystore_selftest(self):
         """RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
-        self.assertTrue(keystore_v2._selftest())
+        self.assertTrue(keystore._selftest())
 
 
 class TestKeystoreDerivation(Base):
@@ -142,7 +142,7 @@ class TestKeystoreDerivation(Base):
         with quiet():
             return provision.write_keystore_for(
                 cfg, lambda m: None, keychain.read_root_hex(str(self.keys_dir / "root_v2.hex")),
-                keystore_v2.load_store(str(self.fx.user_dir / "appstate.dat")), str(self.fx.user_dir), scan=scan)
+                keystore.load_store(str(self.fx.user_dir / "appstate.dat")), str(self.fx.user_dir), scan=scan)
 
     def test_derives_keystore_and_capture_reads(self):
         from rawlayer.capture.config import Config, InputSet
