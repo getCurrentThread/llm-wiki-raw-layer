@@ -1136,15 +1136,13 @@ needs no elevation and touches no data. It installs:
 Its manifest and backups live in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`, never in `<PROJECT>`.
 
 1. `agents status`. Each item is `absent`, `current`, `stale` (an older version this tool wrote), `modified`
-   (changed by hand since), `foreign` (not this tool's), `legacy` (a hand-made copy from before this tool: a
-   `# llm-wiki-raw-layer` section of the global CLAUDE.md, or `.claude\agents\knowledge-retriever.md`) or
-   `unreadable` (a global CLAUDE.md that is not UTF-8 or whose markers are broken: the owner fixes it by hand).
+   (changed by hand since) or `foreign` (not this tool's), or `unreadable` (a global CLAUDE.md that is not UTF-8
+   or whose markers are broken: the owner fixes it by hand).
    `project_mismatch` means the integration points at another checkout. Exit 0 when every item is `current`.
-2. `agents install --dry-run` (add `--adopt-legacy` when step 1 shows `legacy`). It prints the diff with paths
-   masked and changes nothing. Show the owner the diff and wait for an explicit yes: it rewrites their global
+2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and wait for an explicit yes: it rewrites their global
    configuration (rule 10).
-3. With that yes, the same command without `--dry-run`. `install` refuses a `legacy`, `modified` or `foreign`
-   item unless `--adopt-legacy` or `--force` names it, and backs up whatever it replaces or removes. `--python
+3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item
+   unless `--force` names it, and backs up whatever it replaces. `--python
    <PY>` names the interpreter the MCP server runs with; without it, install keeps the interpreter the server was
    installed with (while that file is still there), else uses the one running the command. When a `claude mcp`
    call fails, the error ends with the CLI's own reason.

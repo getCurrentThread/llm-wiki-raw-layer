@@ -14,8 +14,8 @@ from unittest import mock
 from tools import agentkit as K
 
 APPS = ["claudecode", "discord", "gmail", "kakaotalk", "mattermost", "notion"]
-LEGACY = ("# llm-wiki-raw-layer\r\n\r\nRepo: `X:\\checkout`\r\n\r\n## Core rules\r\n\r\n- old rule\r\n\r\n"
-          "# Other notes\r\n\r\n- keep me\r\n")
+FOREIGN = (f"# Mine\r\n\r\n{K.BEGIN}\r\n- old rule\r\n{K.END}\r\n# Other notes\r\n\r\n- keep me\r\n")  # a block not ours
+REST = "# Mine\r\n\r\n# Other notes\r\n\r\n- keep me\r\n"                   # FOREIGN without its block
 OTHER = "\ufeff# Mine\n\n- a rule of my own"               # a BOM, no newline at the end
 
 
@@ -128,17 +128,6 @@ class Markers(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(K.Refused):
                 K.find_block(bad)
 
-    def test_legacy_section(self):
-        start, end = K.find_legacy(LEGACY)
-        self.assertEqual(start, 0)
-        self.assertTrue(LEGACY[end:].startswith("# Other notes"))
-        fenced = "# llm-wiki-raw-layer\n```\n# not a heading\n```\nrest\n"
-        self.assertEqual(K.find_legacy(fenced), (0, len(fenced)))
-        self.assertIsNone(K.find_legacy("# llm-wiki-raw-layer (raw ledgers)\n"))
-        text = f"# llm-wiki-raw-layer\nold\n{K.BEGIN}\nx\n{K.END}\n"
-        self.assertEqual(K.find_legacy(text, K.find_block(text)), (0, text.index(K.BEGIN)))
-
-
 class InstallUninstall(Home):
     def test_fresh_home_round_trip(self):
         rows, _m = self.kit().status()
@@ -167,36 +156,31 @@ class InstallUninstall(Home):
         self.kit().uninstall()
         self.assertEqual(self.snapshot(), before)
 
-    def test_legacy_adopt_and_restore(self):
-        self.put(".claude/CLAUDE.md", LEGACY)
-        self.put(".claude/agents/knowledge-retriever.md", "old agent\n")
+    def test_a_foreign_block_is_replaced_and_restored(self):
+        self.put(".claude/CLAUDE.md", FOREIGN)
         before = self.snapshot()
-        rows, _m = self.kit().status()
-        self.assertEqual(rows[".claude/CLAUDE.md (hand-made section)"], "legacy")
-        self.assertEqual(rows[".claude/agents/knowledge-retriever.md"], "legacy")
+        self.assertEqual(self.kit().status()[0][f"{K.CLAUDE_MD} (block)"], "foreign")
         with self.assertRaises(K.Refused):
             self.kit().install()
         self.assertEqual(self.snapshot(), before)
-        self.assertTrue(self.kit().install(dry_run=True, adopt=True))
+        self.assertTrue(self.kit().install(dry_run=True, force=True))
         self.assertEqual(self.snapshot(), before)
         self.assertFalse((self.state / "manifest.json").exists())
-        self.kit().install(adopt=True)
+        self.kit().install(force=True)
         text = (self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8")
         self.assertNotIn("old rule", text)
         self.assertTrue(text.endswith("\r\n# Other notes\r\n\r\n- keep me\r\n"))
         self.assertTrue(text.split(K.BEGIN)[1].startswith("\r\n"))      # the block takes the file's newlines
-        self.assertFalse((self.home / ".claude/agents/knowledge-retriever.md").exists())
         rows, _m = self.kit().status()
         self.assertEqual(set(rows.values()), {"current"})
         self.kit().uninstall(restore=True)
         self.assertEqual(self.snapshot(), before)
 
     def test_uninstall_without_restore_leaves_the_rest(self):
-        self.put(".claude/CLAUDE.md", LEGACY)
-        self.kit().install(adopt=True)
+        self.put(".claude/CLAUDE.md", FOREIGN)
+        self.kit().install(force=True)
         self.kit().uninstall()
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"),
-                         "# Other notes\r\n\r\n- keep me\r\n")
+        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), REST)
 
     def test_hand_changes_are_kept(self):
         self.kit().install()
@@ -231,10 +215,10 @@ class InstallUninstall(Home):
     def test_a_kept_item_keeps_its_backup(self):
         # --restore keeps a block or file changed by hand, and its backup with it: following the hint
         # (--restore --force) then still puts the original back
-        self.put(".claude/CLAUDE.md", LEGACY)
+        self.put(".claude/CLAUDE.md", FOREIGN)
         self.put(".claude/agents/raw-retriever.md", "someone else's agent\n")
         before = self.snapshot()
-        self.kit().install(adopt=True, force=True)
+        self.kit().install(force=True)
         self.edit(".claude/CLAUDE.md", b"Privacy (strict)", b"Privacy (mine)")
         self.edit(".claude/agents/raw-retriever.md", b"You search", b"You, mine, search")
         _plan, kept = self.kit().uninstall(restore=True)
@@ -245,9 +229,9 @@ class InstallUninstall(Home):
         self.assertEqual(len([n for n in kit.notes if "is saved at" in n]), 2)     # the hand-changed copies
 
     def test_force_over_a_hand_changed_block_keeps_the_original(self):
-        self.put(".claude/CLAUDE.md", LEGACY)
+        self.put(".claude/CLAUDE.md", FOREIGN)
         before = self.snapshot()
-        self.kit().install(adopt=True)
+        self.kit().install(force=True)
         self.edit(".claude/CLAUDE.md", b"Privacy (strict)", b"Privacy (mine)")
         self.kit().install(force=True)              # backs up the edited block for reference only
         self.kit().uninstall(restore=True)
@@ -266,14 +250,13 @@ class InstallUninstall(Home):
         self.kit().install(force=True)
         self.kit().uninstall(restore=True)
         self.assertEqual((self.home / agent).read_bytes(), b"second agent\n")
-        self.put(".claude/CLAUDE.md", LEGACY)
-        self.kit().install(adopt=True, force=True)
-        self.kit().uninstall()
-        rest = "# Other notes\r\n\r\n- keep me\r\n"
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), rest)
+        self.put(".claude/CLAUDE.md", FOREIGN)
         self.kit().install(force=True)
-        self.kit().uninstall(restore=True)                      # the old section does not come back
-        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), rest)
+        self.kit().uninstall()
+        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), REST)
+        self.kit().install(force=True)
+        self.kit().uninstall(restore=True)                      # the old block does not come back
+        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8"), REST)
 
     def test_backups_in_the_same_instant_never_overwrite(self):
         agent = ".claude/agents/raw-retriever.md"
@@ -441,8 +424,8 @@ class InstallUninstall(Home):
         self.assertEqual(self.servers(), servers)
 
     def test_a_hand_removed_block_forgets_what_it_replaced(self):
-        self.put(".claude/CLAUDE.md", LEGACY)
-        self.kit().install(adopt=True)
+        self.put(".claude/CLAUDE.md", FOREIGN)
+        self.kit().install(force=True)
         mine = "# Other notes\r\n\r\n- keep me\r\n- another rule"     # the block removed by hand, a line added
         self.put(".claude/CLAUDE.md", mine)
         kit = self.kit()
@@ -511,9 +494,9 @@ class Cli(Home):
             self.assertEqual(self.snapshot(), {})
             self.assertEqual(K.main(["install"], kit=self.kit()), 0)
             self.assertEqual(K.main(["status"], kit=self.kit()), 0)
-            self.put(".claude/agents/knowledge-retriever.md", "old\n")
-            self.assertEqual(K.main(["install"], kit=self.kit()), 2)
             self.assertEqual(K.main(["uninstall"], kit=self.kit()), 0)
+            self.put(".claude/agents/raw-retriever.md", "someone else's agent\n")
+            self.assertEqual(K.main(["install"], kit=self.kit()), 2)
         self.assertTrue(any("would create" in x for x in out))
         self.assertTrue(any("refused" in x for x in err))
 

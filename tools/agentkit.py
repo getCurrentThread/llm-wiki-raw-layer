@@ -5,27 +5,24 @@ folders. Standard library only.
 
   status [--json]
       Each item and its state: absent, current, stale (an older version this tool wrote), modified (changed by hand
-      since this tool wrote it), foreign (there, but not written by this tool), legacy (a hand-made copy from before
-      this tool), unreadable (a global CLAUDE.md that is not UTF-8 or whose markers are broken); and
-      project_mismatch when the integration was installed from another checkout. Exit 0 only when every item is
-      current.
-  install [--dry-run] [--adopt-legacy] [--force] [--python EXE]
+      since this tool wrote it), foreign (there, but not written by this tool), unreadable (a global CLAUDE.md that is
+      not UTF-8 or whose markers are broken); and project_mismatch when the integration was installed from another
+      checkout. Exit 0 only when every item is current.
+  install [--dry-run] [--force] [--python EXE]
       For Claude Code (the owner's profile):
         .claude/CLAUDE.md                     a marked block; the rest of the file is kept byte for byte
         .claude/skills/raw-search/SKILL.md, .claude/skills/llm-wiki-setup/SKILL.md, .claude/agents/raw-retriever.md
         the user-scope MCP server llm_wiki_raw (tools/mcp_rawsearch.py, through `claude mcp add-json`)
-      A hand-made "# llm-wiki-raw-layer" section of the global CLAUDE.md and .claude/agents/knowledge-retriever.md
-      are legacy: install refuses while they are there, and --adopt-legacy replaces them. A modified or foreign item
-      is replaced only with --force. Whatever is replaced or removed is backed up first. --dry-run prints the diff
-      (paths masked) and changes nothing. The MCP server runs with --python, else the interpreter it was installed
-      with (while that is still there), else the one running this command.
+      A modified or foreign item is replaced only with --force. Whatever is replaced is backed up first. --dry-run
+      prints the diff (paths masked) and changes nothing. The MCP server runs with --python, else the interpreter it
+      was installed with (while that is still there), else the one running this command.
   uninstall [--dry-run] [--restore] [--force]
       Removes what install wrote and nobody changed since (a modified item is kept and named; --force removes it
       too, saving the hand-changed copy first). --restore also puts back what install replaced or removed, from the
       backups; without it, the backups of the removed items are forgotten (their files stay in the state folder).
   sync-repo [--check]
       Renders the templates into this checkout (.claude/skills, .claude/agents, .agents/skills), with commands that
-      run from the checkout, and removes the files they replace. --check changes nothing and exits 3 on a difference.
+      run from the checkout. --check changes nothing and exits 3 on a difference.
 
 The manifest and the backups live in %LOCALAPPDATA%\\llm-wiki-raw-layer\\agentkit, never in the checkout.
 
@@ -51,8 +48,6 @@ BEGIN = "<!-- llm-wiki-raw-layer:begin (managed by tools/bootstrap.py agents; ed
 END = "<!-- llm-wiki-raw-layer:end -->"
 _BEGIN = re.compile(r"^<!-- llm-wiki-raw-layer:begin\b[^\n]*-->[ \t]*\r?$", re.M)
 _END = re.compile(r"^<!-- llm-wiki-raw-layer:end -->[ \t]*(?:\r?\n|\Z)", re.M)
-_LEGACY = re.compile(r"# llm-wiki-raw-layer[ \t]*")
-_H1 = re.compile(r"# \S")
 BOM = b"\xef\xbb\xbf"
 CLAUDE_MD = ".claude/CLAUDE.md"
 MCP_NAME = "llm_wiki_raw"
@@ -68,15 +63,11 @@ REPO_FILES = GLOBAL_FILES + (("raw-search.md", "plain", ".agents/skills/raw-sear
 FRONT = {"skill": ("name", "description", "argument-hint", "allowed-tools"),
          "agent": ("name", "description", "tools", "model"),
          "plain": ("name", "description")}
-OBSOLETE_REPO = (".claude/commands/raw-search.md", ".claude/agents/knowledge-retriever.md",
-                 ".agents/skills/knowledge-retriever/SKILL.md")
-LEGACY_FILES = (".claude/agents/knowledge-retriever.md",)
-# Backup keys. A key without EDITED holds an original from before install (a foreign or legacy item), which
+# Backup keys. A key without EDITED holds an original from before install (a foreign item), which
 # --restore puts back; key + EDITED holds a copy of this tool's own item as changed by hand, kept for reference only.
 EDITED = "#edited"
-SECTION_KEY = CLAUDE_MD + "#section"
 BLOCK_KEY = CLAUDE_MD + "#block"
-BLOCK_KEYS = (SECTION_KEY, BLOCK_KEY, BLOCK_KEY + EDITED)
+BLOCK_KEYS = (BLOCK_KEY, BLOCK_KEY + EDITED)
 MCP_KEYS = ("mcp", "mcp" + EDITED)
 _VAR = re.compile(r"\{\{(include:)?([A-Za-z0-9_.-]+)\}\}")
 
@@ -207,26 +198,6 @@ def find_block(text):
     if len(begins) != 1 or len(ends) != 1 or ends[0].start() < begins[0].end():
         raise Refused(f"{CLAUDE_MD}: the llm-wiki-raw-layer markers are duplicated or out of order; fix them by hand")
     return begins[0].start(), ends[0].end()
-
-
-def find_legacy(text, block_span=None):
-    """(start, end) of a hand-made "# llm-wiki-raw-layer" section: from that heading to the next level-1 heading
-    outside a code fence, the marked block, or the end. None when there is none."""
-    pos, start, fence = 0, None, False
-    for ln in text.splitlines(keepends=True):
-        bare = ln.rstrip("\r\n")
-        inside = block_span is not None and block_span[0] <= pos < block_span[1]
-        if start is not None and (inside or (not fence and _H1.match(bare))):
-            return start, pos
-        if inside:
-            pos += len(ln)
-            continue
-        if bare.lstrip().startswith("```"):
-            fence = not fence
-        elif not fence and start is None and _LEGACY.fullmatch(bare):
-            start = pos
-        pos += len(ln)
-    return (start, len(text)) if start is not None else None
 
 
 # ---------------------------------------------------------------------------------------------------- the target
@@ -437,48 +408,26 @@ class Kit:
     def status(self):
         self.problems = []
         try:
-            st, text, span, _bom = self.block_state()
+            st = self.block_state()[0]
         except Refused as e:
-            st, text, span = "unreadable", None, None
+            st = "unreadable"
             self.problems.append(str(e))
         rows = {f"{CLAUDE_MD} (block)": st}
-        if text is not None and find_legacy(text, span):
-            rows[f"{CLAUDE_MD} (hand-made section)"] = "legacy"
         for rel, want in self.files().items():
             rows[rel] = self.file_state(rel, want)
-        for rel in LEGACY_FILES:
-            if (self.home / rel).is_file():
-                rows[rel] = "legacy"
         rows[f"mcp {MCP_NAME}"] = self.mcp_state()
         project = self.manifest["project"]
         mismatch = project is not None and os.path.normcase(project) != os.path.normcase(str(PROJECT))
         return rows, mismatch
 
     # ---- install
-    def plan_install(self, adopt=False, force=False):
+    def plan_install(self, force=False):
         """[(label, old, new, apply)] -- old/new texts for the diff (None: no such file), apply(stamp) does it."""
         plan, refusals = [], []
         st, text, span, bom = self.block_state()
-        legacy = find_legacy(text, span) if text is not None else None
         nl = newline_of(text)
         want = block(self.vals, nl)
-        if legacy and not adopt:
-            refusals.append(f"{CLAUDE_MD}: a hand-made '# llm-wiki-raw-layer' section is there; review "
-                            "`install --dry-run --adopt-legacy`, then install with --adopt-legacy")
-        elif legacy and span is None:
-            # the section becomes the block, in its place
-            start, end = legacy
-            after = nl if text[end:] else ""
-            new = text[:start] + want + after + text[end:]
-
-            def apply_section(stamp, start=start, end=end, after=after, new=new):
-                self._backup(SECTION_KEY, text[start:end].encode("utf-8"), stamp)
-                self._write_block(new, bom, before="", after=after, created=False, replaces=SECTION_KEY)
-            plan.append((CLAUDE_MD, text, new, apply_section))
-        elif legacy:
-            refusals.append(f"{CLAUDE_MD}: both the block and a hand-made section are there; remove the section by "
-                            "hand")
-        if not legacy and st == "absent":
+        if st == "absent":
             created = text is None
             before = "" if not text else ("" if text.endswith(("\n", "\r")) else nl) + nl
             new = (text or "") + before + want
@@ -486,16 +435,15 @@ class Kit:
             def apply_append(stamp, new=new, before=before, created=created):
                 # a backup of what an earlier block replaced is left only when that block was removed by hand: its
                 # place is gone, so --restore no longer puts it back
-                for key in (SECTION_KEY, BLOCK_KEY):
-                    if key in self.manifest["backups"]:
-                        self.notes.append(f"the block had been removed from {CLAUDE_MD} by hand, so uninstall --restore "
-                                          f"no longer puts back what it first replaced; that is saved at "
-                                          f"{self.manifest['backups'][key]}")
+                if BLOCK_KEY in self.manifest["backups"]:
+                    self.notes.append(f"the block had been removed from {CLAUDE_MD} by hand, so uninstall --restore "
+                                      f"no longer puts back what it first replaced; that is saved at "
+                                      f"{self.manifest['backups'][BLOCK_KEY]}")
                 for key in BLOCK_KEYS:
                     self.manifest["backups"].pop(key, None)
                 self._write_block(new, bom, before=before, after="", created=created)
             plan.append((CLAUDE_MD, text, new, apply_append))
-        elif not legacy and (st == "stale" or (st in ("modified", "foreign") and force)):
+        elif st == "stale" or (st in ("modified", "foreign") and force):
             old_block = text[span[0]:span[1]]
             new = text[:span[0]] + want + text[span[1]:]
             prev = self.manifest["block"] or {}
@@ -507,7 +455,7 @@ class Kit:
                                   created=prev.get("created", False),
                                   replaces=BLOCK_KEY if st == "foreign" else prev.get("replaces"))
             plan.append((CLAUDE_MD, text, new, apply_replace))
-        elif not legacy and st in ("modified", "foreign"):
+        elif st in ("modified", "foreign"):
             refusals.append(f"{CLAUDE_MD}: the block is {st}; --force replaces it (backed up)")
 
         for rel, body in self.files().items():
@@ -517,13 +465,6 @@ class Kit:
                              lambda stamp, rel=rel, body=body, fst=fst: self._write_file(rel, body, fst, stamp)))
             elif fst in ("modified", "foreign"):
                 refusals.append(f"{rel}: {fst}; --force replaces it (backed up)")
-        for rel in LEGACY_FILES:
-            if (self.home / rel).is_file():
-                if adopt:
-                    plan.append((rel, _shown(self.home / rel), None,
-                                 lambda stamp, rel=rel: self._remove_legacy(rel, stamp)))
-                else:
-                    refusals.append(f"{rel}: legacy (a hand-made copy); --adopt-legacy removes it (backed up)")
 
         ms = self.mcp_state()
         now = self.mcp_now()
@@ -540,11 +481,11 @@ class Kit:
             raise Refused("; ".join(refusals))
         return plan
 
-    def install(self, dry_run=False, adopt=False, force=False):
+    def install(self, dry_run=False, force=False):
         self.notes = []
         if not dry_run and self.mcp_state() != "current" and not MCP_SERVER.is_file():
             raise Refused("tools/mcp_rawsearch.py is not in this checkout")
-        plan = self.plan_install(adopt=adopt, force=force)
+        plan = self.plan_install(force=force)
         if dry_run:
             return plan
         if plan:
@@ -569,8 +510,8 @@ class Kit:
         self._save()
 
     def _write_block(self, new, bom, before, after, created, replaces=None):
-        """`replaces`: the backup key of what the block was written in place of (a section, a foreign block), the
-        only one uninstall --restore puts back in its place."""
+        """`replaces`: the backup key of what the block was written in place of (a foreign block), which uninstall
+        --restore puts back in its place."""
         self._mkdirs(CLAUDE_MD)
         write_doc(self.home / CLAUDE_MD, new, bom)
         self.manifest["block"] = {"sha256": _sha(block(self.vals)), "before": before, "after": after,
@@ -585,11 +526,6 @@ class Kit:
         write_doc(p, body)
         self.manifest["files"][rel] = _sha(body)
         self._save()
-
-    def _remove_legacy(self, rel, stamp):
-        p = self.home / rel
-        self._backup(rel, p.read_bytes(), stamp)
-        p.unlink()
 
     def _add_mcp(self, ms, now, stamp):
         spec = self.mcp_spec()
@@ -631,7 +567,6 @@ class Kit:
             info = self.manifest["block"] or {}
             start, end = span
             # only what this very block was written in place of goes back in its place
-            section = self._restored_text(SECTION_KEY) if restore and info.get("replaces") == SECTION_KEY else None
             old_block = self._restored_text(BLOCK_KEY) if restore and info.get("replaces") == BLOCK_KEY else None
             if old_block is not None:
                 new = text[:start] + old_block + text[end:]
@@ -641,9 +576,9 @@ class Kit:
                     start -= len(before)
                 if after and text[end:end + len(after)] == after:
                     end += len(after)
-                new = text[:start] + (section or "") + text[end:]
+                new = text[:start] + text[end:]
             gone = new == "" and info.get("created")
-            used = SECTION_KEY if section is not None else BLOCK_KEY if old_block is not None else None
+            used = BLOCK_KEY if old_block is not None else None
             mine = None if st in ("current", "stale") else text[span[0]:span[1]]
 
             def apply_block(stamp, new=new, gone=gone, used=used, mine=mine, st=st):
@@ -663,8 +598,8 @@ class Kit:
         elif span is not None:
             kept.append(f"{CLAUDE_MD} (block {st})")
         elif self.manifest["block"] is not None or any(k in backups for k in BLOCK_KEYS):
-            # the block was removed by hand: its original place is unknown, so a section is not put back blindly
-            lost = backups.get(SECTION_KEY) or backups.get(BLOCK_KEY)
+            # the block was removed by hand: its original place is unknown, so what it replaced is not put back blindly
+            lost = backups.get(BLOCK_KEY)
 
             def tidy_block(lost=lost):
                 if restore and lost:
@@ -708,16 +643,6 @@ class Kit:
                     self.manifest["files"].pop(rel, None)
                     self._forget(rel, rel + EDITED)
                 tidy.append(tidy_file)
-        if restore:
-            for rel in LEGACY_FILES:
-                back = self._restored(rel)
-                if back is not None and not (self.home / rel).exists():
-                    def apply_legacy(stamp, rel=rel, back=back):
-                        (self.home / rel).parent.mkdir(parents=True, exist_ok=True)
-                        write_raw(self.home / rel, back)
-                        self._used(rel)
-                    plan.append((rel, None, back.decode("utf-8", "replace"), apply_legacy))
-
         ms, now = self.mcp_state(), self.mcp_now()
         back, shown = self._restored("mcp") if restore else None, None
         if back is not None:
@@ -802,7 +727,7 @@ def _is_json(data):
 # ---------------------------------------------------------------------------------------------------- the checkout
 
 def repo_plan(found=None):
-    """[(action, path, text)]: what sync-repo writes ("write") or removes ("remove") in the checkout."""
+    """[("write", path, text)]: what sync-repo writes in the checkout."""
     vals = values("repo", found if found is not None else apps())
     plan = []
     for template, kind, rel in REPO_FILES:
@@ -811,9 +736,6 @@ def repo_plan(found=None):
         cur = p.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n") if p.is_file() else None
         if cur != want:
             plan.append(("write", rel, want))
-    for rel in OBSOLETE_REPO:
-        if (PROJECT / rel).exists():
-            plan.append(("remove", rel, None))
     return plan
 
 
@@ -825,16 +747,10 @@ def sync_repo(check):
         if not plan:
             _out("agents: sync-repo: the checkout's agent files match the templates")
         return 3 if plan else 0
-    for action, rel, text in plan:
+    for _action, rel, text in plan:
         p = PROJECT / rel
-        if action == "write":
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(text.encode("utf-8"))
-        else:
-            p.unlink()
-            for d in (p.parent, p.parent.parent):
-                if d != PROJECT and d.is_dir() and not any(d.iterdir()):
-                    d.rmdir()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(text.encode("utf-8"))
     _out(f"agents: sync-repo: {len(plan)} change(s)" if plan else "agents: sync-repo: nothing to change")
     return 0
 
@@ -865,7 +781,6 @@ def parser():
     s.add_argument("--json", action="store_true")
     i = sub.add_parser("install")
     i.add_argument("--dry-run", action="store_true")
-    i.add_argument("--adopt-legacy", action="store_true")
     i.add_argument("--force", action="store_true")
     i.add_argument("--python", help="the interpreter the MCP server runs with (default: the one it was installed "
                                     "with, while that is still there, else this one)")
@@ -910,7 +825,7 @@ def main(argv=None, kit=None):
                 _status_lines(k, rows, mismatch)
             return rc
         if a.command == "install":
-            plan = k.install(dry_run=a.dry_run, adopt=a.adopt_legacy, force=a.force)
+            plan = k.install(dry_run=a.dry_run, force=a.force)
             if not plan:
                 rows, mismatch = k.status()
                 if set(rows.values()) == {"current"} and not mismatch:
