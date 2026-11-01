@@ -10,7 +10,7 @@ from urllib import error, request
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from gmail.auth import pkce, callback_code, authorize, refresh, token_request, credential_path, SCOPE
-from tools.archiveio import FetchError, load
+from appkit.archive import FetchError, load
 from .fixtures import Fixture, Response
 from tests.core import appfix as h
 

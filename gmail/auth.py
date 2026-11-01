@@ -7,7 +7,7 @@ import secrets
 import sys
 import time
 from urllib import error, parse, request
-from tools.archiveio import FetchError, atomic, credential_path, load
+from appkit.archive import FetchError, atomic, credential_path, load
 
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 TOKEN_URL = "https://oauth2.googleapis.com/token"

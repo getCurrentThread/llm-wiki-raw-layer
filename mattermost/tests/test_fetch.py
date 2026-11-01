@@ -18,7 +18,7 @@ from urllib.request import BaseHandler
 from urllib.response import addinfourl
 
 from rawlayer.capture.config import Config
-from tools.archiveio import FetchError, load
+from appkit.archive import FetchError, load
 from mattermost import fetch
 from mattermost.apps import MatterConfig, _url
 from mattermost.fetch import MattermostClient, login, sync, token

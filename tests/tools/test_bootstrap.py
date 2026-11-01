@@ -18,7 +18,7 @@ from rawlayer import conf
 from rawlayer.capture import paths
 from rawlayer.registry import Option
 from tools import bootstrap as B
-from tools.archiveio import boolean, text
+from appkit.archive import boolean, text
 
 SECRET = "s3cr3t-Value-That-Must-Not-Print"
 

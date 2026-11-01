@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 from notion.fetch import NotionClient, fetch_page, sync
-from tools.archiveio import FetchError, load, locked
+from appkit.archive import FetchError, load, locked
 from .fixtures import Fixture, PID, BID, OTHER, UID, COMMENT, block, page, rt
 from tests.core import appfix as h
 

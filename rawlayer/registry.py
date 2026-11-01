@@ -40,7 +40,7 @@ _LABEL = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _ORIGIN = re.compile(r"^[a-z_]{1,40}$")      # a ledger path segment (ledger._SEG_PATH) and a public word
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
 # folders next to manage.py that are never apps (the core's own, and the words commands use for "every app")
-RESERVED = ("rawlayer", "config", "tests", "tools", "docs", "core", "all", "settings", "manage")
+RESERVED = ("rawlayer", "config", "tests", "tools", "appkit", "docs", "core", "all", "settings", "manage")
 
 
 class RegistryError(Exception):

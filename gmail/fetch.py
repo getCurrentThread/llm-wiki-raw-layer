@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
-from tools.archiveio import FetchError, atomic, bind, inside, load, locked, now
+from appkit.archive import FetchError, atomic, bind, inside, load, locked, now
 from .api import GmailClient, pages
 from .apps import EXCLUDED
 from .auth import authorize, refresh
@@ -358,63 +358,40 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
 
 
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if "--auth" not in argv:
-        import contextlib
-        from rawlayer.capture import publicout
-        from tools.archiveio import main as archive_main
-        target = sys.stdout
-        if "--help" in argv or "-h" in argv:
-            target.write("One-time authorization: python -s -B -m gmail.fetch --auth [--config CONFIG]\n")
-
-        class PublicStream:
-            # archiveio owns the CLI semantics. Validate its aggregate JSON at
-            # this app boundary, without changing Discord/Notion's output.
-            def __init__(self):
-                self.buffer, self.rejected = "", False
-
-            def write(self, value):
-                self.buffer += value
-                while "\n" in self.buffer:
-                    line, self.buffer = self.buffer.split("\n", 1)
-                    if line.startswith("{"):
-                        try:
-                            obj = json.loads(line)
-                            line = publicout.render_json(obj, indent=None).decode("ascii")
-                        except (ValueError, TypeError):
-                            self.rejected = True
-                            line = '{"app": "gmail", "status": "error"}'
-                    target.write(line + "\n")
-                return len(value)
-
-            def flush(self):
-                target.flush()
-
-        output = PublicStream()
-        with contextlib.redirect_stdout(output):
-            rc = archive_main("gmail", sync_config, argv)
-        return rc or int(output.rejected)
-    import argparse
-    from rawlayer import registry
-    from rawlayer.capture.config import Config
-    from rawlayer.management.base import default_config
+    import contextlib
     from rawlayer.capture import publicout
-    p = argparse.ArgumentParser(description="Authorize Gmail read-only installed-app OAuth")
-    p.add_argument("--auth", action="store_true")
-    p.add_argument("--config")
-    a = p.parse_args(argv)
-    registry.select("gmail")
-    try:
-        cfg = Config(a.config or default_config("gmail"))
-        report = authorize(cfg.gm_client_file, cfg.gm_token_file)
-        print(publicout.render_json(report).decode("ascii"))
-        return 0
-    except FetchError as e:
-        print(publicout.render_json({"status": e.category}).decode("ascii"))
-        return 2
-    except Exception:
-        print(publicout.render_json({"status": "error"}).decode("ascii"))
-        return 2
+    from appkit.archive import main as archive_main
+    target = sys.stdout
+
+    class PublicStream:
+        # appkit.archive owns the CLI semantics. Validate its aggregate JSON at
+        # this app boundary, without changing Discord/Notion's output.
+        def __init__(self):
+            self.buffer, self.rejected = "", False
+
+        def write(self, value):
+            self.buffer += value
+            while "\n" in self.buffer:
+                line, self.buffer = self.buffer.split("\n", 1)
+                if line.startswith("{"):
+                    try:
+                        obj = json.loads(line)
+                        line = publicout.render_json(obj, indent=None).decode("ascii")
+                    except (ValueError, TypeError):
+                        self.rejected = True
+                        line = '{"app": "gmail", "status": "error"}'
+                target.write(line + "\n")
+            return len(value)
+
+        def flush(self):
+            target.flush()
+
+    output = PublicStream()
+    auth = ("--auth", "one-time read-only OAuth consent (the consent URL goes to stderr)",
+            lambda cfg: authorize(cfg.gm_client_file, cfg.gm_token_file))
+    with contextlib.redirect_stdout(output):
+        rc = archive_main("gmail", sync_config, list(sys.argv[1:] if argv is None else argv), extra=auth)
+    return rc or int(output.rejected)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 import zlib
-from tools.archiveio import FetchError, atomic, load, locked, now
+from appkit.archive import FetchError, atomic, load, locked, now
 from .fetch import CHANNEL_TYPES, _heads, dce_message
 from .keys import snowflake_ms
 from .readers.archive import msg_native

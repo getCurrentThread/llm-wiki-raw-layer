@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from claudecode import fetch as cc
-from tools.archiveio import FetchError
+from appkit.archive import FetchError
 
 
 class FetchTests(unittest.TestCase):
@@ -306,10 +306,10 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(self.manifest()["containers"], {})
 
     def test_archive_exceptions_are_categories_only(self):
-        with patch.object(cc.archiveio, "load", side_effect=OSError("synthetic private path")):
+        with patch.object(cc.archive, "load", side_effect=OSError("synthetic private path")):
             with self.assertRaisesRegex(FetchError, "^archive_error$"):
                 self.sync()
-        with patch.object(cc.archiveio, "load", side_effect=FetchError("bad_archive")):
+        with patch.object(cc.archive, "load", side_effect=FetchError("bad_archive")):
             with self.assertRaisesRegex(FetchError, "^bad_archive$"):
                 self.sync()
 

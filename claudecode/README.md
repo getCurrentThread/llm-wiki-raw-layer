@@ -114,16 +114,16 @@ deletion. Nothing in the archive is ever deleted or rewritten except `manifest.j
 
 ## Fetch interface
 
-`claudecode/fetch.py` follows `discord/desktop.py` and `tools/archiveio.py`:
+`claudecode/fetch.py` follows `discord/desktop.py` and `appkit/archive.py`:
 
-- `sync(root, claude_dir, max_items=0, full=False, clock=None) -> stats`: under `archiveio.locked(root)`;
-  partitions with `archiveio.atomic(..., immutable=True)`; manifest last. `max_items` bounds the number of
+- `sync(root, claude_dir, max_items=0, full=False, clock=None) -> stats`: under `archive.locked(root)`;
+  partitions with `archive.atomic(..., immutable=True)`; manifest last. `max_items` bounds the number of
   changed source files processed (then `limited: true`). `clock` (epoch ms) is for tests (the 24-hour rule).
 - `sync_config(cfg, auth_only=False, full=False, max_items=0)`: refuses with `FetchError("source_missing")`
   unless `cfg.cc_claude_dir` is an absolute existing folder; `auth_only` returns
   `{"status": "local_ready", "authentication_required": False}`; else `sync(cfg.sources["cc_archive"],
   cfg.cc_claude_dir, max_items, full)`.
-- `if __name__ == "__main__": raise SystemExit(archiveio.main("claudecode", sync_config))`.
+- `if __name__ == "__main__": raise SystemExit(archive.main("claudecode", sync_config))`.
 - stats: `status` (`ok`), `files_seen`, `files_changed`, `files_gone`, `rows_written`, `partitions_written`,
   `lines_bad`, `errors`, `limited`. A source file that cannot be read counts in `errors` (its previous archive
   stays), and any error makes live capture stop with `collection_incomplete`. Normal conditions are therefore not

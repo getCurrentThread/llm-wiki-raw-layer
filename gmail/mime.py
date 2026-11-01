@@ -6,7 +6,7 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, urlunsplit
-from tools.archiveio import FetchError
+from appkit.archive import FetchError
 from .keys import gm_id, MAX_MS
 
 

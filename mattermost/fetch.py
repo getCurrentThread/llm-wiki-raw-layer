@@ -26,7 +26,6 @@ import getpass
 import hashlib
 import http.client
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -34,7 +33,7 @@ import sys
 import time
 from urllib import error, parse, request
 
-from tools.archiveio import FetchError, atomic, bind, credential_path, inside, load, locked
+from appkit.archive import FetchError, atomic, bind, credential_path, inside, load, locked, read_token
 
 PER_PAGE = 200
 FILE_FLUSH = 100            # files.json is rewritten every 100 kept files, so an interrupted run loses little
@@ -79,15 +78,7 @@ def _int(value):
 
 def token(configured=""):
     """A session token or personal access token: MM_TOKEN, else the private token file."""
-    value = os.environ.get("MM_TOKEN")
-    if not value and configured:
-        try:
-            value = credential_path(configured).read_text(encoding="utf-8").strip()
-        except OSError:
-            raise FetchError("auth_required") from None
-    if not value or any(c.isspace() or c == "\x00" for c in value):
-        raise FetchError("auth_required")
-    return value
+    return read_token(("MM_TOKEN",), configured, r"[\s\x00]")
 
 
 def base_url(value):
@@ -697,31 +688,10 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if "--login" not in argv:
-        from tools.archiveio import main as archive_main
-        if "--help" in argv or "-h" in argv:
-            print("One-time sign-in: python -s -B -m mattermost.fetch --login [--config CONFIG]")
-        return archive_main("mattermost", sync_config, argv)
-    import argparse
-    from rawlayer import registry
-    from rawlayer.capture.config import Config
-    from rawlayer.management.base import default_config
-    p = argparse.ArgumentParser(description="Sign in to Mattermost once and keep only the session token")
-    p.add_argument("--login", action="store_true")
-    p.add_argument("--config")
-    a = p.parse_args(argv)
-    registry.select("mattermost")
-    try:
-        cfg = Config(a.config or default_config("mattermost"))
-        report = login(cfg.mm_url, cfg.mm_token_file)
-        print(json.dumps({"app": "mattermost", **report}))
-        return 0
-    except FetchError as e:
-        print(json.dumps({"app": "mattermost", "status": e.category, "http_status": e.status}))
-        return 2
-    except Exception as e:
-        print(json.dumps({"app": "mattermost", "status": "error", "error_type": type(e).__name__}))
-        return 2
+    from appkit.archive import main as archive_main
+    return archive_main("mattermost", sync_config, argv, extra=(
+        "--login", "one-time sign-in: asks for the login id, password and MFA code, keeps only the session token",
+        lambda cfg: login(cfg.mm_url, cfg.mm_token_file)))
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
 from rawlayer.registry import AppConfig, Option
-from tools.appsetup import defaults
-from tools.archiveio import boolean, text, identifiers, nonnegative
+from appkit.setup import defaults
+from appkit.archive import boolean, text, identifiers, nonnegative
 
 EXCLUDED = ["SPAM", "TRASH", "DRAFT", "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES"]
 
 
 def body_bytes(value):
-    # archiveio.nonnegative caps integers at 100000; the body default is 128 KiB.
+    # archive.nonnegative caps integers at 100000; the body default is 128 KiB.
     if type(value) is not int or not 0 <= value <= 16 * 1024 * 1024:
         raise ValueError("body byte limit")
     return value

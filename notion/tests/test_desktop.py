@@ -2,7 +2,7 @@ import json
 import sqlite3
 import unittest
 from notion.desktop import sync, rich_text
-from tools.archiveio import load
+from appkit.archive import load
 from .fixtures import Fixture, PID, BID, UID, OTHER, COMMENT
 from tests.core import appfix as h
 

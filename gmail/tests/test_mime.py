@@ -4,7 +4,7 @@ from email.message import EmailMessage
 import hashlib
 import unittest
 from gmail.mime import extract, clean_text
-from tools.archiveio import FetchError
+from appkit.archive import FetchError
 from .fixtures import raw_message
 
 

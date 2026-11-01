@@ -1,7 +1,7 @@
 """DCE JSON partitions, observed in manifest order within one stable pass."""
-import json
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+from appkit.archive import strict_json
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Obs
 from rawlayer.capture.multiver import OriginRead
@@ -10,14 +10,6 @@ from ..keys import dc_id, snowflake_ms
 
 CH_FIELDS = ("id", "type", "guild_id", "parent_id", "category_id", "category", "name", "topic")
 MSG_FIELDS = ("id", "type", "timestamp", "timestampEdited", "isPinned", "content", "_removedAt")
-
-
-def _reject_constant(value):
-    raise ValueError("nonfinite JSON")
-
-
-def _load(data):
-    return json.loads(data, parse_constant=_reject_constant)
 
 
 def _text_projection(value, field=""):
@@ -68,7 +60,7 @@ def read_once(root, patterns, denylist, origin):
     root = Path(root)
     manifest = root / "manifest.json"
     before = fsio.read_shared(manifest)
-    man = _load(before)
+    man = strict_json(before)
     if not isinstance(man, dict) or man.get("version") != 1 or not isinstance(man.get("channels"), dict) \
             or not isinstance(man.get("guilds"), dict):
         raise ValueError("manifest")
@@ -118,7 +110,7 @@ def read_once(root, patterns, denylist, origin):
                     path = root / rel
                     if not _inside(root / "exports", path):
                         raise ValueError("path")
-                    obj = _load(fsio.read_shared(path))
+                    obj = strict_json(fsio.read_shared(path))
                     messages = obj.get("messages")
                     if not isinstance(messages, list) or len(messages) > 10000 or not all(isinstance(m, dict) for m in messages):
                         raise ValueError("messages")
@@ -179,7 +171,7 @@ def read_once(root, patterns, denylist, origin):
     sid = canon.source_id("users.json")
     try:
         path = root / "users.json"
-        users = _load(fsio.read_shared(path))
+        users = strict_json(fsio.read_shared(path))
         if not isinstance(users, dict):
             raise ValueError("users")
         container("users.json", path=path)

@@ -1,14 +1,10 @@
 """One lazy, atomically replaced snapshot per container; tombstones retain all keys."""
-import json
 from pathlib import Path
+from appkit.archive import strict_json
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Container, ContainerError, Obs
 from ..keys import nt_id, iso_ms
 from .project import project
-
-
-def _reject_constant(value):
-    raise ValueError("nonfinite JSON")
 
 
 def _objects(value):
@@ -71,7 +67,7 @@ def containers(root, origin="nt_archive"):
             try:
                 if not path.resolve().is_relative_to(root.resolve()):
                     raise ValueError("path")
-                obj = json.loads(fsio.read_shared(path), parse_constant=_reject_constant)
+                obj = strict_json(fsio.read_shared(path))
                 c.asof_s = fsio.mtime_s(path)
                 if rel.startswith("pages/"):
                     ident = nt_id(path.stem)

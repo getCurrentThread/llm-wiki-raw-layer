@@ -5,7 +5,7 @@ from rawlayer.capture import fsio, publicout
 from gmail.fetch import sync, main
 from gmail.readers.archive import containers, safe_rel
 from gmail.keys import gm_id
-from tools.archiveio import load
+from appkit.archive import load
 from .fixtures import Fixture, Transport, MID
 from tests.core import appfix as h
 
@@ -124,7 +124,7 @@ class HardeningTests(unittest.TestCase):
     def test_fetch_cli_aggregate_exit_codes_and_source_key(self):
         import contextlib
         import io
-        from tools.archiveio import FetchError
+        from appkit.archive import FetchError
         for result, expected in (({"status": "ok", "errors": 0}, 0), ({"status": "ok", "errors": 1}, 75),
                                  (FetchError("auth_required"), 2), (FetchError("account_changed"), 2)):
             out = io.StringIO()

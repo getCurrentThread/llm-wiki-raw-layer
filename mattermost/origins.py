@@ -2,7 +2,7 @@
 """The Mattermost origin: the mattertok-format archive, read in one stable pass and diffed as a whole (multi-version).
 With mm_sync, a live read runs the app's fetch step first."""
 
-from tools.archiveio import ArchiveOrigin
+from appkit.archive import ArchiveOrigin
 from rawlayer.capture.origins import MultiVersionMixin
 
 from .readers import archive

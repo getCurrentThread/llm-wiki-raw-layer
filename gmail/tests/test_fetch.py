@@ -1,10 +1,13 @@
+import contextlib
 import copy
+import io
 import json
 import unittest
 from unittest.mock import patch
+from gmail import fetch
 from gmail.fetch import sync
 from gmail.api import GmailClient, Bucket, pages
-from tools.archiveio import FetchError, load, locked
+from appkit.archive import FetchError, load, locked
 from .fixtures import Fixture, Transport, Response, http_error, raw_message, MID, OTHER
 from tests.core import appfix as h
 
@@ -25,6 +28,16 @@ class FetchTests(unittest.TestCase):
 
     def events(self, **fields):
         self.http.history = [{"historyId": "12", "history": [{"id": "11", **fields}]}]
+
+    def test_auth_flag_runs_the_consent_step_alone(self):
+        argv, out = ["--auth", "--config", str(self.fx.config_path)], io.StringIO()
+        with patch.object(fetch, "authorize", side_effect=[{"status": "auth_ready"}, FetchError("auth_failed")]),                 contextlib.redirect_stdout(out):
+            self.assertEqual((fetch.main(argv), fetch.main(argv)), (0, 2))
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                fetch.main([*argv, "--full"])
+        self.assertEqual([json.loads(line) for line in out.getvalue().splitlines()],
+                         [{"app": "gmail", "status": "auth_ready"},
+                          {"app": "gmail", "status": "auth_failed", "http_status": None}])
 
     def test_genesis_profile_before_listing_and_cursor(self):
         self.assertEqual(self.sync()["errors"], 0)

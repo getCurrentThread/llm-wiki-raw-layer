@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.origins import Unstable
-from tools.archiveio import FetchError
+from appkit.archive import FetchError
 from claudecode.origins import CcArchive
 from claudecode.readers.archive import read_once
 from .fixtures import Fixture, CID, MID, row

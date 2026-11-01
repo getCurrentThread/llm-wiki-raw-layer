@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import uuid
@@ -29,6 +30,13 @@ def load(path, default=None):
     def reject(value):
         raise FetchError("bad_archive")
     return json.loads(path.read_text(encoding="utf-8"), parse_constant=reject)
+
+
+def strict_json(data):
+    """json.loads that refuses NaN and Infinity (ValueError): how the readers parse every archive file."""
+    def reject(value):
+        raise ValueError("nonfinite JSON")
+    return json.loads(data, parse_constant=reject)
 
 
 def inside(root, path):
@@ -75,6 +83,21 @@ def credential_path(value):
         raise FetchError("unsafe_token_path")
     precheck.check(path.parent)
     return path
+
+
+def read_token(env, configured, bad):
+    """A credential: the first of the environment variables `env` that is set, else the token file `configured`
+    (credential_path, stripped). FetchError("auth_required") when there is none, the file cannot be read, or the
+    value has a character the regular expression `bad` matches."""
+    value = next(filter(None, map(os.environ.get, env)), None)
+    if not value and configured:
+        try:
+            value = credential_path(configured).read_text(encoding="utf-8").strip()
+        except OSError:
+            raise FetchError("auth_required") from None
+    if not value or re.search(bad, value):
+        raise FetchError("auth_required")
+    return value
 
 
 def fetch_first(ctx, enabled, archive, app):
@@ -167,7 +190,9 @@ def choice(*values):
     return check
 
 
-def main(app, sync_config, argv=None):
+def main(app, sync_config, argv=None, extra=None):
+    """The fetch step's command line. `extra` = (flag, help, action): `flag` (with --config only) runs action(cfg) ->
+    report instead of a fetch -- a one-time sign-in; exit 0, or 2 for every failure."""
     import argparse
     from rawlayer import registry
     from rawlayer.capture.config import Config
@@ -179,12 +204,20 @@ def main(app, sync_config, argv=None):
     p.add_argument("--full", action="store_true")
     p.add_argument("--max-items", type=int, default=0, help="bound this run; 0 means unlimited")
     p.add_argument("--capture", action="store_true", help="run ledger capture/index after successful collection")
+    if extra:
+        p.add_argument(extra[0], dest="extra", action="store_true", help=extra[1])
     a = p.parse_args(argv)
     if a.max_items < 0:
         p.error("--max-items must be nonnegative")
+    once = bool(extra and a.extra)
+    if once and (a.auth_check or a.full or a.max_items or a.capture):
+        p.error(f"{extra[0]} takes only --config")
     try:
         registry.select(app)
         cfg = Config(a.config or default_config(app))
+        if once:
+            print(json.dumps({"app": app, **extra[2](cfg)}, sort_keys=True))
+            return 0
         precheck.check(cfg.data_root)
         precheck.check(cfg.sources[registry.get().apps[0].source_keys[0]])
         report = sync_config(cfg, auth_only=a.auth_check, full=a.full, max_items=a.max_items)
@@ -199,7 +232,7 @@ def main(app, sync_config, argv=None):
         return 0 if report.get("errors", 0) == 0 else 75
     except FetchError as e:
         print(json.dumps({"app": app, "status": e.category, "http_status": e.status}))
-        return 2 if e.category in ("auth_required", "auth_failed", "account_changed") else 75
+        return 2 if once or e.category in ("auth_required", "auth_failed", "account_changed") else 75
     except Exception as e:
         print(json.dumps({"app": app, "status": "error", "error_type": type(e).__name__}))
-        return 1
+        return 2 if once else 1

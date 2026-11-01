@@ -62,7 +62,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(len(list(payloads(b'not compressed'))),1)
 
     def test_later_guild_classification_preserves_partition_order(self):
-        from tools.archiveio import load
+        from appkit.archive import load
         from discord.readers.archive import read_once
         self.obj.pop('guild_id')
         self.save(self.obj)

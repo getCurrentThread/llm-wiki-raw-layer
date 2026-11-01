@@ -5,7 +5,7 @@ import json
 import re
 import time
 from urllib import error, parse, request
-from tools.archiveio import FetchError
+from appkit.archive import FetchError
 
 
 class Bucket:

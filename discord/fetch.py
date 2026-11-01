@@ -8,7 +8,7 @@ import re
 import time
 from urllib import error, parse, request
 import uuid
-from tools.archiveio import FetchError, atomic, bind, credential_path, inside, load, locked, now
+from appkit.archive import FetchError, atomic, bind, inside, load, locked, now, read_token
 from .keys import snowflake_ms
 from .readers.archive import _safe_rel, msg_native
 
@@ -49,16 +49,7 @@ def machine_token_vars():
 
 
 def token(configured=""):
-    value = os.environ.get("DISCORD_BOT_TOKEN") or os.environ.get("DISCORD_TOKEN")
-    if not value and configured:
-        path = credential_path(configured)
-        try:
-            value = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            raise FetchError("auth_required") from None
-    if not value or any(x in value for x in ("\n", "\r", "\x00")):
-        raise FetchError("auth_required")
-    return value
+    return read_token(TOKEN_VARS, configured, r"[\r\n\x00]")
 
 
 class DiscordClient:
@@ -386,5 +377,5 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
 
 
 if __name__ == "__main__":
-    from tools.archiveio import main
+    from appkit.archive import main
     raise SystemExit(main("discord", sync_config))

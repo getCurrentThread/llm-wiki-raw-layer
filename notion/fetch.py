@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from tools.archiveio import FetchError, atomic, bind, inside, load, locked, now
+from appkit.archive import FetchError, atomic, bind, inside, load, locked, now
 from .keys import nt_id, iso_ms
 from .readers.project import project
 from .search import page_title
@@ -323,5 +323,5 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
 
 
 if __name__ == "__main__":
-    from tools.archiveio import main
+    from appkit.archive import main
     raise SystemExit(main("notion", sync_config))

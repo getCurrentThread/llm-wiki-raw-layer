@@ -1,6 +1,6 @@
 from rawlayer.registry import AppConfig, Option
-from tools.appsetup import defaults, existing_path
-from tools.archiveio import boolean, text
+from appkit.setup import defaults, existing_path
+from appkit.archive import boolean, text
 
 
 class ClaudeCodeConfig(AppConfig):

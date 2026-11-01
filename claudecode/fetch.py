@@ -5,8 +5,8 @@ from pathlib import Path
 import uuid
 
 from rawlayer.capture.canon import pk_text
-from tools import archiveio
-from tools.archiveio import FetchError
+from appkit import archive
+from appkit.archive import FetchError
 from .keys import iso_ms
 
 
@@ -95,8 +95,8 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
     stats = {"status": "ok", "files_seen": 0, "files_changed": 0, "files_gone": 0,
              "rows_written": 0, "partitions_written": 0, "errors": 0, "lines_bad": 0, "limited": False}
     current = dt.datetime.now(dt.timezone.utc).timestamp() * 1000 if clock is None else clock
-    with archiveio.locked(root):
-        man = archiveio.load(root / "manifest.json", {"version": 1, "files": {}, "containers": {}})
+    with archive.locked(root):
+        man = archive.load(root / "manifest.json", {"version": 1, "files": {}, "containers": {}})
         sources = list(_sources(source))
         seen = {p.relative_to(source).as_posix() for p, *_ in sources}
         stats["files_seen"] = len(sources)
@@ -130,7 +130,7 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
             meta = {}
             if agent:
                 try:
-                    meta = archiveio.load(path.with_suffix(".meta.json"), {})
+                    meta = archive.load(path.with_suffix(".meta.json"), {})
                 except (OSError, ValueError, RecursionError):
                     pass
                 if not isinstance(meta, dict):
@@ -139,7 +139,7 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
             known = set()
             for partition in old["files"]:
                 try:
-                    stored = archiveio.load(archiveio.inside(root, root / partition))
+                    stored = archive.load(archive.inside(root, root / partition))
                     known.update(row["uuid"] for row in stored["rows"])
                 except (OSError, ValueError, TypeError, KeyError, RecursionError):
                     raise FetchError("bad_archive") from None
@@ -174,16 +174,16 @@ def _sync(root, claude_dir, max_items=0, full=False, clock=None):
                     last = dt.datetime.strptime(Path(container["files"][-1]).stem, "%Y%m%dT%H%M%S%fZ").replace(tzinfo=dt.timezone.utc)
                     stamp = max(stamp, last + dt.timedelta(microseconds=1))
                 partition = f"exports/{cid}/{stamp.strftime('%Y%m%dT%H%M%S%fZ')}.json"
-                archiveio.atomic(root, root / partition,
-                                 {"container": cid, "exportedAt": archiveio.now(), "rows": chunk,
-                                  "rowCount": len(chunk)}, immutable=True)
+                archive.atomic(root, root / partition,
+                               {"container": cid, "exportedAt": archive.now(), "rows": chunk,
+                                "rowCount": len(chunk)}, immutable=True)
                 container["files"].append(partition)
                 stats["partitions_written"] += 1
             stats["rows_written"] += len(rows)
             man["containers"][cid] = container
             man["files"][rel] = fingerprint
         man["generation"] = uuid.uuid4().hex
-        archiveio.atomic(root, root / "manifest.json", man)
+        archive.atomic(root, root / "manifest.json", man)
     return stats
 
 
@@ -211,4 +211,4 @@ def sync_config(cfg, auth_only=False, full=False, max_items=0):
 
 
 if __name__ == "__main__":
-    raise SystemExit(archiveio.main("claudecode", sync_config))
+    raise SystemExit(archive.main("claudecode", sync_config))

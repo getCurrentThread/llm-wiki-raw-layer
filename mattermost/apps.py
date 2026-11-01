@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from rawlayer.registry import AppConfig, Option
-from tools.appsetup import defaults
-from tools.archiveio import boolean, identifiers, nonnegative, text
+from appkit.setup import defaults
+from appkit.archive import boolean, identifiers, nonnegative, text
 
 
 def _url(v):

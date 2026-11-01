@@ -1,4 +1,4 @@
-from tools.archiveio import ArchiveOrigin
+from appkit.archive import ArchiveOrigin
 from rawlayer.capture.origins import MultiVersionMixin
 from .readers import archive
 

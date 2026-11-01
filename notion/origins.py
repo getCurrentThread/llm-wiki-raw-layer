@@ -1,4 +1,4 @@
-from tools.archiveio import ArchiveOrigin
+from appkit.archive import ArchiveOrigin
 from .readers import archive
 
 

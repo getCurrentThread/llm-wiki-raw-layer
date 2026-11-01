@@ -35,7 +35,8 @@ python -s -B manage.py schedule install gmail --config <CFG>
 `https://www.googleapis.com/auth/gmail.readonly`. The one-time installed-app flow uses an OS-assigned
 `127.0.0.1` loopback port, random checked state and PKCE S256; it times out after five minutes. Code exchange
 uses Google's fixed token endpoint. Only the refresh token is atomically persisted; access tokens are
-refreshed on every run and remain in memory. See [installed-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app).
+refreshed on every run and remain in memory; `--auth` itself prints one JSON line (`app`, `status`, and `http_status`
+on a failure) and exits 0, or 2 for every failure. See [installed-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app).
 `--auth-check` refreshes and reads the profile; it does not publish message content. The fetch step otherwise
 prints only vocabulary-validated aggregate counts/categories, never message text, addresses, IDs or credentials.
 

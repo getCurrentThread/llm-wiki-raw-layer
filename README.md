@@ -64,9 +64,9 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
     search.py                  app index and search interface
     tests/                     app tests with synthetic inputs
     config.example.json        machine config shape
-  tools/archiveio.py           the fetch steps' shared file, lock and exit-code helpers, and `ArchiveOrigin`
+  appkit/archive.py            the apps' shared library: the fetch steps' file, lock, token and exit-code helpers and
+                               `ArchiveOrigin`; appkit/setup.py: the shared setup defaults (AppConfig.setup_defaults)
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
-  tools/appsetup.py            the apps' shared setup defaults (AppConfig.setup_defaults)
   tools/agentkit.py            the agent integration (bootstrap.py agents): global install, sync-repo
   tools/agent_templates/       the one source of the skills, the subagent and the global CLAUDE.md block
   tests/tools/                 tests of tools/ (run with the core suite)

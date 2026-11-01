@@ -13,7 +13,7 @@ from unittest import mock
 
 if os.name == "nt":
     from kakaotalk import admin
-    from tools.archiveio import FetchError
+    from appkit.archive import FetchError
 
 VT = 0x2000000
 TPL = {"msgId": 0x1000, "roomVtable": VT, "sender_id": 7, "template_hex": "00" * 0x1D0, "texthdr_hex": "00" * 32}

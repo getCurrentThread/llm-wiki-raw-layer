@@ -10,7 +10,7 @@ from gmail.fetch import sync, main
 from gmail.mime import extract
 from gmail.search import SPEC
 from rawlayer.search import common
-from tools.archiveio import load
+from appkit.archive import load
 from .fixtures import Fixture, Transport, MID, OTHER, raw_message
 from tests.core import appfix as h
 

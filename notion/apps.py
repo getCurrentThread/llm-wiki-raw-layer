@@ -1,6 +1,6 @@
 from rawlayer.registry import AppConfig, Option
-from tools.appsetup import defaults, existing_path
-from tools.archiveio import boolean, choice, text, identifiers, nonnegative
+from appkit.setup import defaults, existing_path
+from appkit.archive import boolean, choice, text, identifiers, nonnegative
 
 
 class NotionConfig(AppConfig):

@@ -1,19 +1,11 @@
 """Immutable Claude Code partitions, read in manifest order in one stable pass."""
-import json
 from pathlib import Path
+from appkit.archive import strict_json
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Obs
 from rawlayer.capture.multiver import OriginRead
 from rawlayer.capture.origins import Unstable
 from ..keys import cc_id, iso_ms
-
-
-def _reject_constant(value):
-    raise ValueError("nonfinite JSON")
-
-
-def _load(data):
-    return json.loads(data, parse_constant=_reject_constant)
 
 
 def _safe_rel(rel, cid):
@@ -26,7 +18,7 @@ def read_once(root, denylist, origin):
     root = Path(root)
     manifest = root / "manifest.json"
     before = fsio.read_shared(manifest)
-    man = _load(before)
+    man = strict_json(before)
     if not isinstance(man, dict) or type(man.get("version")) is not int or man["version"] != 1 \
             or not isinstance(man.get("containers"), dict):
         raise ValueError("manifest")
@@ -61,7 +53,7 @@ def read_once(root, denylist, origin):
                     if not path.resolve().is_relative_to((root / "exports" / cid).resolve()) \
                             or not path.resolve().is_relative_to(root.resolve()):
                         raise ValueError("path")
-                    obj = _load(fsio.read_shared(path))
+                    obj = strict_json(fsio.read_shared(path))
                     rows = obj.get("rows")
                     if not isinstance(rows, list) or len(rows) > 10000 or not all(isinstance(r, dict) for r in rows):
                         raise ValueError("rows")

@@ -1,7 +1,7 @@
 """Lazy bounded partitions and nonshrinking state shards; no reader exclusions."""
-import json
 from pathlib import Path
 import re
+from appkit.archive import strict_json
 from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Container, ContainerError, Obs
 from ..keys import gm_id, MAX_MS
@@ -14,16 +14,10 @@ def safe_rel(rel, folder):
     return isinstance(rel, str) and re.fullmatch(pattern, rel) is not None
 
 
-def _json(data):
-    def reject(value):
-        raise ValueError("nonfinite")
-    return json.loads(data, parse_constant=reject)
-
-
 def partition(data):
     if len(data) > MAX_BYTES:
         raise ValueError("partition cap")
-    obj = _json(data)
+    obj = strict_json(data)
     if not isinstance(obj, dict) or obj.get("version") != 1 or not isinstance(obj.get("messages"), list) \
             or len(obj["messages"]) > 100000 or not all(isinstance(v, dict) for v in obj["messages"]):
         raise ValueError("partition")
@@ -53,7 +47,7 @@ def containers(root, origin="gm_archive"):
     if not manifest.resolve().is_relative_to(root.resolve()):
         raise ValueError("path")
     before = fsio.read_shared(manifest)
-    man = _json(before)
+    man = strict_json(before)
     if not isinstance(man, dict) or man.get("version") != 1:
         raise ValueError("manifest")
     out, paths, seen_messages = [], [], set()
@@ -97,7 +91,7 @@ def containers(root, origin="gm_archive"):
                     if len(set(ids)) != len(ids) or seen_messages.intersection(ids):
                         raise ValueError("duplicate content")
                 else:
-                    values = _json(data)
+                    values = strict_json(data)
                     if not isinstance(values, dict):
                         raise ValueError("objects")
                     for ident, value in sorted(values.items()):

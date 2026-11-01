@@ -45,7 +45,7 @@ import subprocess
 import sys
 import time
 
-from tools.archiveio import FetchError, atomic, load, now
+from appkit.archive import FetchError, atomic, load, now
 
 VERSION = "26.9.1.5339"
 BUILDER = 0x017F9FF0                    # TalkChatRoom WRITE packet builder (thiscall: room, msgOuter, 0)

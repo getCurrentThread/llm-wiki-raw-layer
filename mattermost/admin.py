@@ -32,7 +32,7 @@ import sys
 from urllib import error, request
 
 from mattermost.fetch import TRANSPORT, MattermostClient, _id, base_url, credential_path, token
-from tools.archiveio import FetchError, atomic, load, now
+from appkit.archive import FetchError, atomic, load, now
 
 PER_PAGE = 200
 RECENT = 60                 # posts read to find an identical message (at-most-once) or the post to pin

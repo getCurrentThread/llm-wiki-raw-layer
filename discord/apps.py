@@ -1,6 +1,6 @@
 from rawlayer.registry import AppConfig, Option
-from tools.appsetup import defaults, existing_path
-from tools.archiveio import boolean, choice, text, nonnegative, identifiers
+from appkit.setup import defaults, existing_path
+from appkit.archive import boolean, choice, text, nonnegative, identifiers
 
 
 class DiscordConfig(AppConfig):
@@ -34,7 +34,7 @@ class DiscordConfig(AppConfig):
         if cfg.dc_source == "desktop":
             return existing_path(cfg, "dc_sync", "dc_desktop_path", "folder", "%APPDATA%")
         from rawlayer.capture.config import ConfigError
-        from tools.archiveio import FetchError, credential_path
+        from appkit.archive import FetchError, credential_path
         from .fetch import machine_token_vars
         try:
             p = credential_path(cfg.dc_token_file)

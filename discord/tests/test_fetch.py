@@ -1,11 +1,13 @@
 import copy
 import io
 import json
+import os
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
-from discord.fetch import DiscordClient, dce_message, sync
+from discord.fetch import DiscordClient, dce_message, sync, token
 from discord.readers.archive import read_once
-from tools.archiveio import FetchError, load, locked
+from appkit.archive import FetchError, load, locked
 from .fixtures import Fixture, CID, MID, UID
 from tests.core import appfix as h
 
@@ -147,6 +149,15 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(client.authenticate()['id'],UID)
         self.assertEqual(calls,['Bot synthetic-token','Bot synthetic-token','synthetic-token'])
         self.assertFalse(client.is_bot)
+
+    def test_token_comes_from_the_first_set_variable_and_refuses_line_breaks(self):
+        none = {"DISCORD_BOT_TOKEN": "", "DISCORD_TOKEN": ""}
+        for env, want in (({"DISCORD_TOKEN": "second"}, "second"), ({"DISCORD_BOT_TOKEN": "a b", "DISCORD_TOKEN": "second"}, "a b")):
+            with patch.dict(os.environ, {**none, **env}):
+                self.assertEqual(token(), want)
+        for env in ({}, {"DISCORD_TOKEN": "a\nb"}, {"DISCORD_TOKEN": "a\rb"}):
+            with patch.dict(os.environ, {**none, **env}), self.assertRaisesRegex(FetchError, "auth_required"):
+                token()
 
     def test_client_auth_redaction(self):
         def opener(*args,**kwargs):
