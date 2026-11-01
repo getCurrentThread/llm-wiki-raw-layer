@@ -393,6 +393,6 @@ python -s -B manage.py test
 ```
 
 App tests synthesize inputs in code under temporary directories. Search tests capture made-up inputs through
-`kakaotalk/tests/ledgerfix.py` and compare incremental indexing with rebuilds, including resets, mid-commit,
-defects, crashes, version checks, locks, search modes and filters. Core tests use toy apps without
+`kakaotalk/tests/ledgerfix.py` and compare incremental indexing with rebuilds over the search modes and
+filters. Resets, mid-commit, crashes, version checks and locks are core tests, which use toy apps without
 importing the real apps. See the root README for the full command table and core maintenance.

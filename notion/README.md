@@ -77,7 +77,7 @@ at least floor-minute(previous fetched_at), or its trash state or block set chan
 need overlap. Retain authored properties, excluding computed formula/rollup payloads. Project media URL query
 signatures and expiry_time out before hashing (image/file/pdf/video/audio, icon/cover and files properties).
 Ordinary document hyperlinks retain their queries. Executable signature vectors are in
-`tests/test_capture.py::test_url_rotation_no_rev` and `test_projection_vector`.
+`tests/test_capture.py::test_url_rotation_no_rev`.
 
 Keys: `nt:page:<pid>`, `nt:block:<pid>:<bid>`, `nt:comment:<pid>:<cid>`, `nt:ds:<id>`, `nt:user:<id>`.
 Including the page in block/comment keys preserves moves and duplicate synced blocks across pages. Block
