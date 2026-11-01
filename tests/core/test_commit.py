@@ -4,7 +4,9 @@ in-process and as a real process kill; narrow recovery (only what inflight.json 
 backfill, recovery that is itself killed; ledger defects that stop every command (a seq gap, a flipped segment byte,
 a manifest that parses but lost a field, a record SQLite cannot store); the run lock; a damaged state.sqlite set aside
 and rebuilt; the environment of a SYSTEM run; srcmap.json."""
+import contextlib
 import gzip
+import io
 import json
 import os
 import stat
@@ -13,7 +15,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from rawlayer.capture import canon, run
+from rawlayer.capture import canon, cli, run
 from rawlayer.capture.ledger import LedgerCorrupt
 from tests.core import toyfix as T
 from tests.core.toyfix import (capture, cli_main, crash_at, export, invariants, item, ledger, log_runs, manifests,
@@ -298,6 +300,24 @@ class TestLedgerDefects(T.ToyCase):
                     first = lg.manifests()[0][2]
                     rewrite(first, json.dumps(json.loads(first.read_bytes()), indent=4).encode("ascii"))
                 self.assertEqual(cli_main(self.fx, "replay", "--check"), 1)
+
+    def test_a_malformed_last_manifest_is_reported_corrupt(self):
+        """No later manifest links to the last one, so seal passes it by and the fold reports it: ledger corrupt, not
+        a crash in seal."""
+        self.assertEqual(capture(self.fx), 0)
+        more(self.fx)
+        self.assertEqual(capture(self.fx), 0)
+        last = ledger(self.fx).manifests()[-1][2]
+        m = json.loads(last.read_bytes())
+        m["segments"][0]["pbth"] = m["segments"][0].pop("path")
+        last.chmod(0o600)
+        last.write_bytes(json.dumps(m).encode("ascii"))
+        out = io.StringIO()
+        with T.preserved_env(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            rc = cli.main(["replay", "--check", "--config", str(self.fx.config_path)])
+        self.assertEqual(rc, 1)
+        self.assertIn("corrupt", out.getvalue())
+        self.assertNotIn("KeyError", out.getvalue())
 
     def test_manifest_that_parses_but_lost_a_field(self):
         """Valid JSON with a renamed key, a wrong type or a status outside the vocabulary is an unreadable manifest:

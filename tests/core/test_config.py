@@ -317,7 +317,7 @@ class TestGitUnderSystem(unittest.TestCase):
         """In a project of several apps another app's change is not this ledger's code (run.code_paths); with no
         app selected (the toy apps of these tests) the whole project counts."""
         proj = self.repo / "proj"
-        for d in ("one", "two", "config", "rawlayer"):
+        for d in ("one", "two", "config", "rawlayer", "tools"):
             (proj / d).mkdir(parents=True)
         if _git("-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q",
                 "--allow-empty", "-m", "x").returncode != 0:
@@ -335,7 +335,7 @@ class TestGitUnderSystem(unittest.TestCase):
             put("two/x.py")
             put("notes.md")
             self.assertEqual(run.repo_info(), (head, False))
-            for rel in ("one/y.py", "config/settings.py", "rawlayer/z.py", "manage.py"):
+            for rel in ("one/y.py", "config/settings.py", "rawlayer/z.py", "manage.py", "tools/archiveio.py"):
                 with self.subTest(changed=rel):
                     p = put(rel)
                     self.assertEqual(run.repo_info(), (head, True))

@@ -167,7 +167,7 @@ ROWS = [  # key, room, ts, message
 ]
 
 
-def build_index(root, rows=ROWS, head=1):
+def build_index(root, rows=ROWS, head=1, built_at="2026-01-01T00:00:00Z"):
     path = common.index_path(root, SPEC)
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path)) as con:
@@ -179,7 +179,7 @@ def build_index(root, rows=ROWS, head=1):
         common.create_triggers(con, "rows", "rows_fts")
         con.executemany("INSERT INTO rows(key, room, ts, seq, message, ng) VALUES(?,?,?,1,?,?)",
                         [(k, r, ts, m, ti.ng_text(m)) for k, r, ts, m in rows])
-        common._set_meta(con, **SPEC.stamp(), head_seq=head)
+        common._set_meta(con, **SPEC.stamp(), head_seq=head, built_at=built_at)
         con.commit()
 
 
@@ -407,6 +407,28 @@ class HybridEndToEnd(unittest.TestCase):
             con.execute("UPDATE meta SET v='{}' WHERE k='src_stamp'")         # an index of another version
             con.commit()
         self.assertTrue(self.search("회의 일정", "--hybrid")[0]["hybrid"]["stale"])
+
+    def test_a_rebuilt_index_is_embedded_from_scratch(self):
+        common.index_path(self.root, SPEC).unlink()
+        build_index(self.root, head=9)
+        self.assertEqual(self.embed()["src_seq"], 9)
+        common.index_path(self.root, SPEC).unlink()                    # a re-created ledger: seq starts over
+        build_index(self.root, [("c1", "C", T0, "새 원장의 첫 메시지"), ("c2", "C", T0 + 60, "두 번째 메시지")],
+                    head=2, built_at="2026-02-01T00:00:00Z")
+        self.assertTrue(self.search("메시지", "--hybrid")[0]["hybrid"]["stale"])
+        rep = self.embed()
+        self.assertEqual((rep["containers"], rep["embedded"], rep["removed"], rep["src_seq"]), (1, 1, 3, 2))
+        self.assertEqual(self.side("SELECT DISTINCT container FROM chunks"), [("C",)])
+        self.assertEqual(self.side("SELECT count(*) FROM vec_chunks"), [(1,)])
+        self.assertFalse(self.search("메시지", "--hybrid")[0]["hybrid"]["stale"])
+
+    def test_a_full_rechunk_drops_vanished_containers(self):
+        self.embed()
+        change(self.root, "DELETE FROM rows WHERE room='B'", (), 1)    # gone without a later seq
+        with mock.patch.object(dense, "CHUNKER", "pack-test"):
+            rep = self.embed()
+        self.assertEqual((rep["containers"], rep["embedded"], rep["removed"]), (1, 0, 1))
+        self.assertEqual(self.side("SELECT DISTINCT container FROM chunks"), [("A",)])
 
     def test_a_keyword_hit_in_an_overlap_stays_a_hit(self):
         fill = "".join(chr(0xAC00 + (i * 37) % 9000) for i in range(846))      # unrelated bigrams

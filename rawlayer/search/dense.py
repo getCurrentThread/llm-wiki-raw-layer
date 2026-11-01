@@ -6,8 +6,9 @@ THE SIDECAR
 covers -- never their text. The main index stays a pure function of the ledger; the sidecar is derived from the main
 index, has its own writer lock (<app>.vec.lock) and may be deleted at any time (--hybrid then falls back to keyword
 hits and says why). Its meta stamps the model, dims, query prefix and sqlite-vec version: embed refuses a different
-one without --rebuild, search treats a mismatch as unavailable. It also stamps the chunker: another one (new code)
-makes embed re-chunk every container, keeping the vectors of the chunks that come out the same, and search reports
+one without --rebuild, search treats a mismatch as unavailable. It also stamps the chunker and the main index's
+built_at: another chunker (new code) or a rebuilt index makes embed re-chunk every container (and drop the chunks of
+containers no longer in the index), keeping the vectors of the chunks that come out the same, and search reports
 the sidecar as stale until then.
 
 CHUNKS
@@ -354,17 +355,19 @@ def embed(data_root, drv, a, clock=time.time, progress=None):
             con, mmeta, _fresh = common.open_search(data_root, drv.spec)
             try:
                 stamp = json.dumps(drv.spec.stamp(), sort_keys=True)
-                # another chunker re-chunks every container; the chunks it still makes keep their vectors
-                since = int(old.get("src_seq") or 0) \
-                    if old.get("src_stamp") == stamp and old.get("chunker") == chunker_id(drv) else 0
+                # another chunker, index version or rebuilt index (its seqs may start over) re-chunks every
+                # container; the chunks it still makes keep their vectors
+                since = int(old.get("src_seq") or 0) if old.get("src_stamp") == stamp and old.get("chunker") == \
+                    chunker_id(drv) and old.get("src_built_at") == str(mmeta.get("built_at")) else 0
                 head = int(mmeta.get("head_seq") or 0)
                 want, containers = plan(con, drv, since)
             finally:
                 con.close()
             have = {}
-            for part in _parts(containers):
-                if side is not None and old:
-                    have.update(side.execute(f"SELECT sha, id FROM chunks WHERE container IN ({_in(len(part))})", part))
+            if side is not None and old and not since:      # all chunks: those of vanished containers go too
+                have.update(side.execute("SELECT sha, id FROM chunks"))
+            for part in _parts(containers) if side is not None and old and since else ():
+                have.update(side.execute(f"SELECT sha, id FROM chunks WHERE container IN ({_in(len(part))})", part))
             stale = [i for sha, i in have.items() if sha not in want]
             pending = sorted((s for s in want if s not in have), key=lambda s: -want[s][3])
             todo = pending[:a.limit] if a.limit else pending
@@ -503,8 +506,10 @@ def hybrid(drv, con, a, query, q, exact, flt, tz, data_root, fresh, relaxed=Fals
                                   f"embed {drv.name} --rebuild")
             dims = int(meta["dims"])
             info.update(model=meta["model"], dims=dims, vec_seq=int(meta.get("src_seq") or 0))
+            built = con.execute("SELECT v FROM meta WHERE k='built_at'").fetchone()
             current = meta.get("chunker") == chunker_id(drv) and \
-                meta.get("src_stamp") == json.dumps(drv.spec.stamp(), sort_keys=True)
+                meta.get("src_stamp") == json.dumps(drv.spec.stamp(), sort_keys=True) and \
+                meta.get("src_built_at") == str(built[0] if built else None)
             vec = Embedder(meta["url"], meta["model"], dims, QUERY_TIMEOUT)([meta.get("prefix", "") + _query_text(query)])[0]
             chunks_of = {}
             for part in _parts(set(kw_keys)):

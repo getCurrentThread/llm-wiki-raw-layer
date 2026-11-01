@@ -74,11 +74,16 @@ class Ledger:
         prev = None
         for _seq, _run, path in self.manifests():
             data = Path(path).read_bytes()
-            m = json.loads(data)
-            if m.get("prev_sha256") != (hashlib.sha256(prev).hexdigest() if prev is not None else None):
+            try:
+                m = json.loads(data)
+                linked = m.get("prev_sha256")
+                segs = [(self.raw.joinpath(*s["path"].split("/")), s) for s in m.get("segments", [])]
+            except (ValueError, TypeError, KeyError, AttributeError):
+                prev = data             # a malformed manifest is the fold's to report (ledger corrupt)
+                continue
+            if linked != (hashlib.sha256(prev).hexdigest() if prev is not None else None):
                 bad["prev_chain"] = bad.get("prev_chain", 0) + 1
-            for s in m.get("segments", []):
-                p = self.raw.joinpath(*s["path"].split("/"))
+            for p, s in segs:
                 if not p.is_file():
                     bad["segment_missing"] = bad.get("segment_missing", 0) + 1
                 elif p.stat().st_size != s.get("bytes") or fsio.sha256_file(p) != s.get("sha256"):

@@ -31,7 +31,12 @@ class OriginRun:
         self.vanished = 0
         self.guard_prev = 0
         self.guard_obs = 0
-        self.recorded = set()       # keys a settled container of this run recorded: one record per key per run
+        # keys a settled container of this run recorded: one record per key per run.
+        # shortcut: a key read under two containers at once, with different values, still gets one rev per run
+        # (the containers take turns), and a key that moves unchanged is first marked absent, then put again; no
+        # app's reader yields either today (keys embed their container, or the collector refuses a duplicate id).
+        # Track every observed key per run if a source ever can.
+        self.recorded = set()
         # At genesis no key can sit under another container, so skip the per-key fallback lookup.
         self.origin_has_heads = ctx.state.execute(
             "SELECT 1 FROM heads WHERE origin=? LIMIT 1", (origin,)).fetchone() is not None

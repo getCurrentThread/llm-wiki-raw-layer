@@ -131,9 +131,9 @@ repeating them.
   - `replay check=yes differing_rows=N head_seq=N`
   - `check: ok errors=0 refused=0`
 
-  While a capture runs (often the scheduled task), the replay line is replaced by
-  `note: ledger busy ...; the folded state was not verified` with exit 0. That is not a pass: check again after
-  the run.
+  While a capture runs (often the scheduled task), the seal and replay lines are missing: a `busy` line and
+  `note: ledger busy ...; the folded state was not verified` print instead, with exit 0. That is not a pass: check
+  again after the run.
 - **Collector output:** one JSON line with sorted keys, e.g.
   `{"app": "gmail", "errors": 0, "limited": false, "messages_written": 200, ...}`. Gates quote its fields in that
   form. A failure line carries the category in `status` (e.g. `"status": "auth_required"`) and has no `errors`.
@@ -1084,7 +1084,7 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | `search` exit 2, `give a query or ...` | aggregate modes still need a selector | add `--since 1970-01-01` or an app selector |
 | `search` exit 2, no index yet | never collected | run the collector (5.5) or `collect` |
 | `search` exit 2, index damaged or another version | outdated or broken index | `collect <app> --config <CFG> --rebuild-index` |
-| `check` exit 1, `differing_rows>0` | folded state disagrees with the ledger | report it. With the owner's approval (it rebuilds the folded state from the ledger and changes neither the ledger nor the index), run `check <app> --config <CFG> --rebuild-state`. It prints `replay check=no differing_rows=N head_seq=N`, where N is what it found before rebuilding, and exits 0. `ledger busy` instead means nothing was rebuilt: retry after the run. Then `check` again: `differing_rows=0`, `head_seq` unchanged. If it still differs, stop and report |
+| `check` exit 1, `differing_rows>0` | folded state disagrees with the ledger | report it. With the owner's approval (it rebuilds the folded state from the ledger and changes neither the ledger nor the index), run `check <app> --config <CFG> --rebuild-state`. It prints `replay check=no differing_rows=N head_seq=N`, where N is what it found before rebuilding, and exits 0. `ledger busy` instead means nothing was rebuilt: retry after the run. A `seal` line with a count above 0 also blocks it (exit 1, nothing rebuilt): stop and report. Then `check` again: `differing_rows=0`, `head_seq` unchanged. If it still differs, stop and report |
 | capture 75 on a first run | empty archive (no manifest yet) | run the collector before `collect` |
 | capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.9 step 5), check both numbers again |
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`collect`, a collector's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
@@ -1194,9 +1194,9 @@ to `seq`. An interrupted run, or one that exits 75, resumes where it stopped: ru
 
 **12.6 Keeping it current.** No scheduled task runs `embed`: run it after collects, when the owner decides. It
 re-chunks only the containers that changed since its last complete run. `hybrid.stale: true` in a search result
-(also a `# note:` line) means that the index holds rows changed since the embeddings were made, or that a code
-update changed the chunker: a plain `embed <app>` then re-chunks every container and embeds only the chunks that
-came out different (a Gmail run that changed only labels sets it too; the embed then embeds nothing). To change the
+(also a `# note:` line) means that the index holds rows changed since the embeddings were made, that the index
+was rebuilt since, or that a code update changed the chunker: a plain `embed <app>` then re-chunks every container
+and embeds only the chunks that came out different (a Gmail run that changed only labels sets it too; the embed then embeds nothing). To change the
 model or the dims, run `embed <app> --model <model> --rebuild`. A sidecar that
 another sqlite-vec version made is refused at search time with that reason. A batch the server fails is retried
 twice (after 2 and 10 seconds) before the run exits 75.

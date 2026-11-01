@@ -235,6 +235,20 @@ class TestPendingAbsent(Case):
         self.assertEqual(capture(self.fx), 0)                       # absent stays absent: nothing new
         self.assertEqual(manifests(self.fx)[-1]["segments"], [])
 
+    def test_a_pending_key_put_under_another_container_is_not_also_absent(self):
+        """A pending key that turns up changed under another container gets its put, not also an absent at the same
+        rev: two records at one rev would wedge every later run."""
+        self.assertEqual(capture(self.fx), 0)
+        k5 = key("toy_b", 5)
+        self.fx.b_put("r1", [item(i, f"b{i}") for i in range(1, 21) if i != 5])
+        self.assertEqual(capture(self.fx), 0)
+        self.assertEqual(self.b_doc()["pending"], {"add": [k5], "drop": []})
+        self.fx.b_put("r3", [item(5, "moved")])
+        self.assertEqual(capture(self.fx), 0)
+        self.assertEqual(self.ops(k5), [(1, "put"), (2, "put")])
+        self.assertEqual((self.b_doc()["pending"], self.b_doc()["counts"]["absent"]), ({"add": [], "drop": [k5]}, 0))
+        self.sound()
+
     def test_seen_again_drops_the_pending_key(self):
         self.assertEqual(capture(self.fx), 0)
         self.fx.b_put("r1", [item(i, f"b{i}") for i in range(1, 21) if i != 5])

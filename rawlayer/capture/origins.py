@@ -138,6 +138,10 @@ class PendingAbsentMixin:
 
     def finish(self, orun):
         g = self.guard
+        # a key another container recorded this run moved there: it is neither pending nor absent here (an absent
+        # at the put's rev would wedge the ledger)
+        orun.absent_cands = [c for c in orun.absent_cands if c[0] not in orun.recorded]
+        orun.pending_cands = [k for k in orun.pending_cands if k not in orun.recorded]
         n_new = len(orun.pending_cands) + len(orun.absent_cands)
         prev = orun.guard_prev
         # N_obs == 0 (no container read completely) trips even when N_prev == 0 - containers that never read
