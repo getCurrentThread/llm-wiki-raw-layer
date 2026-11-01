@@ -14,7 +14,7 @@ from kakaotalk.readers import edb as src_kakao_edb
 from rawlayer.capture import canon, run
 from kakaotalk.tests.fixtures import Fixture
 from kakaotalk.tests.helpers import KAKAO, _force, capture, invariants, manifests, records
-from kakaotalk.tests.test_m4 import EDB, EdbBase, rows
+from kakaotalk.tests.test_edb import EDB, EdbBase, rows
 
 
 class Base(unittest.TestCase):

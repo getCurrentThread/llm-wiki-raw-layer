@@ -10,7 +10,7 @@ from rawlayer.capture import canon
 from kakaotalk.tests import edbfix as E
 from kakaotalk.tests.test_hardening import Base
 from kakaotalk.tests.helpers import capture, manifests, records
-from kakaotalk.tests.test_m4 import EDB, EdbBase, rows
+from kakaotalk.tests.test_edb import EDB, EdbBase, rows
 
 
 class TestDefectiveInputs(Base):

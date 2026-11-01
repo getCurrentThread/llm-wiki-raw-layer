@@ -2,6 +2,7 @@ import base64
 from email import policy
 from email.message import EmailMessage
 import hashlib
+import json
 import unittest
 from gmail.mime import extract, clean_text
 from appkit.archive import FetchError
@@ -70,3 +71,53 @@ class MimeTests(unittest.TestCase):
             obj[field] = value
             with self.assertRaises(FetchError):
                 extract(obj)
+
+    def test_case_insensitive_urls_in_body_header_and_filename(self):
+        msg = EmailMessage()
+        msg["Subject"] = "HTTPS://example.org/reset?token=synthetic#frag"
+        msg.set_content("HTTPS://example.org/reset?token=synthetic#frag "
+                        "Http://example.net/path?q=synthetic#frag "
+                        "hTtPs://example.com/mixed?q=synthetic#frag "
+                        "https://example.org/lower?q=synthetic#frag")
+        msg.add_attachment(b"synthetic", maintype="application", subtype="octet-stream",
+                           filename="Http://example.net/file?q=synthetic#frag")
+        value = extract(self.wrap(msg.as_bytes()))
+        self.assertEqual(value["body_text"], "https://example.org/reset http://example.net/path "
+                         "https://example.com/mixed https://example.org/lower")
+        self.assertEqual(value["subject"], "https://example.org/reset")
+        self.assertEqual(value["attachments"][0]["filename"], "http://example.net/file")
+
+    def test_inline_related_image_without_filename_has_decoded_metadata(self):
+        payload = b"synthetic image bytes"
+        msg = EmailMessage()
+        msg.set_content("synthetic body")
+        msg.add_related(payload, maintype="image", subtype="png", cid="<synthetic@example.org>")
+        value = extract(self.wrap(msg.as_bytes()))
+        self.assertEqual(value["body_text"], "synthetic body")
+        self.assertEqual(value["attachments"], [{"part_path": "2", "filename": "", "mime_type": "image/png",
+                                                 "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}])
+
+    def test_binary_leaf_without_disposition_is_metadata_only(self):
+        payload = b"synthetic binary bytes"
+        msg = EmailMessage()
+        msg.set_content("synthetic body")
+        msg.make_mixed()
+        binary = EmailMessage()
+        binary.set_content(payload, maintype="application", subtype="octet-stream", cte="base64")
+        msg.attach(binary)
+        value = extract(self.wrap(msg.as_bytes()))
+        self.assertEqual(value["attachments"], [{"part_path": "2", "filename": "", "mime_type": "application/octet-stream",
+                                                 "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}])
+        self.assertNotIn("synthetic binary", json.dumps(value))
+
+    def test_alternative_text_parts_are_not_attachments(self):
+        msg = EmailMessage()
+        msg.set_content("synthetic plain")
+        msg.add_alternative("<p>synthetic html</p>", subtype="html")
+        msg.get_payload()[1].add_related(b"synthetic", maintype="image", subtype="png",
+                                        cid="<synthetic@example.org>")
+        value = extract(self.wrap(msg.as_bytes()))
+        self.assertEqual(value["body_text"], "synthetic plain")
+        self.assertEqual(len(value["attachments"]), 1)
+        self.assertEqual(value["attachments"][0]["part_path"], "2.2")
+        self.assertEqual(value["attachments"][0]["mime_type"], "image/png")

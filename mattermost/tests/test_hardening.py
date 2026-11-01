@@ -9,7 +9,7 @@ import unittest
 from rawlayer.capture.config import Config, ConfigError
 from mattermost.tests.fixtures import Fixture, post
 from tests.core.appfix import _force, capture, invariants, manifests, records
-from mattermost.tests.test_m2 import std_channels
+from mattermost.tests.test_capture import std_channels
 
 
 def set_cfg(fx, **kv):
