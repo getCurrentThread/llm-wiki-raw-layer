@@ -93,17 +93,17 @@ class TestSetupCommand(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 rc = Command("setup").run("kakaotalk", ["--from", str(base)])
         self.assertEqual(rc, 0)
-        cfg = json.loads((self.parent / "kakaotalk" / "config.json").read_text(encoding="utf-8"))
+        cfg = json.loads((self.parent / "raw" / "kakaotalk" / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["sources"]["kakao_user_dir"], str(self.fx.user_dir))
         self.assertEqual(cfg["sources"]["backup_decrypted"],
-                         str(self.parent / "kakaotalk" / "backup_decrypted"))
-        self.assertEqual(cfg["sources"]["keystore"], str(self.parent / "kakaotalk" / "keys" / "keystore.json"))
-        root = keychain.read_root_hex(str(self.parent / "kakaotalk" / "keys" / "root_v2.hex"))
+                         str(self.parent / "raw" / "kakaotalk" / "backup_decrypted"))
+        self.assertEqual(cfg["sources"]["keystore"], str(self.parent / "raw" / "kakaotalk" / "keys" / "keystore.json"))
+        root = keychain.read_root_hex(str(self.parent / "raw" / "kakaotalk" / "keys" / "root_v2.hex"))
         self.assertEqual(root, ROOT)
-        ks = json.loads((self.parent / "kakaotalk" / "keys" / "keystore.json").read_text(encoding="utf-8"))
+        ks = json.loads((self.parent / "raw" / "kakaotalk" / "keys" / "keystore.json").read_text(encoding="utf-8"))
         self.assertEqual(len(ks), 2)                                # the keystore shape capture loads
         # the keystore the setup wrote re-derives cleanly (the --provision rerun's core step)
-        cfgdict = json.loads((self.parent / "kakaotalk" / "config.json").read_text(encoding="utf-8"))
+        cfgdict = json.loads((self.parent / "raw" / "kakaotalk" / "config.json").read_text(encoding="utf-8"))
         with quiet():
             self.assertEqual(provision.write_keystore_for(
                 cfgdict, lambda m: None, ROOT,

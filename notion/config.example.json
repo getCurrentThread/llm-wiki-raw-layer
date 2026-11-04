@@ -1,7 +1,7 @@
 {
   "v": 1,
   "impl": "claude",
-  "data_root": "<DATA_PARENT>\\notion",
+  "data_root": "<DATA_PARENT>\\raw\\notion",
   "inputs_root": "<DATA_PARENT>\\inputs",
   "sources": {"nt_archive": "<abs dir>\\notiontok\\archive"},
   "nt_sync": false,

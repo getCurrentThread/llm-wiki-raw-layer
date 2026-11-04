@@ -6,7 +6,7 @@
      mode 0700); an existing one is only checked
   2. Windows Search: the data parent must be an excluded location while the indexer runs (checked, never changed:
      Indexing Options > Modify > untick it)
-  3. the app's data root, <DATA_PARENT>/<app> (inherits the parent's ACL)
+  3. the app's data root, <DATA_PARENT>/raw/<app> (inherits the parent's ACL)
   4. its config.json, unless one is there (--force replaces it): the app's config.example.json, or the config read
      from CFG (- reads it from stdin), with v, impl, data_root and inputs_root set for this machine; nothing of it
      is printed. The app's own defaults (AppConfig.setup_defaults) fill the placeholders it can resolve itself
@@ -105,7 +105,7 @@ def placeholders(value, key=""):
 def config_for(app, base, data_parent):
     cfg = dict(base)
     from ...capture import paths  # noqa: PLC0415
-    cfg.update(v=1, impl=paths.IMPL_NAME, data_root=str(data_parent / app), inputs_root=str(data_parent / "inputs"))
+    cfg.update(v=1, impl=paths.IMPL_NAME, data_root=str(paths.data_root(app)), inputs_root=str(data_parent / "inputs"))
     cfg.setdefault("sources", {})
     return cfg
 
@@ -133,7 +133,8 @@ class Command(BaseCommand):
         if not parent.is_absolute():
             print("setup: refused: settings.DATA_PARENT is not an absolute path", file=sys.stderr)
             return 2
-        root, cfg_path = parent / app, parent / app / "config.json"
+        root = paths.data_root(app)
+        cfg_path = root / "config.json"
         if a.provision:
             if not cfg_path.is_file():
                 print(f"setup: refused: no config.json to provision at {cfg_path} "
@@ -194,7 +195,7 @@ class Command(BaseCommand):
                 if problem:
                     attention += 1
                     _say(f"data parent: {problem}")
-            root.mkdir(exist_ok=True)
+            root.mkdir(parents=True, exist_ok=True)
             cfg = config_for(app, base, parent)
             registry.get().apps[0].setup_defaults(cfg, _say)
             tmp = cfg_path.with_name("config.json.part")

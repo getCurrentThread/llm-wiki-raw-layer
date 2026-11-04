@@ -148,7 +148,7 @@ month is over. Empty by default: nothing is exported.
 
 ## Privacy
 
-The archive, ledger and index live only under the protected `<DATA_PARENT>\claudecode`. Tool results are not
+The archive, ledger and index live only under the protected `<DATA_PARENT>\raw\claudecode`. Tool results are not
 kept, so file contents and other ledgers' search output are not copied; but a token typed into a prompt or a
 `Bash` command's first 200 characters is kept as typed. Answers built from this app follow AGENTS.md's masking
 rules.

@@ -118,7 +118,7 @@ class Check:
         from ...capture import ledger  # noqa: PLC0415
         from ...capture.config import Config, ConfigError  # noqa: PLC0415
         if not given and not Path(path).is_file():
-            print(f"config: none at <DATA_PARENT>\\{app}\\config.json (not checked)")
+            print(f"config: none at <DATA_PARENT>\\raw\\{app}\\config.json (not checked)")
             return
         try:
             registry.select(app)
@@ -176,7 +176,7 @@ class Command(BaseCommand):
     def run(self, app, argv):
         ap = argparse.ArgumentParser(prog="manage.py check")
         ap.add_argument("app", nargs="?")
-        ap.add_argument("--config", help="the app's config (default: <DATA_PARENT>\\<app>\\config.json, if any)")
+        ap.add_argument("--config", help="the app's config (default: <DATA_PARENT>\\raw\\<app>\\config.json, if any)")
         ap.add_argument("--export-state", default=None, metavar="PATH",
                         help="also write every record's (origin, key, rev, op, h) to this file")
         ap.add_argument("--rebuild-state", action="store_true",

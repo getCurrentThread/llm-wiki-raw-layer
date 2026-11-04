@@ -1,15 +1,15 @@
 {
   "v": 1,
   "impl": "claude",
-  "data_root": "<DATA_PARENT>\\mattermost",
+  "data_root": "<DATA_PARENT>\\raw\\mattermost",
   "inputs_root": "<DATA_PARENT>\\inputs",
   "sources": {
-    "mm_archive": "<DATA_PARENT>\\mattermost\\archive"
+    "mm_archive": "<DATA_PARENT>\\raw\\mattermost\\archive"
   },
   "mm_exclude_patterns": ["<pattern>"],
   "mm_sync": false,
   "mm_url": "https://<mattermost host>",
-  "mm_token_file": "<DATA_PARENT>\\mattermost\\token.txt",
+  "mm_token_file": "<DATA_PARENT>\\raw\\mattermost\\token.txt",
   "mm_files_max_mb": 0,
   "mm_wiki_project": "",
   "mm_wiki_include": [],

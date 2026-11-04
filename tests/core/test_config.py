@@ -97,6 +97,18 @@ class TestConfig(T.ToyCase):
         self.assertFalse(paths.inside(paths.DATA_PARENT, paths.DATA_PARENT))
         self.assertFalse(paths.inside(Path(f"{paths.DATA_PARENT}-x"), paths.DATA_PARENT))
 
+    def test_credential_path_in_the_data_roots_folder(self):
+        """A token in a data root under <DATA_PARENT>/raw is accepted; a data root's archive/ and raw/ are not."""
+        from appkit.archive import FetchError, credential_path
+        parent = self.fx.base / "parent"
+        with mock.patch.object(paths, "DATA_PARENT", parent), mock.patch.object(precheck, "check"):
+            self.assertEqual(paths.data_root("app"), parent / "raw" / "app")
+            for good in ("raw/app/token.txt", "app/token.txt"):
+                self.assertEqual(credential_path(str(parent / good)), parent / good)
+            for bad in ("raw/app/raw/token.txt", "raw/app/archive/token.txt", "app/raw/token.txt"):
+                with self.subTest(bad=bad), self.assertRaises(FetchError):
+                    credential_path(str(parent / bad))
+
     def test_frozen_set_without_inputs_root_is_refused_before_anything_is_written(self):
         """llm-wiki refused a missing inputs_root at Config load: no run lock, no state.sqlite, no raw/."""
         self.fx.set_cfg(inputs_root=self.fx.base / "no-such-folder")

@@ -18,9 +18,9 @@ app tests are at `<PROJECT>/mattermost/tests/`. The `/raw-search` skill is
 ## Config, origins and records
 
 `mattermost/config.example.json` shows the machine config shape. The default config is
-`<DATA_PARENT>/mattermost/config.json`. Common keys are `v` (1), `impl` (matching settings.IMPL_NAME), `data_root`,
+`<DATA_PARENT>/raw/mattermost/config.json`. Common keys are `v` (1), `impl` (matching settings.IMPL_NAME), `data_root`,
 `inputs_root`, and `sources`. Source paths must be absolute and exist; replace the example's placeholders with
-machine-specific paths. `<DATA_ROOT>` conventionally means `<DATA_PARENT>/mattermost`. It must be inside
+machine-specific paths. `<DATA_ROOT>` conventionally means `<DATA_PARENT>/raw/mattermost`. It must be inside
 `DATA_PARENT`, outside git work trees, with the parent's required ACL and Search exclusion. Frozen input sets
 need an existing `inputs_root`; live input resolution does not require it to exist.
 

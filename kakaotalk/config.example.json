@@ -1,7 +1,7 @@
 {
   "v": 1,
   "impl": "claude",
-  "data_root": "<DATA_PARENT>\\kakaotalk",
+  "data_root": "<DATA_PARENT>\\raw\\kakaotalk",
   "inputs_root": "<DATA_PARENT>\\inputs",
   "sources": {
     "backup_decrypted": "<abs dir>\\backup_decrypted",

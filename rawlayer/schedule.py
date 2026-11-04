@@ -7,7 +7,7 @@ library only.
           check the app's schedule, the config, the data root and the interpreter, then register the task (replacing
           one of the same name) and read it back; --run-now starts it once (the SYSTEM smoke run); --dry-run prints
           the definition and registers nothing. Without <app>: every app that has a schedule, one after the other,
-          each with its default config (<DATA_PARENT>\\<app>\\config.json)
+          each with its default config (<DATA_PARENT>\\raw\\<app>\\config.json)
   status  [<app>] [--config CFG] [--python EXE]
           registered?, the definition against the app's schedule (and against CFG / EXE when given), state, last run
           and result, and the step lines of the newest run that finished a step in <data_root>\\reports\\task.log.
@@ -729,7 +729,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="action", required=True)
     p = sub.add_parser("install", help="register (or replace) the app's task, or every app's; elevated")
     p.add_argument("app", nargs="?", help="the app (default: every app that has a schedule)")
-    p.add_argument("--config", help="the config.json capture runs with (default: <DATA_PARENT>\\<app>\\config.json)")
+    p.add_argument("--config", help="the config.json capture runs with (default: <DATA_PARENT>\\raw\\<app>\\config.json)")
     p.add_argument("--python", help="the interpreter the task starts (default: this one)")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--run-now", action="store_true", help="start the task once after registering it")

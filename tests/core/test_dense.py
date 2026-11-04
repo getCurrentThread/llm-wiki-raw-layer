@@ -247,6 +247,12 @@ class UrlAndClient(unittest.TestCase):
                 self.assertRaisesRegex(dense.Unavailable, "SHA-256"):
             dense.Vec0.load(con)
 
+    def test_vec0_dll_sits_outside_the_data_parent(self):
+        """settings.SQLITE_VEC_DIR, a fixed folder only an administrator can change (llm.md 12.2)."""
+        from rawlayer import conf
+        self.assertEqual(dense.vec_dll(), Path(conf.settings().SQLITE_VEC_DIR) / dense.VEC_VERSION / "vec0.dll")
+        self.assertFalse(dense.vec_dll().resolve().is_relative_to(Path(conf.settings().DATA_PARENT).resolve()))
+
 
 class Pack(unittest.TestCase):
 

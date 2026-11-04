@@ -1,7 +1,7 @@
 {
   "v": 1,
   "impl": "claude",
-  "data_root": "<DATA_PARENT>\\discord",
+  "data_root": "<DATA_PARENT>\\raw\\discord",
   "inputs_root": "<DATA_PARENT>\\inputs",
   "sources": {"dc_archive": "<abs dir>\\discordtok\\archive"},
   "dc_exclude_patterns": [],

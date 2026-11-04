@@ -10,7 +10,7 @@ class BaseCommand:
     app: None -- the command works on no app; "required" -- `manage.py <name> <app> ...` (the app may be left out
     in a project that has one); "optional" -- the command works on every app when <app> is left out.
 
-    config: True -- `--config` defaults to <DATA_PARENT>/<app>/config.json.
+    config: True -- `--config` defaults to <DATA_PARENT>/raw/<app>/config.json.
 
     run(app, argv) -> exit code. When `app` is given the dispatcher has selected it (rawlayer.registry.select)."""
     help = ""
@@ -26,10 +26,10 @@ class BaseCommand:
 
 
 def default_config(app):
-    """<DATA_PARENT>/<app>/config.json (a Path): where an app's machine config sits by convention (next to its
-    ledger)."""
+    """<DATA_PARENT>/raw/<app>/config.json (a Path): where an app's machine config sits by convention (next to its
+    ledger, in the data root paths.data_root names)."""
     from ..capture import paths  # noqa: PLC0415
-    return Path(paths.DATA_PARENT) / app / "config.json"
+    return paths.data_root(app) / "config.json"
 
 
 def has_option(argv, option):

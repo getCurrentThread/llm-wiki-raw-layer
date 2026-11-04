@@ -13,7 +13,7 @@ core stays as it is); standard library only; it runs from any folder.
   config get <app> [--json]
   config set <app> KEY VALUE [KEY VALUE ...] [--string] [--force]      config set <app> -   (a JSON object on stdin)
   config defaults <app>
-      Read or change <DATA_PARENT>\\<app>\\config.json with a JSON-safe edit (llm.md 5.3): KEY is sources.<key> or
+      Read or change <DATA_PARENT>\\raw\\<app>\\config.json with a JSON-safe edit (llm.md 5.3): KEY is sources.<key> or
       one of the app's options (v, impl, data_root and inputs_root need --force). A VALUE of true, false, null, a
       plain integer, or one starting with [ or { is JSON, anything else a string (--string: always a string). The
       file is rewritten as setup writes it, the one before kept as config.json.prev. `defaults` fills what the

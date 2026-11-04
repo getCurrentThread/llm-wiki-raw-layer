@@ -49,7 +49,7 @@ repeating them.
 | `<HOME>` | the profile folder the checkout sits in, e.g. `C:\Users\<user>` |
 | `<DATA_PARENT>` | `<HOME>\llm-wiki-data` (`config/settings.py`) |
 | `<app>` | `gmail`, `discord`, `notion`, `mattermost` or `claudecode` |
-| `<DATA_ROOT>` | `<DATA_PARENT>\<app>` |
+| `<DATA_ROOT>` | `<DATA_PARENT>\raw\<app>` |
 | `<CFG>` | `<DATA_ROOT>\config.json` |
 | `<PY>` | absolute path of the Python interpreter the scheduled task will start (0.2) |
 | `<source_key>` | the app's `sources` entry: `gm_archive`, `dc_archive`, `nt_archive` or `mm_archive` |
@@ -788,7 +788,7 @@ if (Test-Path -LiteralPath $out) {
   keeping only the subcommands the step names (e.g. only the `status` part for 5.10 or section 8).
 
   ```powershell
-  $cfgs = @{ gmail = '<DATA_PARENT>\gmail\config.json'; notion = '<DATA_PARENT>\notion\config.json' }; $apps = 'gmail', 'notion'
+  $cfgs = @{ gmail = '<DATA_PARENT>\raw\gmail\config.json'; notion = '<DATA_PARENT>\raw\notion\config.json' }; $apps = 'gmail', 'notion'
   $sched = @($apps | ForEach-Object { "install $_ --config $(& $q $cfgs[$_]) --python $(& $q $py)" }) + @($apps | ForEach-Object { "status $_ --config $(& $q $cfgs[$_])" }) + @($apps | ForEach-Object { "run $_" })
   ```
 
@@ -958,8 +958,16 @@ data only.
 **12.2 sqlite-vec.** From the asg017/sqlite-vec GitHub release v0.1.9, download
 `sqlite-vec-0.1.9-loadable-windows-x86_64.tar.gz` into a new, empty folder under `$env:TEMP`. Compare its
 `Get-FileHash` with the SHA-256 digest that the release page lists for that asset; stop if they differ. Extract
-`vec0.dll` into `<DATA_PARENT>\sqlite-vec\v0.1.9\`. Gate: `(Get-FileHash '<DATA_PARENT>\sqlite-vec\v0.1.9\vec0.dll').Hash`
-equals, ignoring case, what `python -s -B -c "from rawlayer.search import dense; print(dense.VEC_SHA256)"` prints.
+`vec0.dll` there, then, in an elevated shell, copy it into `C:\Program Files\sqlite-vec\v0.1.9\` (`SQLITE_VEC_DIR` in
+`config/settings.py`; under Program Files only an administrator can replace the DLL that search loads). Gates:
+- `(Get-FileHash 'C:\Program Files\sqlite-vec\v0.1.9\vec0.dll').Hash` equals, ignoring case, what
+  `python -s -B -c "from rawlayer.search import dense; print(dense.VEC_SHA256)"` prints.
+- `icacls 'C:\Program Files\sqlite-vec\v0.1.9\vec0.dll'` grants `BUILTIN\Users` only `(I)(RX)`: write, modify or
+  full control belong only to Administrators, SYSTEM and TrustedInstaller. A folder created from an elevated shell
+  can also grant its creator `(F)` (Program Files' CREATOR OWNER entry); then, elevated, with `$d` that folder:
+  `icacls $d /setowner '*S-1-5-32-544' /T`, `icacls $d /inheritance:d`, `icacls $d /remove:g "*<the creator's SID>"`
+  and `icacls "$d\*" /reset /T`, and check again.
+- `python -s -B -c "from rawlayer.search import dense; print(dense.vec_dll())"` prints that path.
 
 **12.3 Count.** `python -s -B manage.py embed <app> --dry-run --config <CFG>`. Gate: exit 0 and a line with
 `chunks=N pending=N`. Nothing is written.

@@ -79,7 +79,10 @@ def credential_path(value):
         raise FetchError("unsafe_token_path")
     # only the fetch step writes an archive and only capture writes a ledger (data root layout: archive/, raw/)
     # shortcut: the folders are matched by their conventional names, not read from a config; upgrade if they become configurable
-    if {"archive", "raw"} & {n.lower() for n in path.resolve().relative_to(Path(paths.DATA_PARENT).resolve()).parts}:
+    roots = paths.data_root("_").parent.resolve()       # <DATA_PARENT>/raw, the folder of the data roots: not a ledger
+    real = path.resolve()
+    if {"archive", "raw"} & {n.lower() for n in real.relative_to(
+            roots if real.is_relative_to(roots) else Path(paths.DATA_PARENT).resolve()).parts}:
         raise FetchError("unsafe_token_path")
     precheck.check(path.parent)
     return path

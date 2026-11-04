@@ -7,7 +7,7 @@ A command is a module rawlayer/management/commands/<name>.py defining `Command`
 
 A command that works on an app's data root takes the app right after its name (`manage.py capture <app> ...`); a
 project with a single app may leave it out. Such a command selects the app before it starts (one process, one app,
-one ledger: rawlayer/registry.py), and its --config defaults to <DATA_PARENT>/<app>/config.json.
+one ledger: rawlayer/registry.py), and its --config defaults to <DATA_PARENT>/raw/<app>/config.json.
 
 Exit codes: 0 ok | 3 suspect (capture), or needs attention (schedule, check) | 75 busy or skipped | 2 refused or
 usage | 1 error."""

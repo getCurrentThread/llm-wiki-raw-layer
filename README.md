@@ -97,12 +97,13 @@ be omitted when the project has only one app. Cross-app validation is done separ
 | `BASE_DIR` | `<PROJECT>`, the folder holding `manage.py` |
 | `HOME_DIR` | `<HOME>`, the owning user's profile home determined from the checkout, including when running as SYSTEM |
 | `IMPL_NAME` | implementation name recorded in manifests; the config's `impl` must match (currently `claude`) |
-| `DATA_PARENT` | `<HOME>/llm-wiki-data`, the protected, Search-excluded parent of every data root |
+| `DATA_PARENT` | `<HOME>/llm-wiki-data`, the protected, Search-excluded parent of every data root; the data roots sit in its `raw/` folder |
+| `SQLITE_VEC_DIR` | `C:\Program Files\sqlite-vec`, where `search --hybrid` loads sqlite-vec's `<version>\vec0.dll` (llm.md 12.2): outside the data parent, changeable only by an administrator |
 | `EXCLUDE_APPS` | app folders to leave out of discovery (currently empty); do not exclude an app while its scheduled task remains registered |
 
-Machine-specific values live in `<DATA_PARENT>/<app>/config.json`, never in versioned settings. The config has
+Machine-specific values live in `<DATA_PARENT>/raw/<app>/config.json`, never in versioned settings. The config has
 `v`, `impl`, `data_root`, `inputs_root`, `sources` and the app's options; see each `config.example.json` and app
-README. `<DATA_ROOT>` denotes the selected app's data root (by convention `<DATA_PARENT>/<app>`). It must sit
+README. `<DATA_ROOT>` denotes the selected app's data root (by convention `<DATA_PARENT>/raw/<app>`). It must sit
 inside `DATA_PARENT`, outside git work trees, with the required ACL and Windows Search exclusion. Frozen `T1`
 and `T2` inputs require `inputs_root`; live capture does not require it to exist.
 
@@ -110,7 +111,7 @@ and `T2` inputs require `inputs_root`; live capture does not require it to exist
 
 Run from `<PROJECT>`, always as `python -s -B manage.py <command> [<app>] ...`. `help` lists commands;
 `help <command>` gives a synopsis, and a command's `--help` gives its options. `--config` is optional at this
-entry point and defaults to `<DATA_PARENT>/<app>/config.json`. Eight commands are the whole surface: the steps
+entry point and defaults to `<DATA_PARENT>/raw/<app>/config.json`. Eight commands are the whole surface: the steps
 between them (capture, index, replay, export-state, the per-app input derivations) run inside `capture`, `check`
 and `setup`, not as commands of their own.
 

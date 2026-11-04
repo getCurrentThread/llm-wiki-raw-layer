@@ -30,8 +30,9 @@ zero. Errors never carry the texts, only the server's own message (Ollama's does
 a failed batch after each of RETRY_WAITS (transient failures are retried).
 
 VECTORS
-sqlite-vec's vec0 (VEC_VERSION; the windows-x86_64 build's DLL under <DATA_PARENT>/sqlite-vec/<version>/ must match
-VEC_SHA256), cosine distance, chunk time span as metadata so --since/--until filter inside the KNN.
+sqlite-vec's vec0 (VEC_VERSION; the windows-x86_64 build's DLL under settings.SQLITE_VEC_DIR/<version>/, a folder only
+an administrator can change, must match VEC_SHA256), cosine distance, chunk time span as metadata so --since/--until
+filter inside the KNN.
 
 HYBRID
 A convex combination of two lists, per chunk: CC_ALPHA times the semantic score plus the rest times the keyword
@@ -189,7 +190,7 @@ def query_prefix(model):
 
 def vec_dll():
     from ..capture import paths  # noqa: PLC0415
-    return Path(paths.DATA_PARENT) / "sqlite-vec" / VEC_VERSION / "vec0.dll"
+    return Path(paths.SQLITE_VEC_DIR) / VEC_VERSION / "vec0.dll"
 
 
 def _blob(vec):

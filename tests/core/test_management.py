@@ -158,7 +158,7 @@ class TestSetup(unittest.TestCase):
     """manage.py setup <app> on a throwaway data parent: the folders, the protected ACL, config.json from the
     example or from another config (stdin), and what is left to fill in."""
 
-    EXAMPLE = {"v": 1, "impl": "x", "data_root": "<DATA_PARENT>/toyish", "sources": {"toy_dir": "<abs dir>"},
+    EXAMPLE = {"v": 1, "impl": "x", "data_root": "<DATA_PARENT>/raw/toyish", "sources": {"toy_dir": "<abs dir>"},
                "toy_system": False}
 
     def setUp(self):
@@ -181,7 +181,7 @@ class TestSetup(unittest.TestCase):
             return run("setup", "toyish", *argv)
 
     def config(self):
-        with (self.parent / "toyish" / "config.json").open(encoding="utf-8") as fh:
+        with (self.parent / "raw" / "toyish" / "config.json").open(encoding="utf-8") as fh:
             return json.load(fh)
 
     def test_from_the_example_names_what_to_fill_in(self):
@@ -192,7 +192,7 @@ class TestSetup(unittest.TestCase):
             self.assertIn("fill in config.json: sources.toy_dir", out)
             cfg = self.config()
             self.assertEqual((cfg["v"], cfg["impl"], cfg["data_root"]),
-                             (1, paths.IMPL_NAME, str(self.parent / "toyish")))
+                             (1, paths.IMPL_NAME, str(self.parent / "raw" / "toyish")))
             self.assertEqual(cfg["inputs_root"], str(self.parent / "inputs"))
             if os.name == "nt":
                 from rawlayer.management.commands import setup  # noqa: PLC0415

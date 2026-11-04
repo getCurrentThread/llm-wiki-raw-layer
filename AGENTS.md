@@ -4,7 +4,7 @@ The raw layer of an LLM wiki built from private conversations and documents (`ka
 `discord`, `notion`, `gmail`, `claudecode`). Each app reads its sources read-only into its own crash-safe,
 append-only ledger chained by SHA-256 hashes, and an SQLite FTS5 index per app makes the committed ledger searchable: that search is
 the wiki's retrieval side. Message data, indexes, configs and tokens live outside this repository, under
-`<HOME>\llm-wiki-data` (`DATA_PARENT`), one data root per app.
+`<HOME>\llm-wiki-data` (`DATA_PARENT`), one data root per app in its `raw\` folder (`raw\<app>`).
 
 ## Commands
 
