@@ -55,7 +55,7 @@ CHAT = {
 
 
 class Project(unittest.TestCase):
-    """A throwaway LLM Wiki project (schema.md and wiki/) under the temp folder, which is the test data parent."""
+    """A throwaway wiki vault (schema.md and wiki/) under the temp folder, which is the test data parent."""
 
     def setUp(self):
         self.project = Path(tempfile.mkdtemp(prefix="collect-", dir=T.TEST_PARENT))

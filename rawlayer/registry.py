@@ -13,7 +13,7 @@ its index file, the <app> of every command). Each app has the same modules:
   vocab.py    optional: WORDS and PATTERNS, the strings the app's readers put in manifests and console lines (its
               origin names, kinds and statuses are registered from origins.py); without it, none
   search.py   optional: a rawlayer.search source module (SPEC, HELP, add_arguments, run)
-              (an app that sets AppConfig.wiki also declares its export to an LLM Wiki project: rawlayer/collect.py)
+              (an app that sets AppConfig.wiki also declares its export to the wiki vault: rawlayer/collect.py)
 
 One app owns one ledger, so a process works on ONE app: every command that opens a data root calls select(app)
 before anything reads the registry, and the registry then holds that app alone (its origin order is the app's
@@ -78,8 +78,8 @@ class AppConfig:
     # A prefix p: the app reads an archive folder that its own fetch step keeps. The registry adds the source key
     # `<p>_archive` to `source_keys` and, unless the app has an inputs.py, the input attribute of that name (`_Inputs`).
     archive = None
-    # (config key prefix or None, layout "chat" | "mail" | "page"): the app's index can be exported to an LLM Wiki
-    # project by `manage.py collect <app>`. A prefix adds the keys <prefix>_wiki_project / _include / _exclude /
+    # (config key prefix or None, layout "chat" | "mail" | "page"): the app's index can be exported to the wiki
+    # vault by `manage.py collect <app>`. A prefix adds the keys <prefix>_wiki_project / _include / _exclude /
     # _since to `options` (rawlayer/collect.py); None adds none (the settings come from the command line only).
     wiki = None
     schedule = None             # {"task", "start", "every_hours", "limit_hours", "description"} (rawlayer/schedule.py)

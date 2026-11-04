@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Feeds an app's raw ledger to an LLM Wiki project (nashsu/llm_wiki, llm.md 13): renders the app's search index as
-Markdown sources under <project>/raw/sources/<app>/, which the desktop app watches and ingests. Standard library
-only; the index is read as `search` reads it, through the driver's chunk hooks (SearchDriver.changed_containers and
-chunk_units: the units dense.py embeds, without deleted, system or empty rows).
+"""Feeds an app's raw ledger to the wiki vault (llm.md 13): renders the app's search index as Markdown sources under
+<project>/raw/sources/<app>/, which the vault's headless ingest (claude -p, outside this repository) turns into wiki
+pages. Standard library only; the index is read as `search` reads it, through the driver's chunk hooks
+(SearchDriver.changed_containers and chunk_units: the units dense.py embeds, without deleted, system or empty rows).
 
 An app opts in with AppConfig.wiki = (prefix, layout) in its apps.py; the layout says what the containers of its
 index are, and so what the files are:
@@ -23,13 +23,14 @@ before it, a page by its newest unit) narrow what is written; <p> is the prefix 
 --include, --exclude and --since replace them, and are the only way to give the settings of an app whose prefix is
 None.
 
-Every run renders everything and rewrites only the files whose bytes changed (tmp + replace), so the wiki's
-SHA-256 ingest cache stays valid. The command owns <project>/raw/sources/<app>/: a file there that the run did not
-produce (a renamed channel, a narrowed include, a purge) is counted as an orphan and kept, because deleting a source
-deletes its wiki pages; only --prune removes them, and it refuses (exit 2, nothing deleted) when the index is not at
-the ledger's head or produced no file. A month that shrinks (deleted messages) can move the start of every later file
-of its stream, so their names change: the old names become orphans and --prune deletes them while the renamed files
-are ingested again. Output is counts only, never a label, a path or a text.
+Every run renders everything and rewrites only the files whose bytes changed (tmp + replace), so the ingest's
+SHA-256 state stays valid. The command owns <project>/raw/sources/<app>/: a file there that the run did not
+produce (a renamed channel, a narrowed include, a purge) is counted as an orphan and kept; only --prune removes them,
+and it refuses (exit 2, nothing deleted) when the index is not at the ledger's head or produced no file. It deletes
+the files only: the wiki pages ingested from them stay, citing a missing source (nothing removes them yet). A month
+that shrinks (deleted messages) can move the start of every later file of its stream, so their names change: the
+old names become orphans while the renamed files are ingested again. Output is counts only, never a label, a path or
+a text.
 
 The command is `manage.py collect <app>` (rawlayer/management/commands/collect.py); this module is its logic.
 
@@ -49,8 +50,8 @@ from .search import index
 LAYOUTS = ("chat", "mail", "page")
 TZ = "+09:00"
 NAME_MAX = 80
-# characters of closed months per chat/mail file: LLM Wiki pays an analysis and a generation pass per file, and its
-# long-source analysis reads 12k-60k character chunks; most channel months alone are far smaller (median ~800)
+# characters of closed months per chat/mail file: ingest pays an analysis and a generation pass per file, and reads a
+# long source in 12k-60k character chunks; most channel months alone are far smaller (median ~800)
 PACK = 16000
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
@@ -109,14 +110,14 @@ def name(label, container):
 
 
 def target(project, data_parent, key="<p>_wiki_project"):
-    """The project root: set, under the protected data parent, and an LLM Wiki project (schema.md and wiki/)."""
+    """The vault root: set, under the protected data parent, and a wiki vault (schema.md and wiki/, llm.md 13.2)."""
     if not project:
         raise Refused(f"{key} is not set (llm.md 13)")
     p = Path(project)
     if not p.resolve().is_relative_to(Path(data_parent).resolve()):
         raise Refused("the wiki project is not under the data parent")
     if not ((p / "schema.md").is_file() and (p / "wiki").is_dir()):
-        raise Refused("the wiki project has no schema.md and wiki/: create it in LLM Wiki first")
+        raise Refused("the wiki vault has no schema.md and wiki/: set it up first (llm.md 13.2)")
     return p
 
 

@@ -13,7 +13,7 @@ The framework is these files:
 manage.py           the single entry point: setup | capture | collect | search | embed | check | test | schedule
 CORE.md             this file
 rawlayer/           the framework: capture pipeline (rawlayer/capture), search driver (rawlayer/search), registry,
-                    schedule (registers the task), collect (the index as LLM Wiki sources: rawlayer/collect.py),
+                    schedule (registers the task), collect (the index as wiki vault sources: rawlayer/collect.py),
                     management commands (capture is the scheduled task's body; collect is owner-only, never scheduled)
 tests/__init__.py
 tests/core/         the framework's tests, on a toy app (tests/core/toyapp, toyapp2); they import no real app

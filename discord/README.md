@@ -138,8 +138,8 @@ ascending snowflake order. Backward pagination covers bursts larger than 100 wit
 `after` ordering. It handles rate-limit headers/429 backoff and binds an API archive to the authenticated
 account digest. See [third-party references](../THIRD_PARTY.md) for the DCE mapping and cache-parser research.
 
-## LLM Wiki export
+## Wiki export
 
 `dc_wiki_project`, `dc_wiki_include`, `dc_wiki_exclude` and `dc_wiki_since` configure `manage.py collect discord` (llm.md 13), which
-writes each channel's closed months, packed into Markdown files of about 16,000 characters, into an LLM Wiki
-project's `raw/sources/discord/`. Empty by default: nothing is exported.
+writes each channel's closed months, packed into Markdown files of about 16,000 characters, into the wiki
+vault's `raw/sources/discord/`. Empty by default: nothing is exported.

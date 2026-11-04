@@ -2,12 +2,12 @@
 """python -s -B manage.py collect <app> [--config CFG] [--project DIR] [--include S ...] [--exclude S ...]
        [--since YYYY-MM] [--dry-run] [--prune]
 
-The third pipeline step, source --fetch--> archive --capture--> ledger + index --collect--> LLM Wiki sources: renders
-the app's index as Markdown sources of an LLM Wiki project (the layout and the settings are the app's AppConfig.wiki;
+The third pipeline step, source --fetch--> archive --capture--> ledger + index --collect--> wiki sources: renders
+the app's index as Markdown sources of the wiki vault (the layout and the settings are the app's AppConfig.wiki;
 rawlayer/collect.py holds the logic and the output spec, llm.md 13 the runbook). It is where private data leaves the
-raw layer (the wiki app may send sources to a cloud LLM): run it only when the owner asks, never from a scheduled
-task, and never as LocalSystem (refused, exit 2, nothing read or written). --prune deletes wiki pages: only on the
-owner's explicit yes.
+raw layer (the vault's headless ingest sends the sources to its LLM): run it only when the owner asks, never from a
+scheduled task, and never as LocalSystem (refused, exit 2, nothing read or written). --prune deletes orphaned source
+files, whose wiki pages then cite a missing source: only on the owner's explicit yes.
 
 Exit codes: 0 ok | 2 refused (config, project, app, index, LocalSystem) | 75 busy | 1 error."""
 import argparse
@@ -32,14 +32,15 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="manage.py collect", description=C.__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("app")
-    ap.add_argument("--config", help="the app's config (default <DATA_PARENT>/<app>/config.json)")
-    ap.add_argument("--project", help="the LLM Wiki project root, instead of the config's <p>_wiki_project")
+    ap.add_argument("--config", help="the app's config (default <DATA_PARENT>/raw/<app>/config.json)")
+    ap.add_argument("--project", help="the wiki vault root, instead of the config's <p>_wiki_project")
     ap.add_argument("--include", action="append", help="a label substring to keep (repeat), instead of <p>_wiki_include")
     ap.add_argument("--exclude", action="append",
                     help="a label substring to leave out (repeat), instead of <p>_wiki_exclude; it wins over --include")
     ap.add_argument("--since", help="the first month, YYYY-MM, instead of <p>_wiki_since")
     ap.add_argument("--dry-run", action="store_true", help="count what would be written, write nothing")
-    ap.add_argument("--prune", action="store_true", help="delete the orphans (LLM Wiki deletes their pages too)")
+    ap.add_argument("--prune", action="store_true",
+                    help="delete the orphaned source files (their wiki pages stay, citing a missing source)")
     a = ap.parse_args(argv)
     index.setup_stdio()
     try:
@@ -77,7 +78,7 @@ def main(argv=None):
 
 
 class Command(BaseCommand):
-    help = "export an app's index as Markdown sources of an LLM Wiki project (owner only; --prune deletes wiki pages)"
+    help = "export an app's index as Markdown sources of the wiki vault (owner only; --prune deletes source files)"
     args = "[--config CFG] [--project DIR] [--include S ...] [--exclude S ...] [--since YYYY-MM] [--dry-run] [--prune]"
     app = "required"
     config = True

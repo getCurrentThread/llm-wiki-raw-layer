@@ -18,9 +18,10 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
   modes, filters and query language; trust it over memory.
 - Do not run `capture` or rebuild an index unless the owner asks. The same holds for `embed` (llm.md 12), which
   builds the optional dense sidecar that `search --hybrid` reads.
-- `manage.py collect <app>` (llm.md 13) writes the LLM Wiki project's sources, where private data leaves the raw
-  layer: run it only when the owner asks, never as LocalSystem (it refuses) or from a scheduled task of the
-  project, and `--prune`, which makes LLM Wiki delete wiki pages, only on their explicit yes.
+- `manage.py collect <app>` (llm.md 13) writes the sources of the wiki vault (`<DATA_PARENT>\second-brain`), where
+  private data leaves the raw layer: its headless ingest (`claude -p`, outside this repository) sends them to the
+  LLM. Run it only when the owner asks, never as LocalSystem (it refuses) or from a scheduled task, and `--prune`
+  (which deletes orphaned source files while their wiki pages stay) only on their explicit yes.
 - `mattermost/admin.py` and `kakaotalk/admin.py` are the only tools that write outward: Mattermost channels,
   members, webhooks and posts, and messages sent through the owner's KakaoTalk client. Run one only when the
   owner asks for that write, after its read-only step (`plan`, `check`) or `--dry-run`.

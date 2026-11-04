@@ -993,39 +993,45 @@ twice (after 2 and 10 seconds) before the run exits 75.
 Hit@k, Recall@k and MRR by mode (`default`, `literal`, `hybrid`), printing aggregates only. Run it before and after
 a change to query normalization, ranking or the embedder, only when the owner asks; it writes under `<DATA_ROOT>\eval`.
 
-## 13. LLM Wiki (nashsu/llm_wiki)
+## 13. The wiki vault (headless ingest)
 
-The wiki layer on top of the ledgers is LLM Wiki, a desktop app (github.com/nashsu/llm_wiki) that watches its
-project's `raw\sources\` folder and ingests every new or changed file with the LLM the owner picks in it.
+The wiki layer on top of the ledgers is the wiki vault `<DATA_PARENT>\second-brain`, an Obsidian vault: Markdown
+pages under `wiki\`, built from the sources under `raw\sources\`. No app watches the folder. The owner's Claude Code
+skill `llm-wiki-ingest` (outside this repository, in `<HOME>\.claude\skills\`) ingests new or changed sources with
+headless `claude -p` calls, run by its `scripts\ingest_runner.py`.
 `python -s -B manage.py collect <app>` (the pipeline's third step: source, fetch, archive, capture, ledger and index,
-collect, the wiki's `raw\sources\`, ingest in the app, wiki pages) renders an app's index as Markdown sources under
-`<DATA_PARENT>\wiki\raw\sources\<app>\`. Discord, Mattermost, KakaoTalk and Claude Code get files per channel, room or
+collect, the vault's `raw\sources\`, headless ingest, wiki pages) renders an app's index as Markdown sources under
+`<DATA_PARENT>\second-brain\raw\sources\<app>\`. Discord, Mattermost, KakaoTalk and Claude Code get files per channel, room or
 session, and Gmail gets files of all its mail: closed months are packed into files of about 16,000 characters, each
 named after its first month. A month is written only once it is over. Notion gets one file per page. KakaoTalk only
 when the owner asks for it (AGENTS.md). The sources hold plaintext like the index, so the project stays
-under `<DATA_PARENT>`. Ingest sends the sources' text to the LLM configured in the app: with a cloud provider,
-private messages leave the machine. That choice is the owner's. The command prints counts only; run it only when the
+under `<DATA_PARENT>`. Ingest sends the sources' text to Claude, under the owner's Claude Code sign-in: private
+messages leave the machine. That choice is the owner's. The command prints counts only; run it only when the
 owner asks. It refuses to run as LocalSystem (exit 2, nothing read or written), so it can never be a SYSTEM task, and
 an app exports only when its `apps.py` declares `wiki` (CORE.md, "The app contract").
 
-**13.1 Install (owner).** From the release page, download `LLM.Wiki_<version>_x64_en-US.msi` into a new, empty
-folder under `$env:TEMP`. Compare its `Get-FileHash` with the SHA-256 digest the release page lists for that asset;
-stop if they differ. Then install it. Gate: the app starts.
+**13.1 Ingest tooling (owner).** Claude Code is installed and signed in under the owner's account, and the
+`llm-wiki-ingest` skill sits in `<HOME>\.claude\skills\` with its `scripts\ingest_runner.py` (its docstring and the
+skill's `SKILL.md` are the manual). Gate: `python -s -B '<HOME>\.claude\skills\llm-wiki-ingest\scripts\ingest_runner.py' --dry-run`
+exits 0. Look only at its counts (`pending_files`, `pending_by_app`, `batches`, `done`): the plan also lists source
+paths, which carry channel, room and session labels.
 
-**13.2 Project (owner).** In the app, Create project at `<DATA_PARENT>\wiki`. Edit its `purpose.md` (what the wiki
-is for, the output language, how people are to be named) and `schema.md` (page types; every page cites its
-`sources`; no long quotes). Gate: `Test-Path '<DATA_PARENT>\wiki\schema.md'` and `Test-Path '<DATA_PARENT>\wiki\wiki'`
-are both `True`.
+**13.2 Vault (owner).** The vault is `<DATA_PARENT>\second-brain`. Its `purpose.md` says what the wiki is for, the
+output language and how people are to be named; its `schema.md` holds the page types (every page cites its
+`sources`; no long quotes); `wiki\index.md` and `wiki\log.md` are the catalog and the log that ingest appends to.
+Open the folder as an Obsidian vault. Gate: `Test-Path '<DATA_PARENT>\second-brain\schema.md'` and
+`Test-Path '<DATA_PARENT>\second-brain\wiki'` are both `True`.
 
-**13.3 Settings (owner, in the app).**
-- LLM: the provider and model for ingest and for chat. The owner types the API key into the app's settings
-  themselves, never into chat or a file of this repository. The app keeps it in its own store under
-  `%APPDATA%\com.llmwiki.app`.
-- API + MCP: localhost only, with no token-less access and no LAN access.
-- Source Watch: auto-ingest on, with concurrency 1 (the defaults).
-- Optional: semantic search through the OpenAI-compatible endpoint `http://127.0.0.1:11434/v1` with `bge-m3` (12.1).
+**13.3 Ingest runs (owner).** Each run of the runner takes the sources that are new or changed since their last
+ingest, batches small files of one app into one call, and runs one `claude -p` call at a time in the vault: safe
+mode (no hooks, plugins, CLAUDE.md or other skills), file tools confined to the vault, writes only under `wiki\`, no
+Bash and no saved session (a saved transcript would come back as a claudecode source). It then places the new pages
+in hubs and lints the pages it touched. Its state (`state.json`, `run.log`, the lock) is in
+`<DATA_PARENT>\jobs\ingest`. The owner's hourly task `\llm-wiki\wiki-ingest` runs it with a small `--limit`, under
+the owner's account with limited rights, never as SYSTEM; it never runs `collect`. Gate: after a run,
+`state.json` marks the run's files `done`, and a page under `wiki\sources\` names each in its frontmatter `sources`.
 
-**13.4 Config.** Set `python -s -B tools/bootstrap.py config set <app> <p>_wiki_project '<DATA_PARENT>\wiki'`, where
+**13.4 Config.** Set `python -s -B tools/bootstrap.py config set <app> <p>_wiki_project '<DATA_PARENT>\second-brain'`, where
 `<p>` is `dc`, `gm`, `mm`, `nt` or `cc`, the prefix the app declares in `AppConfig.wiki`. A Claude Code session is one
 container, as a channel is, so claudecode exports like a chat app. Three optional keys narrow what is written:
 - `<p>_wiki_include`: substrings of the channel label (`team › channel`), page breadcrumb or mail
@@ -1041,25 +1047,24 @@ Gate: exit 0.
 
 **13.5 Count.** Run `python -s -B manage.py collect <app> --dry-run`. Gate: exit 0 and a line
 `collect: <app> dry-run files=N written=N unchanged=N held=N filtered=N orphans=N`. `files` is the number of
-ingests, `held` the records of open months and `filtered` those that include/since left out. Show the owner the
-counts before the first run: with a cloud LLM, every file costs tokens.
+source files, `held` the records of open months and `filtered` those that include/since left out. Show the owner the
+counts before the first run: every file ingested costs Claude usage.
 
 **13.6 Export.** Run `python -s -B manage.py collect <app>`.
 
 Gate:
 - The command exits 0, and running it again prints `written=0`.
-- In the app, the ingest queue drains.
-- A page under `wiki\sources\` names `<app>/...` in its frontmatter `sources`.
+- The runner's dry run (13.1) counts the new files under `pending_by_app`, and after the runs that take them, a page
+  under `wiki\sources\` names `<app>/...` in its frontmatter `sources`.
 
-For a first ingest with a cloud model, go app by app. Start with the app whose dry run (13.5) shows the fewest
-files: it measures the cost of one file. Narrow the large apps with `<p>_wiki_include` and `<p>_wiki_since`.
+For a first ingest, go app by app. Start with the app whose dry run (13.5) shows the fewest files: it measures the
+cost of one file. Narrow the large apps with `<p>_wiki_include` and `<p>_wiki_since`.
 
-**13.7 Local model.** After the first ingest, the app's ingest can move to its `ollama-local` preset.
-1. Run `ollama pull <model>` for a chat model that fits the GPU.
-2. Set the user environment variable `OLLAMA_CONTEXT_LENGTH` (for example 32768) and the app's context size to the
-   same value. `OLLAMA_HOST` stays unset (the 12.1 gate).
-
-Gate: one source is ingested again by the local model, for example after a Notion edit is captured and exported.
+**13.7 Ingest progress.** `state.json` records each source file under `raw\sources\` with its SHA-256 and a status:
+`done`, `pending` (tried, not done yet), `failed` (three calls did not produce its summary page) or `oversize`
+(longer than the runner's cap, held until a run with a larger `--max-chars`, which takes each alone). A file whose
+content changed is ingested again. A usage or rate limit, an overload or a sign-in failure stops the run and leaves
+its files as they were; the next run goes on. `--app <app>` limits a run to one app's sources.
 
 **13.8 Daily export (optional, the owner's choice).** This may only be a task under the owner's account, with no
 elevation and never as SYSTEM: `manage.py collect` refuses as LocalSystem (exit 2). Its actions run one after another.
@@ -1073,12 +1078,13 @@ Register-ScheduledTask -TaskName 'llm-wiki-wiki-export' -Action $acts -Trigger (
 ```
 Gate: `Start-ScheduledTask llm-wiki-wiki-export`, then `(Get-ScheduledTaskInfo llm-wiki-wiki-export).LastTaskResult`
 is 0. The task does not belong to `schedule`: `schedule status` does not report it, and `Unregister-ScheduledTask
-llm-wiki-wiki-export` removes it.
+llm-wiki-wiki-export` removes it. It only writes sources: the ingest task (13.3) takes them on its next runs.
 
 **13.9 Orphans.** `orphans=N` counts the files under `raw\sources\<app>\` that a run no longer produces. A renamed
 channel, a narrower include or a purge leaves them, and so does an old month that shrank (deleted messages): files pack
-months from the oldest forward, so later files of that stream are renamed and ingested again. They are kept, because LLM
-Wiki deletes a removed source's pages. `--prune` deletes them, and with them their wiki pages: run it only on the
-owner's explicit yes, after a `--prune --dry-run` that shows the count. `--prune` refuses (exit 2, nothing deleted)
+months from the oldest forward, so later files of that stream are renamed and ingested again. They are kept: their
+summary pages cite them. `--prune` deletes the files only; the pages under `wiki\` that cite them stay, citing a
+missing source, until someone cleans them up by hand. Run it only on the owner's explicit yes, after a
+`--prune --dry-run` that shows the count. `--prune` refuses (exit 2, nothing deleted)
 while the index is stale or when the run produced no file: run capture first. When nothing should be exported any more
 (an include narrowed to nothing), the owner deletes the files by hand.

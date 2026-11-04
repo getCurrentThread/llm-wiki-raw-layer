@@ -138,11 +138,11 @@ deletion. Nothing in the archive is ever deleted or rewritten except `manifest.j
 `sessions`, `projects`; filters `--project` (working folder), `--session ID` (a whole session in order),
 `--role`, `--list-sessions`, `--before`, `--after`. `search claudecode --help` is the reference.
 
-## LLM Wiki export
+## Wiki export
 
 `cc_wiki_project`, `cc_wiki_include`, `cc_wiki_exclude` and `cc_wiki_since` configure `manage.py collect claudecode`
 (llm.md 13), which writes each session's closed months, packed into Markdown files of about 16,000 characters, into
-an LLM Wiki project's `raw/sources/claudecode/<project › session> (<h8>)/`. A session is one container, as a channel
+the wiki vault's `raw/sources/claudecode/<project › session> (<h8>)/`. A session is one container, as a channel
 is (`wiki = ("cc", "chat")` in `apps.py`); a session still running in the current month is held back until the
 month is over. Empty by default: nothing is exported.
 
