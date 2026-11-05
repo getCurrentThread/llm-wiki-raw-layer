@@ -1027,7 +1027,7 @@ ingest, batches small files of one app into one call, and runs one `claude -p` c
 mode (no hooks, plugins, CLAUDE.md or other skills), file tools confined to the vault, writes only under `wiki\`, no
 Bash and no saved session (a saved transcript would come back as a claudecode source). It then places the new pages
 in hubs and lints the pages it touched. Its state (`state.json`, `run.log`, the lock) is in
-`<DATA_PARENT>\jobs\ingest`. The owner's hourly task `\llm-wiki\wiki-ingest` runs it with a small `--limit`, under
+`<DATA_PARENT>\jobs\ingest`. The owner's daily task `\llm-wiki\wiki-ingest` (03:00) runs it with a bounded `--limit`, under
 the owner's account with limited rights, never as SYSTEM; it never runs `collect`. Gate: after a run,
 `state.json` marks the run's files `done`, and a page under `wiki\sources\` names each in its frontmatter `sources`.
 
