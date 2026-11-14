@@ -133,14 +133,25 @@ class SearchDriver:
     def context(self, con, r, n, a, tz):
         """n rows before and after a hit (--context) within its context_col by the sort key, the hit itself marked
         (a source whose neighbours are not a window of its sort key writes its own)."""
-        cols, marks = ", ".join(self.sort_cols), ", ".join("?" for _ in self.sort_cols)
         hide = "" if a.include_deleted else " AND " + self.Filters.deleted_sql
+        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in self.neighbours(con, r, n, hide)]
+
+    def neighbours(self, con, r, n, hide):
+        """The n rows before r within its context_col by the sort key, r, then the n after; `hide` is an
+        " AND ..." clause on the content table (alias t)."""
+        cols, marks = ", ".join(self.sort_cols), ", ".join("?" for _ in self.sort_cols)
         near = (f"SELECT t.* FROM {self.table} t WHERE t.{self.context_col}=? AND ({cols}) %s ({marks}){hide} "
                 f"ORDER BY %s LIMIT ?")
         args = [r[self.context_col], *(r[c] for c in self.sort_cols), n]
         before = con.execute(near % ("<", ", ".join(f"t.{c} DESC" for c in self.sort_cols)), args).fetchall()
         after = con.execute(near % (">", ", ".join(f"t.{c}" for c in self.sort_cols)), args).fetchall()
-        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in [*reversed(before), r, *after]]
+        return [*reversed(before), r, *after]
+
+    def text_of(self, r, marks=None, width=None):
+        """A row's text: highlighted (marks, width) or flattened, or its placeholder when it has none."""
+        if marks is None:
+            return index.flat(r["message"]) or self.placeholder(r)
+        return fts.highlight(r["message"], marks, width) if r["message"] else self.placeholder(r)
 
     def placeholder(self, r):
         raise NotImplementedError

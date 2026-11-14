@@ -250,7 +250,7 @@ class InstallUninstall(Home):
 
 class Cli(Home):
     def test_exit_codes(self):
-        with mock.patch.object(K, "_out"), mock.patch.object(K, "_err"):
+        with mock.patch.object(K, "_out"), mock.patch("builtins.print"):
             self.assertEqual(K.main(["status"], kit=self.kit()), 3)
             self.assertEqual(K.main(["install", "--dry-run"], kit=self.kit()), 0)
             self.assertEqual(self.snapshot(), {})

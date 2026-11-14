@@ -506,6 +506,7 @@ class KakaoSearch(drv.SearchDriver):
     # room_src.seq marks a retitle, which re-chunks that room. key_col stays "": the stable key is the composite
     # string rec_key() builds, so rec_key/key_where below override the column-based defaults.
     container_col, container_src, chunk_gap_s = "chat_id", "room_src", 1800
+    context_col = "chat_id"
 
     def arguments(self, p):
         p.add_argument("--room", action="append", default=[], metavar="R",
@@ -561,32 +562,19 @@ class KakaoSearch(drv.SearchDriver):
              f"{r['sender'] or r['author_id'] or ''}: {r['message']}", False) for r in rows]
 
     def hit(self, r, tz, marks, width):
-        msg = r["message"]
         return {"id": r["id"], "key": rec_key(r["chat_id"], r["log_id"]), "chat_id": r["chat_id"],
                 "log_id": r["log_id"], "ts": r["ts"], "date": index.fmt_ts(r["ts"], tz), "room": r["room"],
                 "sender": r["sender"], "author_id": r["author_id"], "type": r["type"],
                 "type_name": type_name(r["type"]),
                 "origins": origin_names(r["origins"]), "source": r["source"], "deleted": bool(r["deleted"]),
                 "gone": bool(r["gone"]), "edited": bool(r["edited"]), "cursor": self.cursor(r),
-                "snippet": fts.highlight(msg, marks, width) if msg else self.placeholder(r), "text": msg}
+                "snippet": self.text_of(r, marks, width), "text": r["message"]}
 
     def context(self, con, r, n, a, tz):
-        """n rows before and after a hit in its room, by (ts, log_no, id) keyset; the hit itself marked."""
-        hide = "" if a.include_deleted else " AND deleted = 0"
-        key = (r["chat_id"], r["ts"], r["ts"], r["log_no"], r["log_no"], r["id"])
-        before = con.execute(
-            "SELECT * FROM kakao WHERE chat_id = ? AND (ts < ? OR (ts = ? AND (log_no < ? OR (log_no = ? AND id < ?))))"
-            f"{hide} ORDER BY ts DESC, log_no DESC, id DESC LIMIT ?", key + (n,)).fetchall()
-        after = con.execute(
-            "SELECT * FROM kakao WHERE chat_id = ? AND (ts > ? OR (ts = ? AND (log_no > ? OR (log_no = ? AND id > ?))))"
-            f"{hide} ORDER BY ts, log_no, id LIMIT ?", key + (n,)).fetchall()
-        out = []
-        for c in list(reversed(before)) + [r] + list(after):
-            text = index.flat(c["message"]) or self.placeholder(c)
-            out.append({"id": c["id"], "log_id": c["log_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
-                        "sender": c["sender"], "author_id": c["author_id"], "text": index.clip(text, a.width),
-                        "deleted": bool(c["deleted"]), "gone": bool(c["gone"]), "hit": c["id"] == r["id"]})
-        return out
+        return [{"id": c["id"], "log_id": c["log_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
+                 "sender": c["sender"], "author_id": c["author_id"], "text": index.clip(self.text_of(c), a.width),
+                 "deleted": bool(c["deleted"]), "gone": bool(c["gone"]), "hit": c["id"] == r["id"]}
+                for c in self.neighbours(con, r, n, "" if a.include_deleted else " AND deleted = 0")]
 
     def placeholder(self, r):
         return "(" + (type_name(r["type"]) or "no type") + ", no text)"

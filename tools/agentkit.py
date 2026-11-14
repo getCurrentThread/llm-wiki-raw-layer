@@ -55,21 +55,7 @@ FRONT = {"skill": ("name", "description", "argument-hint", "allowed-tools"),
 _VAR = re.compile(r"\{\{(include:)?([A-Za-z0-9_.-]+)\}\}")
 
 
-class Refused(Exception):
-    """A usage or precondition refusal: exit 2."""
-
-
-def _mask(text):
-    from tools import bootstrap  # noqa: PLC0415 -- one masking for both tools
-    return bootstrap.mask(text)
-
-
-def _out(text=""):
-    print(_mask(text))
-
-
-def _err(text):
-    print(_mask(f"agents: {text}"), file=sys.stderr)
+from tools.bootstrap import Refused, _out, guarded  # noqa: E402 -- one masking and exit-code handling for both tools
 
 
 def _sha(text):
@@ -542,51 +528,45 @@ def _status_lines(k, rows, mismatch):
 
 def main(argv=None, kit=None):
     a = parser().parse_args(argv)
-    try:
-        k = kit or Kit(python=getattr(a, "python", None))
-        if a.command == "install" and kit is None:
-            from rawlayer import schedule  # noqa: PLC0415 -- the MCP server's interpreter, as the task's is checked
-            problem = schedule.python_problem(k.python)
-            if problem:
-                raise Refused(f"the MCP server's interpreter: {problem}")
-        if a.command == "status":
+    return guarded(lambda: _run(a, kit), "agents", "interrupted; `agents status` shows what was applied")
+
+
+def _run(a, kit):
+    k = kit or Kit(python=getattr(a, "python", None))
+    if a.command == "install" and kit is None:
+        from rawlayer import schedule  # noqa: PLC0415 -- the MCP server's interpreter, as the task's is checked
+        problem = schedule.python_problem(k.python)
+        if problem:
+            raise Refused(f"the MCP server's interpreter: {problem}")
+    if a.command == "status":
+        rows, mismatch = k.status()
+        rc = 0 if set(rows.values()) == {"current"} and not mismatch else 3
+        if a.json:
+            _out(json.dumps({"items": rows, "project_mismatch": mismatch, "problems": k.problems, "rc": rc},
+                            indent=1))
+        else:
+            _status_lines(k, rows, mismatch)
+        return rc
+    if a.command == "install":
+        plan = k.install(dry_run=a.dry_run)
+        if not plan:
             rows, mismatch = k.status()
-            rc = 0 if set(rows.values()) == {"current"} and not mismatch else 3
-            if a.json:
-                _out(json.dumps({"items": rows, "project_mismatch": mismatch, "problems": k.problems, "rc": rc},
-                                indent=1))
-            else:
-                _status_lines(k, rows, mismatch)
-            return rc
-        if a.command == "install":
-            plan = k.install(dry_run=a.dry_run)
-            if not plan:
-                rows, mismatch = k.status()
-                if set(rows.values()) == {"current"} and not mismatch:
-                    _out("agents: everything is current")
-                    return 0
-                _status_lines(k, rows, mismatch)
-                _out("agents: nothing to install, but not everything is current")
-                return 3
-            if a.dry_run:
-                _diff(plan)
-            _show(plan, "would" if a.dry_run else "did")
-            return 0
-        plan, kept = k.uninstall(dry_run=a.dry_run)
+            if set(rows.values()) == {"current"} and not mismatch:
+                _out("agents: everything is current")
+                return 0
+            _status_lines(k, rows, mismatch)
+            _out("agents: nothing to install, but not everything is current")
+            return 3
         if a.dry_run:
             _diff(plan)
         _show(plan, "would" if a.dry_run else "did")
-        for x in kept:
-            _out(f"agents: kept {x}: changed by hand; remove it by hand if it should go")
-        if not plan and not kept:
-            _out("agents: nothing installed")
-        return 3 if kept else 0
-    except Refused as e:
-        _err(f"refused: {e}")
-        return 2
-    except KeyboardInterrupt:
-        _err("interrupted; `agents status` shows what was applied")
-        return 1
-    except Exception as e:  # noqa: BLE001 -- never a traceback: it would print unmasked paths
-        _err(f"error {type(e).__name__}: {e}")
-        return 1
+        return 0
+    plan, kept = k.uninstall(dry_run=a.dry_run)
+    if a.dry_run:
+        _diff(plan)
+    _show(plan, "would" if a.dry_run else "did")
+    for x in kept:
+        _out(f"agents: kept {x}: changed by hand; remove it by hand if it should go")
+    if not plan and not kept:
+        _out("agents: nothing installed")
+    return 3 if kept else 0

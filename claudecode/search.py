@@ -1,6 +1,6 @@
 """Ledger-only Claude Code FTS5 index and session search."""
 from rawlayer.search import driver as drv, fts, index
-from .keys import cc_id, iso_ms
+from rawlayer.capture.canon import iso_ms, str_key as cc_id
 
 NAME = "claudecode"
 HELP = "search Claude Code prompts, replies and tool calls"
@@ -20,8 +20,7 @@ CREATE VIEW search_msgs AS SELECT *, message || char(10) || tools AS search_text
 """
 
 
-def _s(value):
-    return index.clean(value) if isinstance(value, str) else ""
+_s = index.text
 
 
 def tool_text(value):
@@ -172,13 +171,8 @@ class ClaudeCodeSearch(drv.SearchDriver):
             return "session"
 
     def parse_cursor(self, value, flag, before=True):
-        parts = (value or "").split(".", 2)
-        if len(parts) != 3 or not all(len(p) <= 19 and p.isascii() and p.isdecimal() for p in parts[:2]) \
-                or cc_id(parts[2]) is None:
-            raise index.UsageError(f"{flag}: expected ts_ms.sid.container")
-        if any(int(p) >= 2 ** 63 for p in parts[:2]):
-            raise index.UsageError(f"{flag}: cursor out of range")
-        return int(parts[0]), int(parts[1]), parts[2]
+        return index.cursor_parts(value, flag, "ts_ms.sid.container", 3, 2, lambda rest: cc_id(rest[0]) is not None,
+                                  "cursor out of range")
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "session_id", "agent", "role", "project", "branch", "model", "ts", "ts_ms")} | {

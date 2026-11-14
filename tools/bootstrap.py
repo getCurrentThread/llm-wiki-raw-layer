@@ -97,8 +97,24 @@ def _out(text=""):
     print(mask(text))
 
 
-def _err(text):
-    print(mask(f"bootstrap: {text}"), file=sys.stderr)
+def _err(text, who="bootstrap"):
+    print(mask(f"{who}: {text}"), file=sys.stderr)
+
+
+def guarded(body, who="bootstrap", interrupted="interrupted"):
+    """body() -> its exit code. A Refused is exit 2, an interrupt or any other error exit 1, each one masked line on
+    stderr: never a traceback, which would print unmasked paths."""
+    try:
+        return body()
+    except Refused as e:
+        _err(f"refused: {e}", who)
+        return 2
+    except KeyboardInterrupt:
+        _err(interrupted, who)
+        return 1
+    except Exception as e:  # noqa: BLE001
+        _err(f"error {type(e).__name__}: {e}", who)
+        return 1
 
 
 # ---------------------------------------------------------------------------------------------------- masking
@@ -1067,28 +1083,22 @@ def main(argv=None):
         from tools import agentkit  # noqa: PLC0415
         return agentkit.main(argv[1:])
     a = parser().parse_args(argv)
-    try:
-        if a.command == "doctor":
-            return doctor(a)
-        if a.command == "_probe":
-            _check_app(a.app)
-            print(json.dumps(probe(a.app), ensure_ascii=False))
-            return 0
-        if a.command == "config":
-            return {"get": config_get, "set": config_set, "defaults": config_defaults}[a.action](a)
-        if a.command == "checkpoint":
-            if a.action == "mark" and not a.gate:
-                raise Refused("mark needs a GATE")
-            return checkpoint(a)
-    except Refused as e:
-        _err(f"refused: {e}")
-        return 2
-    except KeyboardInterrupt:
-        _err("interrupted")
-        return 1
-    except Exception as e:  # noqa: BLE001 -- never a traceback: it would print unmasked paths
-        _err(f"error {type(e).__name__}: {e}")
-        return 1
+    return guarded(lambda: _dispatch(a))
+
+
+def _dispatch(a):
+    if a.command == "doctor":
+        return doctor(a)
+    if a.command == "_probe":
+        _check_app(a.app)
+        print(json.dumps(probe(a.app), ensure_ascii=False))
+        return 0
+    if a.command == "config":
+        return {"get": config_get, "set": config_set, "defaults": config_defaults}[a.action](a)
+    if a.command == "checkpoint":
+        if a.action == "mark" and not a.gate:
+            raise Refused("mark needs a GATE")
+        return checkpoint(a)
     return 2
 
 

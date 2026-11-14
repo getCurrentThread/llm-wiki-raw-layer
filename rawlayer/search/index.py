@@ -311,6 +311,11 @@ def is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def text(value):
+    """clean() of a str; '' for anything else (a native field of the wrong type)."""
+    return clean(value) if isinstance(value, str) else ""
+
+
 def clean(s):
     """A str SQLite can store (lone surrogates from a JSON \\ud800 escape become U+FFFD)."""
     try:
@@ -792,6 +797,19 @@ def parse_cursor(s, flag, before=True):
         raise UsageError(f"{flag} {s!r}: expected a cursor like 1727758980.12345.678 (printed with each page)")
     row = int(m.group(3)) if m.group(3) is not None else (0 if before else _I63 - 1)
     return int(m.group(1)), int(m.group(2)), row
+
+
+def cursor_parts(value, flag, form, n, ints, valid=lambda rest: True, range_text=None):
+    """A --before/--after cursor cut at '.' into n parts (the last keeps further dots): the first `ints` as ints of
+    at most 19 ASCII digits, the rest as they are and accepted by `valid`. UsageError `<flag>: expected <form>`
+    on another shape, `<flag>: <range_text>` (default the same) at 2**63 or more."""
+    parts = (value or "").split(".", n - 1)
+    if len(parts) != n or not all(len(p) <= 19 and p.isascii() and p.isdecimal() for p in parts[:ints]) \
+            or not valid(parts[ints:]):
+        raise UsageError(f"{flag}: expected {form}")
+    if any(int(p) >= _I63 for p in parts[:ints]):
+        raise UsageError(f"{flag}: {range_text or 'expected ' + form}")
+    return tuple(int(p) for p in parts[:ints]) + tuple(parts[ints:])
 
 
 # ------------------------------------------------------------------------------------------------ rendering

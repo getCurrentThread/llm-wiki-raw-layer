@@ -1,7 +1,8 @@
 """Block-level Notion search. Derived labels/order/deletion use one SQL expression in both build modes."""
 import re
 from rawlayer.search import driver as drv, fts, index
-from .keys import nt_id, iso_ms
+from rawlayer.capture.canon import iso_ms
+from .keys import nt_id
 
 NAME = "notion"
 HELP = "search Notion blocks, page titles/properties and comments"
@@ -39,8 +40,7 @@ _LABELS = """sender=coalesce((SELECT name FROM users WHERE user_id=nrows.user_id
  WHERE o.page_id=nrows.page_id AND o.block_id=nrows.native_id)))"""
 
 
-def _s(value):
-    return index.clean(value) if isinstance(value, str) else ""
+_s = index.text
 
 
 def rich_text(value):
@@ -300,11 +300,8 @@ class NotionSearch(drv.SearchDriver):
             return "page-text"
 
     def parse_cursor(self, value, flag, before=True):
-        parts = (value or "").split(".", 1)
-        if len(parts) != 2 or len(parts[0]) > 19 or not parts[0].isascii() or not parts[0].isdecimal() or int(parts[0]) >= 2 ** 63 \
-                or not re.fullmatch(r"nt:(page|block|comment):[0-9a-f:-]+", parts[1]):
-            raise index.UsageError(f"{flag}: expected ts_ms.nt:key")
-        return int(parts[0]), parts[1]
+        return index.cursor_parts(value, flag, "ts_ms.nt:key", 2, 1,
+                                  lambda rest: re.fullmatch(r"nt:(page|block|comment):[0-9a-f:-]+", rest[0]))
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "kind", "native_id", "page_id", "page_title", "ord", "depth", "user_id", "sender", "ts", "ts_ms")} | {

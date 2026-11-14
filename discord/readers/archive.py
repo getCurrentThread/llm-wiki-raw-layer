@@ -6,7 +6,8 @@ from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Obs
 from rawlayer.capture.multiver import OriginRead
 from rawlayer.capture.origins import Unstable
-from ..keys import dc_id, snowflake_ms
+from rawlayer.capture.canon import str_key as dc_id
+from ..keys import snowflake_ms
 
 CH_FIELDS = ("id", "type", "guild_id", "parent_id", "category_id", "category", "name", "topic")
 MSG_FIELDS = ("id", "type", "timestamp", "timestampEdited", "isPinned", "content", "_removedAt")

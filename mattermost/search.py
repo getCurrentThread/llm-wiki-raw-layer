@@ -519,6 +519,7 @@ class MatterSearch(drv.SearchDriver):
                    "or --thread / --list-channels")
     Filters = _Filters
     key_col, container_col, container_src, chunk_gap_s = "post_id", "channel_id", "ch_src", 1800
+    context_col = "channel_id"
 
     def arguments(self, p):
         p.add_argument("--channel", action="append", default=[], metavar="C",
@@ -553,7 +554,6 @@ class MatterSearch(drv.SearchDriver):
         return int(m.group(1)), m.group(2)
 
     def hit(self, r, tz, marks, width):
-        msg = r["message"]
         return {"id": r["id"], "key": f"mm:post:{r['post_id']}", "post_id": r["post_id"],
                 "channel_id": r["channel_id"],
                 "channel": r["channel"], "team": r["team"], "ts": r["ts"], "ts_ms": r["ts_ms"],
@@ -563,28 +563,14 @@ class MatterSearch(drv.SearchDriver):
                 "files": _jl(r["files"]), "file_ids": _jl(r["file_ids"]), "stored": _jd(r["stored"]),
                 "edited": bool(r["edited"]),
                 "deleted": bool(r["deleted"]), "system": bool(r["system"]), "gone": bool(r["gone"]),
-                "cursor": self.cursor(r), "snippet": fts.highlight(msg, marks, width) if msg else self.placeholder(r),
-                "text": msg}
+                "cursor": self.cursor(r), "snippet": self.text_of(r, marks, width), "text": r["message"]}
 
     def context(self, con, r, n, a, tz):
-        """n posts before and after a hit in its channel, by (ts_ms, post_id) keyset; the hit itself marked."""
-        hide = _hide_sql(a)
-        key = (r["channel_id"], r["ts_ms"], r["ts_ms"], r["post_id"])
-        before = con.execute(
-            "SELECT * FROM matter WHERE channel_id = ? AND (ts_ms < ? OR (ts_ms = ? AND post_id < ?))"
-            f"{hide} ORDER BY ts_ms DESC, post_id DESC LIMIT ?", key + (n,)).fetchall()
-        after = con.execute(
-            "SELECT * FROM matter WHERE channel_id = ? AND (ts_ms > ? OR (ts_ms = ? AND post_id > ?))"
-            f"{hide} ORDER BY ts_ms, post_id LIMIT ?", key + (n,)).fetchall()
-        out = []
-        for c in list(reversed(before)) + [r] + list(after):
-            text = index.flat(c["message"]) or self.placeholder(c)
-            out.append({"id": c["id"], "post_id": c["post_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
-                        "sender": c["sender"], "user_id": c["user_id"], "root_id": c["root_id"],
-                        "text": index.clip(text, a.width), "deleted": bool(c["deleted"]),
-                        "system": bool(c["system"]),
-                        "gone": bool(c["gone"]), "edited": bool(c["edited"]), "hit": c["id"] == r["id"]})
-        return out
+        return [{"id": c["id"], "post_id": c["post_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
+                 "sender": c["sender"], "user_id": c["user_id"], "root_id": c["root_id"],
+                 "text": index.clip(self.text_of(c), a.width), "deleted": bool(c["deleted"]),
+                 "system": bool(c["system"]), "gone": bool(c["gone"]), "edited": bool(c["edited"]),
+                 "hit": c["id"] == r["id"]} for c in self.neighbours(con, r, n, _hide_sql(a))]
 
     def placeholder(self, r):
         return "(" + (r["type"] + ", " if r["type"] else "") + "no text)"
@@ -659,7 +645,7 @@ class MatterSearch(drv.SearchDriver):
         out = []
         for r in kept:
             h = self.hit(r, tz, [], a.width)
-            h["snippet"] = index.clip(index.flat(r["message"]) or self.placeholder(r), a.width)
+            h["snippet"] = index.clip(self.text_of(r), a.width)
             h["root"] = r["post_id"] == root
             out.append(h)
         return {"mode": "thread", "root_id": root, "root_found": root_found, "channel_id": seed["channel_id"],

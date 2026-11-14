@@ -5,7 +5,7 @@ from rawlayer.capture import canon, fsio
 from rawlayer.capture.model import Obs
 from rawlayer.capture.multiver import OriginRead
 from rawlayer.capture.origins import Unstable
-from ..keys import cc_id, iso_ms
+from rawlayer.capture.canon import iso_ms, str_key as cc_id
 
 
 def _safe_rel(rel, cid):

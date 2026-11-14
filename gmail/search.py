@@ -23,8 +23,7 @@ CREATE TABLE membership(msg_id TEXT NOT NULL,label_id TEXT NOT NULL,
 """
 
 
-def _s(value):
-    return index.clean(value) if isinstance(value, str) else ""
+_s = index.text
 
 
 class GmailApplier(index.SimpleApplier):
@@ -174,11 +173,7 @@ class GmailSearch(drv.SearchDriver):
             raise index.UsageError("--thread needs a Gmail hex id")
 
     def parse_cursor(self, value, flag, before=True):
-        parts = value.split(".")
-        if len(parts) != 2 or not parts[0].isascii() or not parts[0].isdigit() \
-                or len(parts[0]) > 19 or int(parts[0]) >= 2 ** 63 or gm_id(parts[1]) is None:
-            raise index.UsageError(f"{flag}: expected ts_ms.hex_id")
-        return int(parts[0]), parts[1]
+        return index.cursor_parts(value, flag, "ts_ms.hex_id", 2, 1, lambda rest: gm_id(rest[0]) is not None)
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "msg_id", "thread_id", "ts", "ts_ms", "sender", "subject", "recipients", "body_text", "attachments")} | {
