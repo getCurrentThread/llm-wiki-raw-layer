@@ -90,7 +90,7 @@ class Fixture:
 
     def write_config(self, data_root=None):
         # The production config.json shape, keys of the removed verify included (kb_search, kakatok_oracle_dir:
-        # accepted and ignored; inputs_root: read only by T1/T2), so every test also proves that shape still loads.
+        # accepted and ignored; inputs_root of the removed frozen input sets), so every test also proves that shape still loads.
         frozen, oracle = self.base / "frozen", self.base / "oracle"
         kb = self.base / "kbstub" / "kb_search.py"
         for d in (frozen, oracle, kb.parent, data_root or self.data_root):

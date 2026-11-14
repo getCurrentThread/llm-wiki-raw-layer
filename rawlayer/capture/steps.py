@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The capture-side steps, run in-process by `manage.py capture` (capture) and `manage.py check` (replay
 [--check]); not a command surface of their own:
-  <step> --config <path> [--input-set live|T1|T2] [--origins a,b]   (SPEC 13)
+  <step> --config <path> [--origins a,b]   (SPEC 13)
 
 step = capture | replay [--check]. --origins defaults to every
 origin of the app. A data root whose ledger belongs to another app is refused (ledger.foreign_origins). Exit codes:
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .. import registry
 from . import publicout, run, state
-from .config import Config, ConfigError, INPUT_SETS
+from .config import Config, ConfigError
 from .ledger import LedgerCorrupt, foreign_origins
 from .publicout import lit
 
@@ -23,7 +23,6 @@ def _parser():
     ap = argparse.ArgumentParser(prog="manage.py")
     ap.add_argument("command", choices=COMMANDS)
     ap.add_argument("--config", required=True)
-    ap.add_argument("--input-set", default="live", choices=INPUT_SETS)
     ap.add_argument("--origins", default=None, help="comma-separated (default: every installed origin)")
     ap.add_argument("--check", action="store_true")
     return ap
@@ -33,7 +32,6 @@ def main(argv=None):
     a = _parser().parse_args(argv)
     try:
         cfg = Config(a.config)
-        cfg.check_input_set(a.input_set)
         installed = registry.origin_order()
         origins = list(installed) if a.origins is None else [o for o in a.origins.split(",") if o]
         if any(o not in installed for o in origins):
@@ -43,7 +41,7 @@ def main(argv=None):
         if foreign_origins(cfg.raw):
             raise ConfigError("ledger belongs to another app")
         if a.command == "capture":
-            return run.capture(cfg, a.input_set, origins)
+            return run.capture(cfg, origins)
         if a.command == "replay":
             return replay(cfg, a.check)
     except ConfigError:

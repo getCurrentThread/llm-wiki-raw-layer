@@ -64,13 +64,12 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaises(Unstable):
                 read_once(self.fx.root, frozenset(), "cc_archive")
 
-    def test_capture_frozen_and_ready_never_collect_live_does(self):
-        ctx = SimpleNamespace(cfg=SimpleNamespace(cc_sync=True), inputs=SimpleNamespace(name="live", cc_archive=self.fx.root),
+    def test_capture_ready_never_collects(self):
+        ctx = SimpleNamespace(cfg=SimpleNamespace(cc_sync=True), inputs=SimpleNamespace(cc_archive=self.fx.root),
                               denylist=frozenset())
-        for name, ready, collects in (("frozen", "0", False), ("live", "1", False), ("live", "0", True)):
-            with self.subTest(name=name, ready=ready):
+        for ready, collects in (("1", False), ("0", True)):
+            with self.subTest(ready=ready):
                 sync = Mock(return_value={"errors": 0})
-                ctx.inputs.name = name
                 with patch.dict(sys.modules, {"claudecode.fetch": SimpleNamespace(sync_config=sync)}),                         patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": ready}), patch("rawlayer.capture.precheck.check"):
                     CcArchive().read_once(ctx)
                     self.assertEqual(sync.called, collects)
@@ -102,7 +101,7 @@ class CaptureTests(unittest.TestCase):
         self.fx.save("manifest.json", man)
         self.assertEqual(read_once(self.fx.root, frozenset(), "cc_archive").notes["order_bad"], 1)
 
-    def context(self, name="live"):
+    def context(self):
         return SimpleNamespace(cfg=SimpleNamespace(cc_sync=True),
-                               inputs=SimpleNamespace(name=name, cc_archive=self.fx.root), denylist=frozenset())
+                               inputs=SimpleNamespace(cc_archive=self.fx.root), denylist=frozenset())
 

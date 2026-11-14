@@ -10,9 +10,10 @@ from pathlib import Path
 
 from .. import registry
 from . import fsio, publicout
-from .config import INPUT_SETS
 from .publicout import lit
 
+# the values a manifest may record: capture writes "live"; T1/T2 were the frozen input sets (removed 2026-11-14)
+INPUT_SETS = ("live", "T1", "T2")
 PART_LIMIT = 256 * 1024 * 1024
 SPILL_LIMIT = 192 * 1024 * 1024
 _MAN_RE = re.compile(r"^([0-9]{8})-([0-9]{13}-[0-9a-f]{4})\.json$")

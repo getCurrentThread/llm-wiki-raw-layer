@@ -2,7 +2,6 @@
   "v": 1,
   "impl": "claude",
   "data_root": "<DATA_PARENT>\\raw\\gmail",
-  "inputs_root": "<DATA_PARENT>\\inputs",
   "sources": {"gm_archive": "<DATA_PARENT>\\raw\\gmail\\archive"},
   "gm_sync": false,
   "gm_imap_user": "",

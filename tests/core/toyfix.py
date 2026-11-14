@@ -153,10 +153,10 @@ class ToyFixture:
         return self
 
 
-def capture(fx, origins=ORIGINS, input_set="live"):
+def capture(fx, origins=ORIGINS):
     """One capture run (precheck skipped). Returns its exit code."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()):
-        return run.capture(fx.cfg(), input_set, list(origins), skip_precheck=True)
+        return run.capture(fx.cfg(), list(origins), skip_precheck=True)
 
 
 def cli_main(fx, *argv):
@@ -206,7 +206,7 @@ def child_capture(fx, before=""):
     return child("from rawlayer.capture import fsio, run\n"
                  "from rawlayer.capture.config import Config\n"
                  + before +
-                 f"sys.exit(run.capture(Config({str(fx.config_path)!r}), 'live', {list(ORIGINS)!r}, "
+                 f"sys.exit(run.capture(Config({str(fx.config_path)!r}), {list(ORIGINS)!r}, "
                  "skip_precheck=True))\n").returncode
 
 

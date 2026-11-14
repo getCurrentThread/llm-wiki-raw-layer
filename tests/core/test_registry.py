@@ -54,8 +54,7 @@ class FakeApps:
             setattr(apps, cls.__name__, cls)
         mods[pkg + ".origins"] = types.SimpleNamespace(ORIGINS=tuple(origins))
         if inputs:                                          # inputs.py and vocab.py are optional modules
-            mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg, n, f: {}),
-                                                          static_roots=lambda inputs: {})
+            mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg: {}))
         if vocab:
             mods[pkg + ".vocab"] = types.SimpleNamespace(WORDS=tuple(words), PATTERNS=tuple(patterns))
         if search is not None:
@@ -195,24 +194,22 @@ class TestRefusals(Base):
 
     def test_inputs_and_vocab_are_optional(self):
         app = registry.Registry([self.apps.fake("bare", inputs=False, vocab=False)]).apps[0]
-        self.assertEqual((app.inputs.resolve(None, "live", None), app.inputs.static_roots(None)), ({}, {}))
+        self.assertEqual(app.inputs.resolve(None), {})
         self.assertEqual((app.vocab.WORDS, app.vocab.PATTERNS), ((), ()))
 
     def test_archive_declaration(self):
-        """AppConfig.archive = p adds the source key <p>_archive and, without an inputs.py, that input attribute: the
-        config's path live, <inputs_root>/<set>/<p>/archive frozen; an inputs.py replaces it."""
+        """AppConfig.archive = p adds the source key <p>_archive and, without an inputs.py, that input attribute (the
+        config's path); an inputs.py replaces it."""
         pkg = self.apps.fake("arc", archive="ar", source_keys=["other"], inputs=False)
         reg = registry.Registry([pkg])
         self.assertEqual(reg.source_keys, ("ar_archive", "other"))
         inputs = reg.apps[0].inputs
         cfg = types.SimpleNamespace(sources={"ar_archive": os.path.join(os.sep, "x", "y")})
-        self.assertEqual(inputs.resolve(cfg, "live", None), {"ar_archive": Path(os.sep, "x", "y")})
-        self.assertEqual(inputs.resolve(cfg, "T1", "frozen"), {"ar_archive": Path("frozen", "ar", "archive")})
-        self.assertEqual(inputs.static_roots(None), {})
+        self.assertEqual(inputs.resolve(cfg), {"ar_archive": Path(os.sep, "x", "y")})
         self.refused(pkg, self.apps.fake("arc2", archive="ar", inputs=False))        # the key is taken
         self.refused(self.apps.fake("arc3", archive="Bad-Prefix"))
-        own = registry.Registry([self.apps.fake("arc4", archive="aq", resolve=lambda cfg, n, f: {"aq_dir": 1})])
-        self.assertEqual(own.apps[0].inputs.resolve(None, "live", None), {"aq_dir": 1})
+        own = registry.Registry([self.apps.fake("arc4", archive="aq", resolve=lambda cfg: {"aq_dir": 1})])
+        self.assertEqual(own.apps[0].inputs.resolve(None), {"aq_dir": 1})
 
     def test_search_name_is_the_label(self):
         search = types.SimpleNamespace(SPEC=types.SimpleNamespace(name="other"))
@@ -228,16 +225,11 @@ class TestRefusals(Base):
         self.refused(self.apps.fake("core", origins=[_origin("toy_v", state_tables=(("heads", "x"),))]))
 
     def test_input_attribute_claimed_twice(self):
-        a = self.apps.fake("in1", resolve=lambda cfg, n, f: {"toy_root": "x"})
-        b = self.apps.fake("in2", resolve=lambda cfg, n, f: {"toy_root": "y"})
-        cfg = types.SimpleNamespace(check_input_set=lambda name: None)
+        a = self.apps.fake("in1", resolve=lambda cfg: {"toy_root": "x"})
+        b = self.apps.fake("in2", resolve=lambda cfg: {"toy_root": "y"})
         with registry.use([a, b]):
             with self.assertRaises(RegistryError):
-                InputSet(cfg, "live")
-        c = self.apps.fake("in3", resolve=lambda cfg, n, f: {"name": "x"})       # a core attribute
-        with registry.use([c]):
-            with self.assertRaises(RegistryError):
-                InputSet(cfg, "live")
+                InputSet(None)
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ class TestCaptureSteps(unittest.TestCase):
 
     def test_the_capture_step_argv(self):
         _rc, calls, _log = self.run_task(0)
-        self.assertEqual(calls[0], ("capture", ["--config", str(self.cfg), "--input-set", "live"]))
+        self.assertEqual(calls[0], ("capture", ["--config", str(self.cfg)]))
 
     def test_index_follows_every_capture(self):
         """75 also follows a commit (an origin or container skipped), so the index step never depends on rc."""

@@ -66,8 +66,6 @@ an option, not a source, so configs on machines without macOS inputs stay valid 
 set, its parent directory must exist (setup's provisioning writes the file there). The path must lie inside
 the app's data root: `provision.run_macdb` refuses (exit 2) to write the plaintext anywhere else, and a failed
 write leaves no `.tmp` behind.
-For frozen `T1`/`T2` inputs, encrypted rooms come from `<inputs_root>/<set>/kakao_user/chat_data`. Static
-inputs remain at their configured paths and are checked against the freeze's hashes.
 
 ## In-repo key derivation and decryption (the kakatok port)
 

@@ -1,7 +1,7 @@
 # Gmail raw-layer app
 
 `gm_archive` reads a private Gmail archive, which the fetch step fills over IMAP, into its own append-only ledger
-and `index/gmail.sqlite`. `gm_sync` defaults false: archive-only and frozen capture never contact Gmail.
+and `index/gmail.sqlite`. `gm_sync` defaults false: archive-only capture never contacts Gmail.
 With `gm_sync: true`, live `manage.py capture gmail` refreshes the archive before capture.
 The implementation uses Python's standard library only. It never extracts credentials from a browser or mail client.
 
@@ -144,7 +144,7 @@ Label aggregation counts each membership once; a message can belong to multiple 
 language and the output are the root README's ("Search").
 One derivation handles state before/after content identically during incremental updates and rebuilds.
 
-Frozen sources use `<inputs_root>/<set>/gm/archive`. The SYSTEM task `\llm-wiki\gmail-capture` runs on the
+The SYSTEM task `\llm-wiki\gmail-capture` runs on the
 schedule in [../README.md](../README.md#scheduled-tasks). When gm_sync is true, registration refuses an empty
 `gm_imap_user` and a missing or unsafe app password file. The owner must ensure SYSTEM can read that file through
 the protected inherited ACL. Scheduled sync should begin only after manual genesis and `--auth-check` succeed.

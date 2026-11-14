@@ -2,7 +2,7 @@
 """python -s -B manage.py capture <app> --config <config> -- the pipeline behind both the app's SYSTEM scheduled
 task and a manual run: capture, then index.
 
-1. capture (--input-set, live by default; --origins limits the run to some of the app's origins).
+1. capture (--origins limits the run to some of the app's origins).
 2. index, after EVERY capture exit code, which brings
    <data_root>/index/<app>.sqlite up to the committed ledger (--rebuild-index rebuilds it from scratch instead
    of catching up). Capture's exit code does not tell whether the ledger moved: 75 is also returned AFTER a
@@ -27,7 +27,6 @@ import time
 import traceback
 from pathlib import Path
 
-from ...capture.config import INPUT_SETS
 from ..base import BaseCommand
 
 LOG_MAX = 4 * 1024 * 1024
@@ -94,17 +93,15 @@ def log_path(config):
 
 
 def main(argv=None):
-    """argv: <app> --config <config> [--input-set live|T1|T2] [--origins a,b] [--rebuild-index]
+    """argv: <app> --config <config> [--origins a,b] [--rebuild-index]
     (the dispatcher has selected the app)."""
     ap = argparse.ArgumentParser(prog="manage.py capture")
     ap.add_argument("app")
     ap.add_argument("--config", required=True)
-    ap.add_argument("--input-set", default="live", choices=INPUT_SETS)
     ap.add_argument("--origins", default=None, help="capture only these origins (comma-separated)")
     ap.add_argument("--rebuild-index", action="store_true", help="rebuild the index instead of catching up")
     a = ap.parse_args(argv)
-    capture_args = ["--config", a.config, "--input-set", a.input_set] + \
-        (["--origins", a.origins] if a.origins else [])
+    capture_args = ["--config", a.config] + (["--origins", a.origins] if a.origins else [])
     index_args = ["--config", a.config] + (["--rebuild"] if a.rebuild_index else [])
     path = Path(log_path(a.config))
     if path.exists() and path.stat().st_size > LOG_MAX:
@@ -122,7 +119,7 @@ def main(argv=None):
 
 class Command(BaseCommand):
     help = "the capture+index pipeline: the scheduled task's body and a manual run (logged in task.log)"
-    args = "[--input-set live|T1|T2] [--origins a,b] [--rebuild-index] [--config CFG]"
+    args = "[--origins a,b] [--rebuild-index] [--config CFG]"
     app = "required"
     config = True
 

@@ -136,7 +136,7 @@ class TestOwnership(T.ToyCase):
         the app's own ledger goes through."""
         raw = self.fx.data_root / "raw"
         before = T.names(raw / "manifests")
-        argv = {"capture": ["--input-set", "live"], "replay": ["--check"]}
+        argv = {"capture": [], "replay": ["--check"]}
         with mock.patch.object(registry, "origin_order", lambda: ("toy_a",)):
             for command, extra in argv.items():
                 with self.subTest(command=command):
@@ -170,7 +170,7 @@ class TestSetup(unittest.TestCase):
         self.files = app_files("toyish", "(ToyA, ToyB, ToyM)", extra={
             "apps.py": ("from tests.core.toyapp.apps import ToyConfig\n\n\n"
                         "class Config(ToyConfig):\n    label = 'toyish'\n"),
-            "inputs.py": "from tests.core.toyapp.inputs import resolve, static_roots  # noqa: F401\n",
+            "inputs.py": "from tests.core.toyapp.inputs import resolve  # noqa: F401\n",
             "config.example.json": json.dumps(self.EXAMPLE)})
 
     def setup(self, *argv, stdin=None):
@@ -191,7 +191,6 @@ class TestSetup(unittest.TestCase):
             cfg = self.config()
             self.assertEqual((cfg["v"], cfg["impl"], cfg["data_root"]),
                              (1, paths.IMPL_NAME, str(self.parent / "raw" / "toyish")))
-            self.assertEqual(cfg["inputs_root"], str(self.parent / "inputs"))
             if os.name == "nt":
                 from rawlayer.management.commands import setup  # noqa: PLC0415
                 self.assertIsNone(setup.acl_problem(self.parent))      # what capture's precheck wants

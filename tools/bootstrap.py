@@ -14,7 +14,7 @@ core stays as it is); standard library only; it runs from any folder.
   config set <app> KEY VALUE [KEY VALUE ...] [--string] [--force]      config set <app> -   (a JSON object on stdin)
   config defaults <app>
       Read or change <DATA_PARENT>\\raw\\<app>\\config.json with a JSON-safe edit (llm.md 5.3): KEY is sources.<key> or
-      one of the app's options (v, impl, data_root and inputs_root need --force). A VALUE of true, false, null, a
+      one of the app's options (v, impl and data_root need --force). A VALUE of true, false, null, a
       plain integer, or one starting with [ or { is JSON, anything else a string (--string: always a string). The
       file is rewritten as setup writes it, the one before kept as config.json.prev. `defaults` fills what the
       app's setup defaults would (only keys still unset). `get` prints each key's state, never its value.
@@ -45,7 +45,7 @@ if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
 NOT_COVERED = ("kakaotalk",)
-CORE_KEYS = ("v", "impl", "data_root", "inputs_root")
+CORE_KEYS = ("v", "impl", "data_root")
 SHOWN = ("_source", "_token_type")      # options whose values are a fixed vocabulary, which `config get` prints
 CHECKPOINT = "bootstrap.json"
 PROBE_TIMEOUT = 300
@@ -1041,7 +1041,7 @@ def parser():
     s.add_argument("app")
     s.add_argument("pairs", nargs="*", metavar="KEY VALUE")
     s.add_argument("--string", action="store_true", help="every VALUE is a string")
-    s.add_argument("--force", action="store_true", help="allow v, impl, data_root and inputs_root")
+    s.add_argument("--force", action="store_true", help="allow v, impl and data_root")
     d = cs.add_parser("defaults")
     d.add_argument("app")
     p = sub.add_parser("checkpoint", help="the llm.md gates an app has passed")

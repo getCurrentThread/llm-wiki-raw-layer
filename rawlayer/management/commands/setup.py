@@ -8,7 +8,7 @@
      Indexing Options > Modify > untick it)
   3. the app's data root, <DATA_PARENT>/raw/<app> (inherits the parent's ACL)
   4. its config.json, unless one is there (--force replaces it): the app's config.example.json, or the config read
-     from CFG (- reads it from stdin), with v, impl, data_root and inputs_root set for this machine; nothing of it
+     from CFG (- reads it from stdin), with v, impl and data_root set for this machine; nothing of it
      is printed. The app's own defaults (AppConfig.setup_defaults) fill the placeholders it can resolve itself
      before the write, and after it the app's provisioning (AppConfig.setup_provision; --restart-client lets it
      restart the app's client to rescan it, --scan adds its memory-scan fallback, --root installs a key file)
@@ -102,10 +102,10 @@ def placeholders(value, key=""):
     return [key] if isinstance(value, str) and "<" in value and ">" in value else []
 
 
-def config_for(app, base, data_parent):
+def config_for(app, base):
     cfg = dict(base)
     from ...capture import paths  # noqa: PLC0415
-    cfg.update(v=1, impl=paths.IMPL_NAME, data_root=str(paths.data_root(app)), inputs_root=str(data_parent / "inputs"))
+    cfg.update(v=1, impl=paths.IMPL_NAME, data_root=str(paths.data_root(app)))
     cfg.setdefault("sources", {})
     return cfg
 
@@ -196,7 +196,7 @@ class Command(BaseCommand):
                     attention += 1
                     _say(f"data parent: {problem}")
             root.mkdir(parents=True, exist_ok=True)
-            cfg = config_for(app, base, parent)
+            cfg = config_for(app, base)
             registry.get().apps[0].setup_defaults(cfg, _say)
             tmp = cfg_path.with_name("config.json.part")
             tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

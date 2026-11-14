@@ -105,7 +105,7 @@ class Origin:
         """Bytes beyond the core's 1 GiB a run of this origin may add to the data volume."""
         return 0
 
-    def requires_system(self, cfg, input_set):
+    def requires_system(self, cfg):
         """True when this origin may only be read by the SYSTEM account."""
         return False
 

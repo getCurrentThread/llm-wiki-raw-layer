@@ -229,9 +229,8 @@ def estimate_peak(inputs, origins):
     return sum(o.estimate_peak(inputs) for o in selected(origins)) + 1024 ** 3
 
 
-def capture(cfg, input_set, origins, skip_precheck=False):
+def capture(cfg, origins, skip_precheck=False):
     from . import precheck  # noqa: PLC0415
-    cfg.check_input_set(input_set)                     # refuse before open_session writes anything (SPEC 10.1)
     try:
         ledger, lock, con = open_session(cfg)          # SPEC 9.1 steps 1-3: lock, sweep, recover
     except Busy:
@@ -240,13 +239,13 @@ def capture(cfg, input_set, origins, skip_precheck=False):
     try:
         if not skip_precheck:
             precheck.check(cfg.data_root)              # step 4
-        if any(o.requires_system(cfg, input_set) for o in selected(origins)) and not is_system():
+        if any(o.requires_system(cfg) for o in selected(origins)) and not is_system():
             raise ConfigError("an origin is read as SYSTEM only")   # SPEC 10.2 / 16
         run = new_run_id()
         run_start = time.time()
         work = Path(ledger.work_root, run)
         fsio.setup_process(work)
-        inputs = InputSet(cfg, input_set)
+        inputs = InputSet(cfg)
         free = shutil.disk_usage(cfg.data_root).free
         if free - estimate_peak(inputs, origins) < HARD_FLOOR:
             publicout.say(lit("capture skipped"), disk_floor=True)
@@ -272,7 +271,7 @@ def capture(cfg, input_set, origins, skip_precheck=False):
         head, dirty = repo_info()
         manifest = {
             "v": 1, "type": "capture", "seq": ctx.seq, "run": run, "prev_sha256": prev_sha,
-            "started_at": iso(run_start), "finished_at": None, "input_set": input_set,
+            "started_at": iso(run_start), "finished_at": None, "input_set": "live",
             "impl": {"name": cfg.impl, "git_head": head, "dirty": dirty,
                      "python": sys.version.split()[0], "pycryptodome": pycryptodome_version()},
             "segments": [],

@@ -179,7 +179,7 @@ class TestKeystoreDerivation(Base):
             self.assertEqual(d[f"chat_data\\chatLogs_{chat}.edb"]["key_hex"], E.key_for(chat).hex())
             self.assertIs(d[f"chat_data\\chatLogs_{chat}.edb"]["header_ok"], True)
         self.assertEqual(d["chat_data\\ocii_v2.edb"]["chatId"], None)          # carried, ignored by load_keystore
-        inputs = InputSet(Config(self.fx.config_path), "live")
+        inputs = InputSet(Config(self.fx.config_path))
         keys, _all, ok_ids = load_keystore(inputs.keystore)
         self.assertEqual(ok_ids, {"31", "32"})
         self.assertEqual(keys["31"], E.key_for(31))

@@ -19,7 +19,7 @@ class SetupDefaults(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="mm-setup-"))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.cfg = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-        self.cfg.update(data_root=str(self.root), inputs_root=str(self.root.parent / "inputs"))   # setup's own
+        self.cfg.update(data_root=str(self.root))   # setup's own
         self.notes = []
 
     def test_fills_paths_not_the_owners_values(self):

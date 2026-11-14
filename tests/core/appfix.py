@@ -44,7 +44,7 @@ def capture(fx, origins=None):
     """One capture run (input set live, precheck skipped as in the capture tests) of `origins`, by default every
     origin of the selected app. Returns its exit code."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()):
-        return run.capture(Config(fx.config_path), "live",
+        return run.capture(Config(fx.config_path),
                            list(registry.origin_order() if origins is None else origins), skip_precheck=True)
 
 

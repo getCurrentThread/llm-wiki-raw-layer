@@ -58,7 +58,7 @@ archive contract and search rows.
   claudecode/                  Claude Code conversation archive and session/project search (see claudecode/README.md)
     apps.py                    AppConfig: label, source keys, options, schedule and task checks
     origins.py                 origins in processing and commit order
-    inputs.py                  live and frozen input paths (optional: `AppConfig.archive` gives the archive input)
+    inputs.py                  input paths (optional: `AppConfig.archive` gives the archive input)
     readers/                   source readers
     vocab.py                   public output vocabulary (optional)
     search.py                  app index and search interface
@@ -102,10 +102,9 @@ be omitted when the project has only one app. Cross-app validation is done separ
 | `EXCLUDE_APPS` | app folders to leave out of discovery (currently empty); do not exclude an app while its scheduled task remains registered |
 
 Machine-specific values live in `<DATA_PARENT>/raw/<app>/config.json`, never in versioned settings. The config has
-`v`, `impl`, `data_root`, `inputs_root`, `sources` and the app's options; see each `config.example.json` and app
+`v`, `impl`, `data_root`, `sources` and the app's options; see each `config.example.json` and app
 README. `<DATA_ROOT>` denotes the selected app's data root (by convention `<DATA_PARENT>/raw/<app>`). It must sit
-inside `DATA_PARENT`, outside git work trees, with the required ACL and Windows Search exclusion. Frozen `T1`
-and `T2` inputs require `inputs_root`; live capture does not require it to exist.
+inside `DATA_PARENT`, outside git work trees, with the required ACL and Windows Search exclusion.
 
 Every data root has the same layout:
 
@@ -132,7 +131,7 @@ and `setup`, not as commands of their own.
 | invocation after `manage.py` | purpose and options |
 |---|---|
 | `setup <app> [--from CFG\|-] [--force] [--provision] [--scan] [--root HEXFILE] [--restart-client]` | prepare the data parent, app data root and config; `-` reads config from stdin; force replaces an existing config; the app fills its own config defaults and runs its provisioning (kakaotalk: the root key, keystore, and on a Mac the client database); `--provision` reruns only that provisioning — the recovery path when a credential rotated — with `--scan` (memory fallback), `--root` (a root file to install, verified first) and `--restart-client` |
-| `capture <app> [--config CFG] [--input-set live\|T1\|T2] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
+| `capture <app> [--config CFG] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
 | `collect <app> [--config CFG] [--project DIR] [--include S ...] [--exclude S ...] [--since YYYY-MM] [--dry-run] [--prune]` | the owner-only export step: render the app's index as Markdown sources of the wiki vault, whose headless ingest sends them to its LLM (llm.md 13). Needs `AppConfig.wiki` in the app's `apps.py`; refuses to run as LocalSystem; `--prune` deletes orphaned source files (their wiki pages stay) and runs only on the owner's explicit yes; prints counts only; not part of any scheduled task |
 | `search <app> [QUERY] [--config CFG] [options]` | search the app's index ("Search" below); `search <app> --help` lists the options |
 | `embed <app> [--config CFG] [--model M] [--dims N] [--url U] [--limit N] [--dry-run] [--rebuild]` | build or refresh the optional dense sidecar that `search --hybrid` reads; needs Ollama on a loopback address and sqlite-vec's windows-x86_64 build (llm.md 12) |
@@ -146,8 +145,7 @@ before using the config.
 
 Discord, Notion, Gmail, Mattermost and Claude Code have an app-owned fetch step that fills the archive capture
 reads: `python -s -B -m <app>.fetch [--auth-check] [--max-items N] [--full] [--capture] [--config CFG]`. With the
-app's sync option on (`dc_sync`, `nt_sync`, `gm_sync`, `mm_sync`, `cc_sync`), live capture runs it first; frozen
-inputs never do. The app READMEs define the options, archive contracts and authentication boundaries.
+app's sync option on (`dc_sync`, `nt_sync`, `gm_sync`, `mm_sync`, `cc_sync`), capture runs it first. The app READMEs define the options, archive contracts and authentication boundaries.
 
 Capture exit codes are 0 ok, 3 suspect, 75 busy, below the disk floor or skipped, 2 refused, and 1 error. Suspect
 origins commit nothing that run; other origins may commit. Search returns 0 even for zero hits, 2 for
@@ -238,7 +236,7 @@ default configs; an explicit `--config` belongs to one app. Run and remove requi
 discovered.
 
 A new start is ignored while a task runs; a missed start runs when the machine returns. `capture` runs its steps
-in one process — the capture step with the live input set, then the index step after every capture exit
+in one process — the capture step, then the index step after every capture exit
 code (a failed, refused or busy capture included), because only committed manifests enter the index. Steps go to
 `<DATA_ROOT>/reports/task.log`; the command returns the capture step's code. `status` reports the newest run that
 finished a step, marks an incomplete run and returns 3 when the task, definition, last result or logged step

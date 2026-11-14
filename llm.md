@@ -269,7 +269,7 @@ ACL.
 - Values `true`, `false`, `null`, plain integers (`0`, `-5`) and values starting with `[` or `{` are parsed as
   JSON. Anything else, `007` and `3.5` included, is a string.
 - Source paths go under `sources.<source_key>`; app options are top-level keys. Any other key is refused, and
-  `v`, `impl`, `data_root` and `inputs_root` need `--force`, which needs the owner's approval (rule 10).
+  `v`, `impl` and `data_root` need `--force`, which needs the owner's approval (rule 10).
 - Pass a list as one argument: `'["one", "two"]'`.
 - Never end a quoted Windows path with a backslash.
 - Before it writes anything, the tool refuses (exit 2, `<CFG>` unchanged):

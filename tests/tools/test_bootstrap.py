@@ -372,7 +372,6 @@ class ConfigCommands(Temp):
         keys = json.loads(run("config", "get", "fake", "--json")[1])["keys"]
         self.assertEqual(keys["fk_source"], "missing (the app's default applies)")
         self.assertTrue(keys["fk_token_file"].startswith("null (checked as given"))
-        self.assertEqual(keys["inputs_root"], "missing")
 
 
 class Checkpoints(Temp):

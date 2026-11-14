@@ -3,8 +3,7 @@
 `dc_archive` keeps a protected data root, append-only ledger and `index/discord.sqlite`.
 The app includes a stdlib fetch step (`fetch.py`) with API and token-free desktop-cache sources.
 Archive-only configs remain read-only; `dc_sync: true` makes live `manage.py capture discord` update the
-archive before capturing it. Frozen inputs never call a fetch step.
-
+archive before capturing it.
 ## Collection and authentication
 
 The configured source is `dc_source: "desktop"` or `"api"`. Desktop mode reads only Discord's HTTP cache,
@@ -121,7 +120,7 @@ thread channel and reference replies. Query/selection filters do not cut a threa
 previous text when their content is empty. The index, the query language and the output are the root README's
 ("Search").
 
-Frozen input sets read `<inputs_root>/<set>/dc/archive`. Scheduled capture runs as SYSTEM (times and limit:
+Scheduled capture runs as SYSTEM (times and limit:
 [../README.md](../README.md#scheduled-tasks)). Run genesis manually (or plan a 2-hour task limit) for a large archive.
 With `dc_sync` disabled, an external fetch step must finish before capture starts. With it enabled, collection
 runs inside the app's live read hook.

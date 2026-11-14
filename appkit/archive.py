@@ -104,10 +104,10 @@ def read_token(env, configured, bad):
 
 
 def fetch_first(ctx, enabled, archive, app):
-    """An origin's read on live capture with the app's *_sync on: run the app's fetch step into its archive first
+    """An origin's read with the app's *_sync on: run the app's fetch step into its archive first
     (unless the fetch step itself started this capture: RAWLAYER_ARCHIVE_READY). Any fetch error stops the
     origin's read, so nothing half-fetched is diffed."""
-    if enabled and ctx.inputs.name == "live" and os.environ.get("RAWLAYER_ARCHIVE_READY") != "1":
+    if enabled and os.environ.get("RAWLAYER_ARCHIVE_READY") != "1":
         import importlib
         from rawlayer.capture.precheck import check
         check(archive)

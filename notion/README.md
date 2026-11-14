@@ -2,7 +2,7 @@
 
 `nt_archive` reads atomic archive snapshots. The app includes a token-free Notion Desktop SQLite reader and
 an official `ntn` API fetch step. Its ledger and `index/notion.sqlite` belong in its own protected data root.
-`nt_sync: true` makes live `manage.py capture notion` update the archive first; frozen inputs stay read-only.
+`nt_sync: true` makes live `manage.py capture notion` update the archive first.
 
 ## Collection and authentication
 
@@ -106,7 +106,7 @@ trashed/gone, or it is missing from current page order; missing pages leave orde
 before their page still fold deterministically. Breadcrumbs query parent links recursively, with cycle guards.
 The index, the query language and the output are the root README's ("Search").
 
-Frozen inputs read `<inputs_root>/<set>/nt/archive`. SYSTEM capture runs on the schedule in
+SYSTEM capture runs on the schedule in
 [../README.md](../README.md#scheduled-tasks). Desktop mode can use this task. API sync with `ntn` must run as the owning user because its
 keychain is per-user; the existing SYSTEM task installer refuses `nt_sync` with `nt_source: "api"`.
 Archive-only SYSTEM capture can still consume an archive completed by a user-account API fetch step.
