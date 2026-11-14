@@ -23,12 +23,6 @@ a capture that is not a plain-text send (+0x180 != 10) refuses `not_plain_room`:
   listen     stay resident and, 0.3s after the owner sends a plain-text message starting with the prefix,
              send the same message prefix-stripped into the same room, each reply's msgId taken from the
              same state counter `send` uses (a non-plain capture is skipped)
-  observe    read-only and owner-gated: watch the client's WRITE response handler while the owner sends one
-             message by hand (admin sends nothing), pinning where logId/sendAt sit — ids masked in output;
-             --reply captures the owner's next hand reply through the builder hook instead (the gate value
-             and the extra string, written beside the template); --events discovers the incoming-push
-             handler: read-only loggers on the LocoManager vtable's code entries while one message arrives
-             from the phone
 
 `rooms` and `send` name the chat by `--chat-id` or `--room <title fragment>` (exactly one of the two): the
 fragment resolves read-only from the search index before anything touches the client, with search's own
@@ -108,8 +102,6 @@ VERSION_SPECS = {
         "sentinel": 0x0267D2AA,              # the client's empty-slot value for optional string members
         "rdata_lo": 0x01F00000,              # image .rdata range a room vtable must sit in
         "rdata_hi": 0x02720000,
-        "code_lo": 0x00401000,               # the module's code range: vtable entries in it are hookable
-        "code_hi": 0x01F00000,               # (below .rdata; the known handlers sit at 0x017F/0x0180)
         "msg_size": 0x1D0,                   # the message object the builder reads
         "plain_no_extra": 10,                # the message-type gate value of a plain-text send (no "extra")
         # the two hooked functions' stack layouts, and the outer pair handed to the builder
@@ -140,9 +132,6 @@ VERSION_SPECS = {
 TEXT_MAX_UTF8 = 200
 CALIBRATE_WAIT = 180                     # seconds the owner has to send the calibration message
 RESPONSE_WAIT = 12                       # seconds a send waits for the client's WRITE response
-EVENTS_CANDIDATE_SLOTS = 64              # LocoManager vtable entries read as handler candidates
-EVENTS_MAX_HOOKS = 32                    # the bounded set actually hooked during discovery
-EVENTS_WAIT = 180                        # seconds the owner has to send one message from the phone
 
 _HEX = re.compile(r"[0-9a-f]+\Z")
 k32 = ctypes.windll.kernel32
@@ -668,148 +657,6 @@ Interceptor.attach(BUILDER, {
 send('[ARMED] listener armed');
 """
 
-OBSERVE_JS = r"""
-var RESHANDLER = ptr(%(reshandler)#x);
-var ROOM_HOLDER = %(off_room_holder)#x, HOLDER_CHAT = %(off_holder_chat)#x, PEEK = %(peek)d;
-var done = false;
-// read-only: nothing is called, only the handler's own arguments and what they point at are read; every
-// u64 leaves as an exact decimal string
-function peek(p) {
-    var u32 = [], u64 = [];
-    for (var o = 0; o < PEEK; o += 4) u32.push(p.add(o).readU32());
-    for (var o2 = 0; o2 < PEEK; o2 += 8) u64.push(p.add(o2).readU64().toString());
-    return {u32: u32, u64: u64};
-}
-Interceptor.attach(RESHANDLER, {
-    onEnter: function () {
-        if (done) return;
-        done = true;
-        try {
-            var esp = this.context.esp, out = {regs: {}, args: []};
-            var names = ['edx', 'esi', 'edi', 'ebx'];   // ecx is the room (thiscall); args sit on the stack
-            for (var r = 0; r < names.length; r++) {
-                try { out.regs[names[r]] = peek(this.context[names[r]]); } catch (er) {}
-            }
-            try {
-                out.room = this.context.ecx.add(ROOM_HOLDER).readPointer().add(HOLDER_CHAT).readU64().toString();
-            } catch (e0) {}
-            for (var s = 1; s <= 8; s++) {              // esp+0 is the return address; the args follow
-                var v = esp.add(s * 4).readU32(), arg = {esp: s * 4, u32: v};
-                if (v > 65536) {                        // pointer-shaped: read what it points at
-                    try { arg.peek = peek(ptr(v)); } catch (ep) {}
-                }
-                out.args.push(arg);
-            }
-            send('[OBS] ' + JSON.stringify(out));
-        } catch (e) { send('[OBS-FAIL] ' + e); }
-    }
-});
-send('[ARMED] send ONE message by hand now; admin sends nothing');
-"""
-
-REPLY_OBSERVE_JS = r"""
-var BUILDER = ptr(%(builder)#x), MSG_SIZE = %(msg_size)d, SENTINEL = %(sentinel)#x;
-var OFF_EXTRA = %(off_extra)#x, OFF_GATE = %(off_extra_gate)#x, OFF_TEXT = %(off_text)#x;
-var OFF_CHAT = %(off_chat_id)#x, OFF_MSGID = %(off_msg_id)#x;
-var OUTER_OFF = %(builder_msgouter_off)#x, TEXT_PRE = %(text_hdr_pre)d, LEN_OFF = %(text_len_off)#x;
-function hx(arr) {
-    var s = [];
-    for (var i = 0; i < arr.length; i++) s.push(('0' + arr[i].toString(16)).slice(-2));
-    return s.join('');
-}
-var done = false;
-Interceptor.attach(BUILDER, {
-    onEnter: function () {
-        if (done) return;
-        done = true;
-        try {
-            var ec = this.context.ecx, esp = this.context.esp;
-            var inner = esp.add(OUTER_OFF).readPointer().readPointer();
-            var textPtr = inner.add(OFF_TEXT).readPointer();
-            var origLen = 0;
-            while (textPtr.add(origLen).readU8() !== 0 && origLen < 512) origLen++;
-            var xp = inner.add(OFF_EXTRA).readU32();
-            var extra = {ptr: xp, hdr: null, len: null, text: null};
-            if (xp !== SENTINEL) {                 // off the plain path: the extra string pointer
-                try {
-                    var p = ptr(xp);
-                    extra.len = p.add(LEN_OFF).readU32();
-                    extra.hdr = hx(new Uint8Array(p.sub(TEXT_PRE).readByteArray(16)));
-                    extra.text = p.readUtf8String(extra.len > 512 ? 512 : extra.len);
-                } catch (e) {}
-            }
-            send('[CAP] ' + JSON.stringify({
-                chatId: inner.add(OFF_CHAT).readU64().toString(),
-                msgId: inner.add(OFF_MSGID).readU32(),
-                gate: inner.add(OFF_GATE).readU32(),
-                extra: extra,
-                textUtf8: origLen,
-                template_hex: hx(new Uint8Array(inner.readByteArray(MSG_SIZE))),
-                texthdr_hex: hx(new Uint8Array(textPtr.sub(TEXT_PRE).readByteArray(32)))
-            }));
-        } catch (e) { send('[CAP-FAIL] ' + e); }
-    }
-});
-send('[ARMED] REPLY once by hand in the UI now; admin sends nothing');
-"""
-
-EVENTS_OBSERVE_JS = r"""
-var OFF_CHAT = %(off_chat_id)#x, OFF_MSGID = %(off_msg_id)#x, OFF_SENDER_LO = %(off_sender_lo)#x;
-var OFF_SENDER_HI = %(off_sender_hi)#x, OFF_GATE = %(off_extra_gate)#x, OFF_TEXT = %(off_text)#x;
-var ROOM_HOLDER = %(off_room_holder)#x, HOLDER_CHAT = %(off_holder_chat)#x;
-var ROOM_CHAT = uint64('%(room_chat)s'), PEEK = %(peek)d;
-var CANDS = [%(cands)s];                 // LocoManager vtable entries in the code range (from Proc)
-var armedAt = Date.now(), seen = {};
-
-// read-only: nothing is called. Every entry reports its slot and ms since arming (a recurring dispatcher
-// is separable from a message-driven one); the arguments themselves are read on the first TWO entries only
-// — ids leave as exact decimal strings and are masked on the Python side
-function peek(p) {
-    var u32 = [], u64 = [];
-    for (var o = 0; o < PEEK; o += 4) u32.push(p.add(o).readU32());
-    for (var o2 = 0; o2 < PEEK; o2 += 8) u64.push(p.add(o2).readU64().toString());
-    return {u32: u32, u64: u64};
-}
-function shape(ctx) {
-    var out = {args: [], room_match: false, ecx_room_match: false};
-    var idx = OFF_CHAT / 8;              // the chatId offset as an index into the u64 peek
-    for (var s = 1; s <= 6; s++) {
-        var v = ctx.esp.add(s * 4).readU32(), arg = {esp: s * 4, u32: v};
-        if (v > 65536) {
-            try {
-                arg.peek = peek(ptr(v));
-                if (arg.peek.u64.length > idx && arg.peek.u64[idx] === ROOM_CHAT.toString()) {
-                    out.room_match = true;          // an argument points at our room's message object
-                }
-            } catch (e) {}
-        }
-        out.args.push(arg);
-    }
-    try {
-        out.ecx_room_match = ctx.ecx.add(ROOM_HOLDER).readPointer().add(HOLDER_CHAT).readU64()
-            .equals(ROOM_CHAT);                     // thiscall: ecx is a TalkChatRoom of ours
-    } catch (er) {}
-    return out;
-}
-for (var i = 0; i < CANDS.length; i++) {
-    (function (slot, fn) {
-        Interceptor.attach(fn, {
-            onEnter: function () {
-                var s = seen[slot] || (seen[slot] = {n: 0});
-                s.n += 1;
-                var out = {slot: slot, t: Date.now() - armedAt};
-                if (s.n <= 2) {
-                    try { out.shape = shape(this.context); } catch (e) {}
-                }
-                send('[FIRE] ' + JSON.stringify(out));
-            }
-        });
-    })(i, CANDS[i]);
-}
-send('[ARMED] send ONE message from the PHONE now; admin sends nothing');
-"""
-
-
 # -------------------------------------------------------------------------------------------------------- commands
 
 def cmd_check(a):
@@ -1159,145 +1006,8 @@ def cmd_listen(a):
             "stopped_by": stopped_by}, 0
 
 
-def _masked(value, secrets):
-    """The observation map with every known id replaced by "<id>": the output names offsets, types and
-    candidate values, never the owner's chat or user id (ids may also arrive as decimal strings)."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return "<id>" if value in secrets else value
-    if isinstance(value, str):
-        try:
-            return "<id>" if int(value) in secrets else value
-        except ValueError:
-            return value
-    if isinstance(value, list):
-        return [_masked(item, secrets) for item in value]
-    if isinstance(value, dict):
-        return {key: _masked(item, secrets) for key, item in value.items()}
-    return value
-
-
-def _observe_reply(a):
-    """`observe --reply`: read-only and owner-gated — capture the owner's next hand REPLY through the proven
-    builder hook: the client's internal gate value and the extra string (its layout and exact bytes), the
-    two unknowns a reply-sending clone needs. admin.py sends nothing; the captured bytes are written beside
-    the template like the calibration template, and the printed JSON carries the gate value, lengths and the
-    extra string itself (the owner's explicit allowance)."""
-    pid, _proc, spec = guards()
-    session, script, lines, detached = _attach(pid, _render(REPLY_OBSERVE_JS, spec))
-    try:
-        line, _ = _collect(lines, ("[CAP]", "[CAP-FAIL]", "[SCRIPT-ERROR]"), CALIBRATE_WAIT + 10,
-                           stop=lambda: bool(detached))
-    finally:
-        _teardown(session, script)
-    if not line or not line.startswith("[CAP] "):
-        saw = [l[:60] for l in lines[:3]]
-        if not line:
-            return {"status": "no_observation", "saw": saw}, 2
-        return {"status": "observation_failed", "saw": saw}, 2
-    try:
-        cap = json.loads(line[6:])
-        extra = cap["extra"]
-    except (ValueError, KeyError, TypeError):
-        return {"status": "observation_failed", "saw": [line[:60]]}, 2
-    capture = {"v": 1, "captured_at": now(), "chatId": int(cap["chatId"]), "msgId": cap["msgId"],
-               "gate": cap["gate"], "extra_ptr": extra["ptr"], "extra_len": extra["len"],
-               "extra_text": extra["text"], "extra_hdr_hex": extra["hdr"],
-               "text_utf8_bytes": cap["textUtf8"], "template_hex": cap["template_hex"],
-               "texthdr_hex": cap["texthdr_hex"]}
-    path = Path(a.template).with_name("reply-capture.json")
-    atomic(path.parent, path, capture)
-    return {"status": "ok", "gate": cap["gate"], "extra_len": extra["len"], "extra": extra["text"],
-            "written": str(path)}, 0
-
-
-def _observe_events(a):
-    """`observe --events`: read-only and owner-gated — the discovery step for the incoming-event stream. It
-    reads the LocoManager's vtable through Proc (no frida yet), hooks a bounded set of its code-range
-    entries with a read-only first-entry logger, and reports which fire while an incoming push arrives (the
-    owner sends ONE message from the PHONE; a PC-side send does not exercise incoming handling). admin.py
-    sends nothing; the output carries slot numbers, offsets, types and masked values only."""
-    pid, proc, spec = guards()
-    tpl = read_template(a.template, spec)
-    lm = proc.u32(spec["loco_global"])
-    vt = proc.u32(lm) if lm else None
-    if not vt:
-        bad("no_vtable")
-    blob = proc.read(vt, 4 * EVENTS_CANDIDATE_SLOTS) or b""
-    entries = struct.unpack("<%dI" % (len(blob) // 4), blob)
-    cands = [e for e in entries if spec["code_lo"] < e < spec["code_hi"]][:EVENTS_MAX_HOOKS]
-    if not cands:
-        bad("no_candidates")
-    source = _render(EVENTS_OBSERVE_JS, spec, room_chat="0x%X" % tpl["chatId"],
-                     cands=", ".join("ptr(%#x)" % c for c in cands), peek=64)
-    session, script, lines, detached = _attach(pid, source)
-    armed_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    try:
-        deadline = time.time() + EVENTS_WAIT      # the full window: a single background fire proves nothing
-        while time.time() < deadline and not detached \
-                and not any(l.startswith("[SCRIPT-ERROR]") for l in lines):   # a dead script never fires
-            time.sleep(1)
-    finally:
-        _teardown(session, script)
-    per = {}
-    for line in lines:
-        if not line.startswith("[FIRE] "):
-            continue
-        try:
-            fire = json.loads(line[7:])
-        except ValueError:
-            continue
-        slot = fire.get("slot")
-        if not isinstance(slot, int) or not 0 <= slot < len(cands):
-            continue
-        d = per.setdefault(slot, {"slot": slot, "address": hex(cands[slot]),
-                                  "count": 0, "times": [], "shapes": []})
-        d["count"] += 1
-        d["times"].append(fire.get("t"))
-        if fire.get("shape") is not None:
-            d["shapes"].append(fire["shape"])
-    secrets = {tpl["chatId"], tpl["sender_id"], tpl["chatId"] >> 32, tpl["chatId"] & 0xFFFFFFFF}
-    body = {"armed_at": armed_at, "candidates": [hex(c) for c in cands],
-            "vtable_slots": len(entries), "hooked": len(cands),
-            "fired": [_masked(per[s], {s for s in secrets if s}) for s in sorted(per)]}
-    if not per:
-        return {"status": "no_observation", **body}, 2
-    return {"status": "ok", **body}, 0
-
-
-def cmd_observe(a):
-    """Read-only and owner-gated (never run it without the owner's explicit yes): watch the client's own
-    WRITE response handler while the owner sends one message by hand, to pin where logId and sendAt sit —
-    admin.py itself sends nothing and calls nothing."""
-    if getattr(a, "reply", False):
-        return _observe_reply(a)
-    if getattr(a, "events", False):
-        return _observe_events(a)
-    pid, _proc, spec = guards()
-    tpl = read_template(a.template, spec)
-    session, script, lines, detached = _attach(pid, _render(OBSERVE_JS, spec, peek=64))
-    try:
-        line, _ = _collect(lines, ("[OBS]", "[OBS-FAIL]", "[SCRIPT-ERROR]"), CALIBRATE_WAIT + 10,
-                           stop=lambda: bool(detached))
-    finally:
-        _teardown(session, script)
-    if not line or not line.startswith("[OBS] "):
-        saw = [l[:60] for l in lines[:3]]    # load error ("[SCRIPT-ERROR] ...") vs the hook never firing
-        if not line:
-            return {"status": "no_observation", "saw": saw}, 2
-        return {"status": "observation_failed", "saw": saw}, 2
-    try:
-        obs = json.loads(line[6:])
-    except ValueError:
-        bad("observation_failed")
-    secrets = {tpl["chatId"], tpl["sender_id"], tpl["chatId"] >> 32, tpl["chatId"] & 0xFFFFFFFF}
-    return {"status": "ok", "observation": _masked(obs, {s for s in secrets if s}),
-            "note": "offsets, types and candidate values only; the owner's ids are masked"}, 0
-
-
 COMMANDS = {"check": cmd_check, "calibrate": cmd_calibrate, "rooms": cmd_rooms,
-            "send": cmd_send, "listen": cmd_listen, "observe": cmd_observe}
+            "send": cmd_send, "listen": cmd_listen}
 
 
 def main(argv=None):
@@ -1318,13 +1028,6 @@ def main(argv=None):
     s = sub.choices["listen"]
     s.add_argument("--prefix", default="!!", help="command prefix the listener reacts to")
     s.add_argument("--lifetime", type=int, default=0, help="seconds to stay resident (0: until Ctrl+C)")
-    sub.choices["observe"].add_argument("--reply", action="store_true",
-                                        help="capture the owner's next hand REPLY instead: the internal gate "
-                                             "value and the extra string (read-only builder hook)")
-    sub.choices["observe"].add_argument("--events", action="store_true",
-                                        help="discover the incoming-push handler: read-only hooks on the "
-                                             "LocoManager vtable's code entries while ONE message arrives "
-                                             "from the phone")
     a = p.parse_args(sys.argv[1:] if argv is None else argv)
     try:
         a.template = data_path(a.template)   # inside the try: an unsafe path is JSON + exit 2, never a traceback

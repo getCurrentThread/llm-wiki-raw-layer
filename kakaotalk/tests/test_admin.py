@@ -17,7 +17,6 @@ import json
 import os
 import re
 import sqlite3
-import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,7 +35,7 @@ CAP = {"chatId": str(2 ** 53 + 1), "msgId": 5, "senderLo": 7, "senderHi": 0, "ro
        "room180": 10, "template_hex": "00" * 0x1D0, "texthdr_hex": "00" * 32}
 SPEC_KEYS = frozenset({
     "builder", "builder_prologue", "reshandler", "reshandler_prologue", "loco_global", "loco_state_off",
-    "loco_logged_in", "sentinel", "rdata_lo", "rdata_hi", "code_lo", "code_hi", "msg_size",
+    "loco_logged_in", "sentinel", "rdata_lo", "rdata_hi", "msg_size",
     "plain_no_extra", "builder_msgouter_off", "resh_err_off", "resh_msg_off", "msgouter_size",
     "msgouter_hi_off", "off_chat_id", "off_sender_lo", "off_sender_hi", "off_msg_id", "off_msg_pad",
     "off_text", "off_supplement", "off_extra", "off_extra_gate", "off_room_holder", "off_holder_chat",
@@ -58,8 +57,7 @@ class TestVersionTable(unittest.TestCase):
                         self.assertIsInstance(spec[key], int)
 
     def test_the_raw_templates_carry_no_addresses_or_offsets(self):
-        for name in ("CALIBRATE_JS", "SEND_JS", "LISTEN_JS", "OBSERVE_JS", "REPLY_OBSERVE_JS",
-                     "EVENTS_OBSERVE_JS"):
+        for name in ("CALIBRATE_JS", "SEND_JS", "LISTEN_JS"):
             with self.subTest(name=name):
                 self.assertEqual(re.findall(r"0x[0-9a-fA-F]+", getattr(admin, name)), [])
 
@@ -343,79 +341,6 @@ class TestListen(unittest.TestCase):
 
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
-class TestObserve(unittest.TestCase):
-    def test_the_reply_capture_hook_renders_from_the_table(self):
-        js = admin._render(admin.REPLY_OBSERVE_JS, SPEC)
-        self.assertNotIn("%(", js)
-        self.assertIn("ptr(%#x)" % SPEC["builder"], js)
-        self.assertIn("if (xp !== SENTINEL)", js)             # the plain path's sentinel extra pointer
-
-    def test_the_reply_capture_writes_its_file_and_reports_shapes(self):
-        cap_obj = {"chatId": "9007199254740993", "msgId": 5, "gate": 26, "textUtf8": 3,
-                   "extra": {"ptr": 4251080, "hdr": "00" * 16, "len": 91, "text": '{"src_logId": 39}'},
-                   "template_hex": "00", "texthdr_hex": "00"}
-        cap = "[CAP] " + json.dumps(cap_obj)
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, [cap], [])), \
-                mock.patch.object(admin, "_collect",
-                                  lambda got, prefixes, timeout, stop=None:
-                                  (next((l for l in got if l.startswith(prefixes)), None), list(got))), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            body, code = admin._observe_reply(SimpleNamespace(template=os.path.join(folder, "tpl.json")))
-            written = json.loads(Path(body["written"]).read_text(encoding="utf-8"))
-        self.assertEqual((code, body["status"], body["gate"], body["extra_len"]), (0, "ok", 26, 91))
-        self.assertIn("src_logId", body["extra"])            # the owner's allowed real-value output
-        self.assertEqual((written["chatId"], written["msgId"], written["gate"]),
-                         (2 ** 53 + 1, 5, 26))               # exact 64-bit, never through a double
-        self.assertEqual(written["extra_text"], body["extra"])
-
-    def test_an_unfired_reply_hook_reports_what_was_seen(self):
-        lines = ["[ARMED] REPLY once by hand in the UI now; admin sends nothing"]   # 62 chars: saw truncates
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, list(lines), [])), \
-                mock.patch.object(admin, "_collect",
-                                  lambda got, prefixes, timeout, stop=None: (None, list(got))), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            body, code = admin._observe_reply(SimpleNamespace(template=os.path.join(folder, "tpl.json")))
-        self.assertEqual((code, body["status"]), (2, "no_observation"))
-        self.assertEqual(body["saw"], [l[:60] for l in lines])
-
-    def test_the_observation_hook_renders_from_the_table(self):
-        js = admin._render(admin.OBSERVE_JS, SPEC, peek=64)
-        self.assertNotIn("%(", js)
-        self.assertIn("ptr(%#x)" % SPEC["reshandler"], js)
-        self.assertIn("send('[OBS] ' + JSON.stringify(out))", js)
-
-    def test_an_unfired_hook_reports_what_was_seen(self):
-        lines = ["[ARMED] send ONE message by hand now; admin sends nothing"]
-        with mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, list(lines), [])), \
-                mock.patch.object(admin, "_collect",
-                                  lambda got, prefixes, timeout, stop=None: (None, list(got))), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            body, code = admin.cmd_observe(SimpleNamespace(template="t.json", state=None))
-        self.assertEqual((code, body["status"]), (2, "no_observation"))
-        self.assertEqual(body["saw"], lines)      # armed-but-never-fired, told apart from a load error
-
-    def test_observation_output_masks_the_owners_ids(self):
-        chat, sender = 0xAB000000CD, 4242
-        secrets = {s for s in (chat, sender, chat >> 32, chat & 0xFFFFFFFF) if s}
-        obs = {"room": str(chat), "regs": {"edx": {"u32": [sender, 5], "u64": [str(chat), "1762000000123"]}},
-               "args": [{"esp": 8, "u32": sender, "peek": {"u32": [sender, chat & 0xFFFFFFFF],
-                                                           "u64": [str(chat), "9007199254740993"]}}]}
-        masked = admin._masked(obs, secrets)
-        self.assertEqual(masked["room"], "<id>")
-        self.assertEqual(masked["regs"]["edx"]["u32"], ["<id>", 5])      # timestamps and candidates pass
-        self.assertEqual(masked["regs"]["edx"]["u64"], ["<id>", "1762000000123"])
-        self.assertEqual(masked["args"][0]["u32"], "<id>")
-        self.assertEqual(masked["args"][0]["peek"]["u32"], ["<id>", "<id>"])
-        self.assertEqual(masked["args"][0]["peek"]["u64"], ["<id>", "9007199254740993"])
-
-
-@unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
 class TestRoomResolution(unittest.TestCase):
     ROOMS = [("16", "가족 채팅방"), ("17", "Work Room"), ("18", ""), ("19", "100% Room")]
 
@@ -508,94 +433,6 @@ class TestRoomResolution(unittest.TestCase):
             self.assertEqual(seen["chat_id"], 16)   # an int, resolved in main before the command runs
         finally:
             own.cleanup()
-
-
-@unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
-class TestEventsDiscovery(unittest.TestCase):
-    VT = 0x500000                                     # a synthetic vtable address
-    ENTRIES = [0x1000, SPEC["code_lo"] + 0x1000, 0x2000000, SPEC["code_lo"] + 0x2000,
-               SPEC["code_hi"] - 0x10]                # 3 code-range candidates survive the filter
-
-    class FakeProc:
-        def __init__(self, entries):
-            self.entries = entries
-
-        def u32(self, address):
-            return {SPEC["loco_global"]: 0x300000, 0x300000: TestEventsDiscovery.VT}.get(address)
-
-        def read(self, address, size):
-            if address == TestEventsDiscovery.VT and size == 4 * admin.EVENTS_CANDIDATE_SLOTS:
-                blob = self.entries + [0] * (admin.EVENTS_CANDIDATE_SLOTS - len(self.entries))
-                return struct.pack("<%dI" % len(blob), *blob)
-            return None
-
-    class Clock:                              # the full-window wait, without real waiting
-        def __init__(self):
-            self.t = 1000.0
-
-        def time(self):
-            return self.t
-
-        def sleep(self, seconds):
-            self.t += seconds
-
-        def strftime(self, fmt, ts):
-            return "armed"
-
-        def localtime(self, ts=None):
-            return ts
-
-    def run_events(self, lines, entries=None):
-        proc = self.FakeProc(self.ENTRIES if entries is None else entries)
-        with mock.patch.object(admin, "guards", lambda: (1, proc, SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, list(lines), [])), \
-                mock.patch.object(admin, "time", self.Clock()), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            return admin._observe_events(SimpleNamespace(template="t.json"))
-
-    def test_the_discovery_hook_reports_counts_times_and_masked_shapes(self):
-        shape = {"args": [{"esp": 4, "u32": 7,
-                           "peek": {"u32": [7], "u64": [str(TPL["chatId"]), "9007199254740993"]}}],
-                 "room_match": True, "ecx_room_match": False}
-        lines = ["[ARMED] send ONE message from the PHONE now; admin sends nothing",
-                 "[FIRE] " + json.dumps({"slot": 1, "t": 120, "shape": shape}),
-                 "[FIRE] " + json.dumps({"slot": 1, "t": 61000}),           # a recurring fire: count only
-                 "[FIRE] " + json.dumps({"slot": 1, "t": 121000}),
-                 "[FIRE] " + json.dumps({"slot": 2, "t": 400, "shape": shape})]
-        body, code = self.run_events(lines)
-        self.assertEqual((code, body["status"], body["hooked"]), (0, "ok", 3))
-        self.assertEqual(body["vtable_slots"], admin.EVENTS_CANDIDATE_SLOTS)
-        self.assertEqual(body["armed_at"], "armed")
-        self.assertEqual(len(body["candidates"]), 3)   # code addresses are printed: they are not ids
-        by_slot = {f["slot"]: f for f in body["fired"]}
-        self.assertEqual((by_slot[1]["count"], by_slot[1]["times"]), (3, [120, 61000, 121000]))
-        self.assertEqual(len(by_slot[1]["shapes"]), 1)  # arguments read on the first entries only
-        peeked = by_slot[1]["shapes"][0]["args"][0]["peek"]["u64"]
-        self.assertEqual(peeked[0], "<id>")             # the room id, masked
-        self.assertEqual(peeked[1], "9007199254740993")
-        source = admin._render(admin.EVENTS_OBSERVE_JS, SPEC, room_chat="0x10",
-                               cands="ptr(0x1000)", peek=64)
-        self.assertNotIn("%(", source)
-        self.assertIn("uint64('0x10')", source)        # the known room id, as the exact-compare lens
-        self.assertIn("CANDS = [ptr(0x1000)]", source)
-
-    def test_no_code_candidates_refuse_before_attaching(self):
-        attached = []
-        with mock.patch.object(admin, "guards",
-                               lambda: (1, self.FakeProc([0x1000, 0x2000000]), SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "time", self.Clock()), \
-                mock.patch.object(admin, "_attach",
-                                  lambda pid, src: attached.append(src) or (None, None, [], [])):
-            with self.assertRaises(FetchError) as cm:
-                admin._observe_events(SimpleNamespace(template="t.json"))
-        self.assertEqual(cm.exception.category, "no_candidates")
-        self.assertEqual(attached, [])                 # refused before anything was hooked
-
-    def test_no_fire_reports_no_observation(self):
-        body, code = self.run_events(["[ARMED] send ONE message from the PHONE now; admin sends nothing"])
-        self.assertEqual((code, body["status"], body["fired"]), (2, "no_observation", []))
 
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")

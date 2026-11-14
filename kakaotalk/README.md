@@ -232,23 +232,6 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   handler's first-level arguments or registers (they sit in second-level objects), so those keys stay
   absent until a deeper read-only capture pins them. With the handler confirmed firing, a response (and
   `err_code`) can be expected on ordinary sends.
-- `observe` is read-only and owner-gated (ask before ever running it: it attaches frida to the running
-  client): it hooks only the WRITE response handler while the owner sends one message by hand — admin.py
-  sends nothing and calls no client function — and prints one JSON line naming the handler's argument
-  offsets, types and candidate values with the owner's chat/user ids masked, then detaches. It waits up to
-  three minutes for that one hand-sent message; if nothing fires it reports what it saw. Its purpose is to
-  pin where `logId`/`sendAt` sit so `send` can report them. `observe --reply` captures instead through the
-  WRITE builder hook (the one proven to fire): the owner replies once by hand in the UI and the capture —
-  the internal gate value, the `+0x17c` extra string, the message bytes — is written beside the template
-  (`reply-capture.json`, like the calibration template, never printed raw). `observe --events` is the
-  discovery step for a future read-only `events` stream: it reads the LocoManager's vtable through the
-  client's memory (no hooks yet), then attaches read-only loggers on a bounded set of its code-range
-  entries (up to 32: arguments of each slot's first two entries, plus call counts and times since arming)
-  for the full window while ONE message arrives **from the phone** — a PC-side send does not exercise
-  incoming handling. Output: candidate code addresses, slot numbers, offsets, types and masked values
-  only; three minutes, then detach. The approved rounds (2026-11-02) found only the generic dispatch pump
-  firing, in bursts unrelated to the incoming messages: typed incoming-message handling does not surface at
-  these vtable entries, so no `events` command exists yet.
 - `listen` reacts only to the owner's own plain-text sends starting with the prefix (the calibrated sender
   id; a non-plain capture is skipped with a `[SKIP] not plain` event), echoes them prefix-stripped 0.3s later
   into the same room — built by the same shared clone builder and readback gates `send` uses — and each
