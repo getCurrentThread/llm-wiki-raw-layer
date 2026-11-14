@@ -117,9 +117,3 @@ The fetch step overlaps minute-level edit timestamps and performs daily full swe
 remain separate containers; synced blocks fetch original children. It queries comments on each block instead
 of assuming page-level queries include inline discussions. Failed child/comment requests cannot mark a page
 gone: only an inaccessible page lookup does so. Backoff handles throttling/transient failures.
-
-## Wiki export
-
-`nt_wiki_project`, `nt_wiki_include`, `nt_wiki_exclude` and `nt_wiki_since` configure `manage.py collect notion` (llm.md 13), which
-writes one Markdown file per page (headings kept) into the wiki vault's `raw/sources/notion/`. Empty by
-default: nothing is exported.

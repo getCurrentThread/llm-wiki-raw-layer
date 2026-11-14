@@ -376,8 +376,8 @@ Record the pass, which lets a non-elevated doctor report the app as live (sectio
 3. Poll each app (5.9) with that `<T0>`.
 4. Send one batch with `status` for every app (prompt 2), and finish 5.10 per app.
 
-If one app's install rc is not 0, gate the other apps normally. After the fix, run 5.8–5.10 for the failed app
-alone, with a new `<T0>`.
+If one app's install rc is not 0, gate the other apps normally. After the fix, re-register the failed app alone
+(section 9).
 
 ## 6. App cards
 
@@ -830,6 +830,11 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 
 ## 9. Troubleshooting
 
+**Re-register** is the recovery sequence the rows below name: for each app it covers, run 5.7 (with a new `<PY>`
+when that is the fix); print `<T0>` (5.8 step 1); send one 7.2 batch with `install` for every one of them, then
+`status` for every one, then `run` for every one, gating each command by 5.8's gates on its own `rc=` line; then
+run 5.9 per app and one 5.10 batch.
+
 | symptom | cause | fix |
 |---|---|---|
 | `setup` exit 2, config already there | existing config | keep it; `--force` only on the owner's request |
@@ -849,8 +854,8 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`capture`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
 | `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires gm_imap_user`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
-| Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch |
-| elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task |
+| Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Re-register them with the new `<PY>` |
+| elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise re-register, from this checkout, each in-scope app with a task |
 | `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `capture` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
 | `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded fetch runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
@@ -966,7 +971,18 @@ when the owner asks for it (AGENTS.md). The sources hold plaintext like the inde
 under `<DATA_PARENT>`. Ingest sends the sources' text to Claude, under the owner's Claude Code sign-in: private
 messages leave the machine. That choice is the owner's. The command prints counts only; run it only when the
 owner asks. It refuses to run as LocalSystem (exit 2, nothing read or written), so it can never be a SYSTEM task, and
-an app exports only when its `apps.py` declares `wiki` (CORE.md, "The app contract").
+an app exports only when its `apps.py` declares `wiki` (CORE.md, "The app contract"):
+
+| app | `wiki` (prefix, layout) | the files under `raw\sources\<app>\` |
+|---|---|---|
+| claudecode | `cc`, chat | per session, `<project › session> (<h8>)\`: its closed months (a session still running this month waits for the month's end) |
+| discord | `dc`, chat | per channel: its closed months |
+| gmail | `gm`, mail | the closed months, a section per mail |
+| kakaotalk | none, chat | per room: its closed months; no config keys, the settings come on the command line (13.4) |
+| mattermost | `mm`, chat | per channel: its closed months |
+| notion | `nt`, page | one file per page, headings kept |
+
+With `<p>_wiki_project` empty (the default) nothing is exported.
 
 **13.1 Ingest tooling (owner).** Claude Code is installed and signed in under the owner's account, and the
 `llm-wiki-ingest` skill sits in `<HOME>\.claude\skills\` with its `scripts\ingest_runner.py` (its docstring and the

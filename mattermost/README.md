@@ -156,9 +156,3 @@ the root README's ("Search").
   The channel label and team come from the channel records. Renames relabel old rows.
 - **Threads.** `--thread <post_id>` takes any post of a thread and prints the root and every reply.
   Selection filters do not apply to a thread; each one that was given is reported on stderr.
-
-## Wiki export
-
-`mm_wiki_project`, `mm_wiki_include`, `mm_wiki_exclude` and `mm_wiki_since` configure `manage.py collect mattermost` (llm.md 13), which
-writes each channel's closed months, packed into Markdown files of about 16,000 characters, into the wiki
-vault's `raw/sources/mattermost/`. Empty by default: nothing is exported.

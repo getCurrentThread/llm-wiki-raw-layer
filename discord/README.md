@@ -132,9 +132,3 @@ ascending snowflake order. Backward pagination covers bursts larger than 100 wit
 `after` ordering. It handles rate-limit headers/429 backoff and binds an API archive to the authenticated
 account digest. The archive format follows DiscordChatExporter (DCE) JSON, and the desktop-cache scan follows
 discrawl's MIT-licensed discorddesktop scanner (`desktop.py`).
-
-## Wiki export
-
-`dc_wiki_project`, `dc_wiki_include`, `dc_wiki_exclude` and `dc_wiki_since` configure `manage.py collect discord` (llm.md 13), which
-writes each channel's closed months, packed into Markdown files of about 16,000 characters, into the wiki
-vault's `raw/sources/discord/`. Empty by default: nothing is exported.

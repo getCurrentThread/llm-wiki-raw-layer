@@ -50,20 +50,8 @@ archive contract and search rows.
     management/base.py         BaseCommand contract
     management/commands/       core commands
   tests/core/                  framework tests with toyapp and toyapp2
-  kakaotalk/                   app package (see kakaotalk/README.md)
-  mattermost/                  app package (see mattermost/README.md)
-  discord/                     DCE JSON archive reader and message/thread search (see discord/README.md)
-  notion/                      page snapshot reader and block search (see notion/README.md)
-  gmail/                       Gmail IMAP archive reader and mail/thread search (see gmail/README.md)
-  claudecode/                  Claude Code conversation archive and session/project search (see claudecode/README.md)
-    apps.py                    AppConfig: label, source keys, options, schedule and task checks
-    origins.py                 origins in processing and commit order
-    inputs.py                  input paths (optional: `AppConfig.archive` gives the archive input)
-    readers/                   source readers
-    vocab.py                   public output vocabulary (optional)
-    search.py                  app index and search interface
-    tests/                     app tests with synthetic inputs
-    config.example.json        machine config shape
+  <app>/                       one package per app (claudecode, discord, gmail, kakaotalk, mattermost, notion): its
+                               README, apps.py, origins.py, readers/, search.py, tests/, config.example.json
   appkit/archive.py            the apps' shared library: the fetch steps' file, lock, token and exit-code helpers and
                                `ArchiveOrigin`; appkit/setup.py: the shared setup defaults (AppConfig.setup_defaults)
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
@@ -75,7 +63,7 @@ archive contract and search rows.
   CORE.md                      core contract
 ```
 
-Every app folder holds the modules shown under `claudecode/` above (CORE.md, "The app contract").
+CORE.md, "The app contract", lists the modules of an app folder.
 The core consists of `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`.
 
 ## Discovery, selection and settings
@@ -151,107 +139,30 @@ other commands' results.
 
 ## Search
 
-`manage.py search <app> --help` lists an app's modes, filters and cursors, and the app README says what a row is
-and where its text and labels come from. Every app shares the rest.
-
-**The index.** `capture`'s index step brings `<DATA_ROOT>/index/<app>.sqlite` up to the committed ledger (search
-reads only `data_root` from the config):
-
-- **Incremental.** Manifests are applied in seq order, one transaction per manifest together with the
-  index's watermark (head seq, plus the sha256 and run id of that manifest).
-- **Full rebuild.** It runs on `capture --rebuild-index`, when the index is missing, unreadable or stamped with
-  another schema/tokenizer/extractor version, when the watermark no longer matches the ledger (the ledger was
-  reset), when a manifest is not a capture manifest, or when the catch-up is very large.
-- **Rebuild and catch-up give the same index.** Both run the same record handling in ledger order.
-- **Only committed manifests are read.** If a manifest's segments are still `*.part`, capture is
-  mid-commit: the index stops before it and reports `behind` (exit 0). An unreadable committed file is
-  a ledger defect (exit 1).
-- **Crash safety.** A rebuild is written to `<name>.sqlite.new`, checked with FTS5 `integrity-check`
-  and `quick_check`, then swapped in. A crash never loses the live index.
-- **One writer.** The index has a writer lock (exit 75 when busy). Searches open the index read-only and are
-  never blocked by it.
-
-**The query language.**
-
-| Query | Meaning |
-|---|---|
-| `배포 일정` | both terms (AND) |
-| `"정기 회의"` | the exact phrase |
-| `회의 OR 미팅` | either term |
-| `배포 -롤백` | the first term, excluding the second |
-| `api*` | prefix |
-
-Text is normalised as NFC + casefold. Each row gets an n-gram shadow column: Korean/CJK runs become overlapping
-bigrams and Latin/digit runs become one token. A query term is issued as an FTS5 phrase over the same tokens
-(tokenizer `ngram-3`; `rawlayer/search/fts.py`'s docstring holds the rules and why each exists). As a result:
-
-- Korean matches as a substring: `배포` finds `배포를` and `재배포`. Particles and common endings are also
-  stripped from query terms unless `--literal` is given or the term is quoted (AGENTS.md).
-- A lone space between Korean words may be left out: `회의실예약` finds `회의실 예약`. Two spaces, a line break
-  or punctuation still separate, and `가나다` does not match `가나 나다`.
-- A Latin/digit run at a term's edge must match a whole run: `api` finds `API 키` but not `rapid`, and
-  `api*` finds `apis`.
-- Quoted phrases and terms with punctuation (`C++`, `AES-256`) match literally after normalisation.
-- Excluded terms use the same match rule as positive ones, and `OR` next to an excluded term is refused.
-- An unquoted term with a Latin/digit run longer than 32,000 characters is refused: SQLite FTS5 cuts tokens at
-  32,768 bytes, so such a run would also match longer runs that start with it.
-- Snippets mark matches with the same case folding the search uses, so `straße` marks `STRASSE`.
-
-A property test in `tests/core/test_fts.py` checks the index against an independent model of these rules on
-thousands of random queries.
-
-**Output.** `--json` prints one envelope: the query as given and as run, `total`, `rows` and
-`index{seq, ledger_seq, stale}`, plus `page` when browsing; large ids are strings. `--explain` prints the FTS5
-expression (the separator token is shown as `<S>`). A stderr note appears when the index is behind the ledger, and
-when a query falls back to a full scan. There is no masking, pseudonymisation or redaction: names, titles and
-texts are shown as they are, and whoever uses the output applies their own privacy rules (AGENTS.md).
+`manage.py search <app> --help` lists an app's query syntax, modes, filters and cursors; each app README says what
+a row is and where its labels come from; AGENTS.md says how to search. How the index follows the committed ledger
+(incremental, rebuilt, crash-safe, one writer) is `rawlayer/search/index.py`'s header, and how text matches (Korean
+as a substring, the n-gram rules and why each exists) is `rawlayer/search/fts.py`'s, checked against an independent
+model by a property test in `tests/core/test_fts.py`. `--json` prints one envelope: the query as given and as run,
+`total`, `rows` and `index{seq, ledger_seq, stale}`, plus `page` when browsing; large ids are strings. Output
+is not masked: whoever uses it applies their own privacy rules (AGENTS.md).
 
 ## Scheduled tasks
 
-Each app's `AppConfig.schedule` in `<app>/apps.py` defines one Windows SYSTEM task:
-
-| app | Task Scheduler path | local start / interval | run limit |
-|---|---|---|---|
-| `kakaotalk` | `\llm-wiki\kakaotalk-capture` | 01:14 / 3 hours | 2 hours |
-| `mattermost` | `\llm-wiki\mattermost-capture` | 02:14 / 3 hours | 1 hour |
-| `discord` | `\llm-wiki\discord-capture` | 00:14 / 3 hours | 1 hour |
-| `notion` | `\llm-wiki\notion-capture` | 03:29 / 6 hours | 1 hour |
-| `gmail` | `\llm-wiki\gmail-capture` | 00:44 / 3 hours | 1 hour |
-| `claudecode` | `\llm-wiki\claudecode-capture` | 02:44 / 3 hours | 1 hour |
-
-The action's Command is the selected Python interpreter, WorkingDirectory is `<PROJECT>`, and Arguments are:
+Each app's `AppConfig.schedule` in `<app>/apps.py` defines one Windows SYSTEM task, `\llm-wiki\<app>-capture`
+(its start, interval and run limit are there). Its action runs, in `<PROJECT>`:
 
 ```
--s -B <PROJECT>\manage.py capture <app> --config <cfg>
+<python> -s -B <PROJECT>\manage.py capture <app> --config <cfg>
 ```
 
-Paths containing spaces are quoted by the generated definition. `install` checks the config, data root,
-interpreter and app task checks before registration, replaces a task of the same name and compares the definition
-read back; `--dry-run` prints the definition without registering it. Install, run and remove require elevation;
-status and dry-run do not. Without an app, install and status operate on every app that has a schedule, using
-default configs; an explicit `--config` belongs to one app. Run and remove require an app when several are
-discovered.
-
-A new start is ignored while a task runs; a missed start runs when the machine returns. `capture` runs its steps
-in one process — the capture step, then the index step after every capture exit
-code (a failed, refused or busy capture included), because only committed manifests enter the index. Steps go to
-`<DATA_ROOT>/reports/task.log`; the command returns the capture step's code. `status` reports the newest run that
-finished a step, marks an incomplete run and returns 3 when the task, definition, last result or logged step
-needs attention.
+`capture` runs the capture step, then the index step after every capture exit code (only committed manifests enter
+the index), logs both in `<DATA_ROOT>/reports/task.log` and returns the capture step's code.
+`rawlayer/schedule.py`'s header says what `schedule install|status|run|remove` check and report; llm.md 5.8 is the
+runbook.
 
 ## Tests
 
-```
-python -s -B manage.py test
-python -s -B manage.py test core
-python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion
-python -s -B manage.py check
-```
-
-`tests/core/` tests the framework on `toyapp` and `toyapp2` without importing the real apps. Each app's `tests/`
-selects that app and builds synthetic source data and ledgers in temporary directories; no binary fixtures or
-real conversation data are committed. The default test command runs every suite and ends with
-`core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok`
-when all suites pass. Agents run the named form above (AGENTS.md).
-
-After changing a core file, run every suite (`test`) and `check`. See `CORE.md` for ledger guarantees.
+AGENTS.md gives the test and check commands to run before a commit. `tests/core/` tests the framework on `toyapp`
+and `toyapp2` without importing the real apps; each app's `tests/` builds synthetic sources and ledgers in temporary
+directories, and no real conversation data is committed. See CORE.md for the ledger guarantees.

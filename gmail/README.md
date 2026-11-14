@@ -157,9 +157,3 @@ The listing and lightweight ID/state maps occupy memory proportional to mailbox 
 message bodies stay partition-bounded. One fetched message and its MIME parsing occupy one message's memory.
 Snapshots preserve the final state observed per sync, not every intermediate label event between captures.
 Tests use only temporary synthetic data and an injected fake IMAP connection.
-
-## Wiki export
-
-`gm_wiki_project`, `gm_wiki_include`, `gm_wiki_exclude` and `gm_wiki_since` configure `manage.py collect gmail` (llm.md 13), which
-writes the closed months, packed into Markdown files of about 16,000 characters with a section per mail, into the
-wiki vault's `raw/sources/gmail/`. Empty by default: nothing is exported.
