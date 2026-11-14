@@ -336,10 +336,7 @@ interpreter, data-root precheck (ACL, Windows Search, git work tree) or the app'
 Gates, each on that command's own `rc=` line:
 - install: `rc=0`, with `schedule: registered \llm-wiki\<app>-capture: ... as SYSTEM` and
   `definition read back: as registered`. If install's rc is not 0, the other two results do not count: fix it
-  (section 9) and repeat 5.8. Installing again replaces the task. A task still registered with the previous command name
-  (`manage.py collect <app> --config <CFG>`) is
-  reported by status as `definition: outdated`, and by doctor as such: install it again, elevated. That name is now
-  the wiki export (section 13), which refuses to run as SYSTEM, so such a task exports nothing in the meantime.
+  (section 9) and repeat 5.8. Installing again replaces the task.
 - status: `rc=0`, with `schedule: \llm-wiki\<app>-capture registered (enabled)`, `definition: current (...)` and
   `last result:` `has not run yet` or `0 (ok)`.
 - run: `rc=0`, with `schedule: started \llm-wiki\<app>-capture once`. This SYSTEM smoke run proves that SYSTEM can

@@ -348,9 +348,8 @@ def read_checkpoints(data_root):
 
 def definition_state(schedule, s, app, back):
     """{enabled, definition[, differs]} of a registered task's definition (XML `back`), compared as
-    `schedule status` compares it: "current", "differs" (the field names that do), "outdated" (its action is this
-    checkout's previous `manage.py collect <app> --config <config>`: install replaces it) or "foreign" (its action is
-    not this checkout's `manage.py capture <app> --config <config>`)."""
+    `schedule status` compares it: "current", "differs" (the field names that do) or "foreign" (its action is not
+    this checkout's `manage.py capture <app> --config <config>`)."""
     f = schedule.fields(back)
     out = {"enabled": f["enabled"] == "true"}
     ns = schedule.NS
@@ -359,8 +358,7 @@ def definition_state(schedule, s, app, back):
     args = (exe.findtext(f"{{{ns}}}Arguments") if exe is not None else None) or ""
     project = schedule._project()
     if schedule.registered_config(project, app, args) is None:
-        previous = schedule.registered_config(project, app, args, "collect") is not None
-        out["definition"] = "outdated" if previous else "foreign"
+        out["definition"] = "foreign"
         return out
     diff = schedule.differences(back, schedule.task_xml(s, python, project, app, schedule._argv(args)[6]))
     out["definition"] = "differs" if diff else "current"
@@ -558,9 +556,6 @@ def _next_step(app, p, idx):
         if task.get("enabled") is False:
             return "5.7", ("the task is disabled (paused by hand in Task Scheduler): ask the owner; to resume it, "
                            "install it again (5.7, 5.8), which registers it enabled")
-        if task.get("definition") == "outdated":
-            return "5.7", ("the registered task runs this project's previous `manage.py collect` command (outdated): "
-                           f"re-register it with an elevated `manage.py schedule install {app}` (5.7, 5.8)")
         if task.get("definition") != "current":
             differs = f": {', '.join(task['differs'])}" if task.get("differs") else ""
             return "5.7", (f"the registered task is not this app's current definition ({task.get('definition')}"

@@ -21,9 +21,7 @@ at the highest run level: daily from `start` (local time) and every `every_hours
 `limit_hours` hours per run. A start is ignored while a run is still going, a start missed while the machine was off
 runs when it is back, and batteries neither block nor stop it. The project folder and the config are registered by
 their real path (on-disk case, junctions and subst drives resolved), so SYSTEM sees the same files and a prompt that
-spells the path differently still matches. A task registered from the earlier layout of one project per folder
-(`<folder>\\manage.py collect --config <CFG>`), or under the command's previous name (`<project>\\manage.py collect
-<app> --config <CFG>`), is reported as outdated by status: install replaces it.
+spells the path differently still matches.
 
 install refuses before anything is registered when the task would fail: the schedule malformed, the config refused
 (Config: paths, data parent), the data root unsafe or not verifiable (precheck: outside git, inherited ACL, Search
@@ -253,24 +251,14 @@ def differences(actual_xml, expected_xml):
     return [k for k in e if a.get(k) != e[k]]
 
 
-def registered_config(project, app, args, command="capture"):
-    """The --config path (a Path) of registered Arguments that run `project`'s `manage.py <command> <app> --config
-    <path>` (quoted or not, the project path in any spelling Windows treats as the same), else None. `command`
-    "collect" asks for the previous name of the capture command, whose registered task install replaces."""
+def registered_config(project, app, args):
+    """The --config path (a Path) of registered Arguments that run `project`'s `manage.py capture <app> --config
+    <path>` (quoted or not, the project path in any spelling Windows treats as the same), else None."""
     t = _argv(args) if isinstance(args, str) else []
-    if len(t) == 7 and t[:2] == ["-s", "-B"] and t[3:6] == [command, app, "--config"] and \
+    if len(t) == 7 and t[:2] == ["-s", "-B"] and t[3:6] == ["capture", app, "--config"] and \
             _path_key(t[2]) == _path_key(Path(project) / "manage.py"):
         return Path(t[6])
     return None
-
-
-def old_layout(args):
-    """True for Arguments registered from the earlier layout of one project per folder: `-s -B <folder>\\manage.py
-    collect --config <path>` (install replaces such a task)."""
-    t = _argv(args) if isinstance(args, str) else []
-    # the token as text: basename is "" after a trailing separator, which Path.name would drop
-    return len(t) == 6 and t[:2] == ["-s", "-B"] and t[3:5] == ["collect", "--config"] and \
-        os.path.basename(t[2]).casefold() == "manage.py"
 
 
 # ---- the machine
@@ -606,25 +594,15 @@ def status(a, app):
     registered_python = (exec_.findtext(f"{{{NS}}}Command") if exec_ is not None else None) or ""
     registered_args = (exec_.findtext(f"{{{NS}}}Arguments") if exec_ is not None else None) or ""
     registered = registered_config(project, app, registered_args)
-    previous = registered is None and registered_config(project, app, registered_args, "collect") is not None
-    legacy = registered is None and old_layout(registered_args)
     # the registered --config as its text, not str() of a Path: a relative one written with "/" or a "." part
     # would no longer match the definition read back (only an absolute token is compared as a path)
     t = _argv(registered_args)
     config = Path(a.config).resolve() if a.config else (
-        t[6] if registered is not None or previous else (t[5] if legacy else None))
+        t[6] if registered is not None else None)
     python = Path(os.path.abspath(a.python)) if a.python else registered_python     # as install, not resolve()
     print(f"schedule: {s.task} registered ({'enabled' if f['enabled'] == 'true' else 'DISABLED'})")
     print(f"  runs: {registered_python} {registered_args}")
-    if previous:
-        attention = True
-        print(f"  definition: outdated, registered with the command's previous name (`manage.py collect`): re-run "
-              f"`manage.py schedule install {app}` (elevated)")
-    elif legacy:
-        attention = True
-        print(f"  definition: registered from the earlier layout (one project per folder): re-run "
-              f"`manage.py schedule install {app}`")
-    elif registered is None:
+    if registered is None:
         attention = True
         print(f"  definition: its action is not this project's `manage.py capture {app} --config <config>` "
               f"(re-run install)")

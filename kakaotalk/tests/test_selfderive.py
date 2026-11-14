@@ -108,12 +108,73 @@ class Base(unittest.TestCase):
 
 
 class TestVectors(unittest.TestCase):
-    def test_selftests(self):
-        """keychain: RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract; keystore:
-        RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
-        for mod in (keychain, keystore):
-            with self.subTest(mod.__name__):
-                self.assertTrue(mod._selftest())
+    def test_keychain_vectors(self):
+        """RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract."""
+        # RFC 5869 Test Case 1 (SHA-256)
+        okm = keychain.hkdf_sha256(b"\x0b" * 22, bytes.fromhex("000102030405060708090a0b0c"),
+                          bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"), 42)
+        assert okm == bytes.fromhex(
+            "3cb25f25faacd57a90434f64d0362f2a"
+            "2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+            "34007208d5b887185865"), "HKDF RFC5869 TC1"
+
+        # RFC 3394 4.3 — 256-bit KEK, 128-bit key data
+        kek = bytes.fromhex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
+        kd16 = bytes.fromhex("00112233445566778899AABBCCDDEEFF")
+        assert keychain.aes_kw_wrap(kek, kd16) == bytes.fromhex(
+            "64E8C3F9CE0F5BA2"
+            "63E9777905818A2A"
+            "93C8191E7D6E8AE7"), "KW wrap RFC3394 4.3"
+        assert keychain.aes_kw_unwrap(kek, keychain.aes_kw_wrap(kek, kd16)) == kd16
+
+        # RFC 3394 4.6 — 256-bit KEK, 256-bit key data (카톡 DEK 와 같은 32B→40B)
+        kd32 = bytes.fromhex("00112233445566778899AABBCCDDEEFF000102030405060708090A0B0C0D0E0F")
+        assert keychain.aes_kw_wrap(kek, kd32) == bytes.fromhex(
+            "28C9F404C4B810F4"
+            "CBCCB35CFB87F826"
+            "3F5786E2D80ED326"
+            "CBC7F0E71A99F43B"
+            "FB988B9B7A02DD21"), "KW wrap RFC3394 4.6"
+        assert keychain.aes_kw_unwrap(kek, keychain.aes_kw_wrap(kek, kd32)) == kd32
+
+        # 카톡 체인 모형: 합성 store 에 대해 root→KEK→wrap→unwrap 왕복
+        store = {"version": "v2:", "salt": bytes(range(32)),
+                 "map": {r"chat_data\chatLogs_9.edb": keychain.aes_kw_wrap(
+                     keychain.hkdf_sha256(b"\x11" * 32, bytes(range(32)), b"v2:chat_data\\chatLogs_9.edb", 32),
+                     b"\xab" * 32)}}
+        assert keychain.derive_dek(b"\x11" * 32, store, r"chat_data\chatLogs_9.edb") == b"\xab" * 32
+        # relpath 를 정규화(/ 치환)한 KEK 로는 원본 wrapped 가 안 풀려야 한다 — 원문 그대로가 계약
+        wrong_kek = keychain.hkdf_sha256(b"\x11" * 32, bytes(range(32)),
+                                b"v2:chat_data/chatLogs_9.edb", 32)
+        with self.assertRaises(ValueError):
+            keychain.aes_kw_unwrap(wrong_kek, store["map"][r"chat_data\chatLogs_9.edb"])
+        # 잘못된 루트 → 전멸
+        assert keychain.unwrap_store(b"\x22" * 32, store) == {}
+
+    def test_keystore_vectors(self):
+        """RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
+        # RFC 8949 예시들
+        assert keystore._cbor_decode(bytes.fromhex("00")) == 0
+        assert keystore._cbor_decode(bytes.fromhex("1818")) == 24
+        assert keystore._cbor_decode(bytes.fromhex("190100")) == 256
+        assert keystore._cbor_decode(bytes.fromhex("20")) == -1
+        assert keystore._cbor_decode(bytes.fromhex("6161")) == "a"
+        assert keystore._cbor_decode(bytes.fromhex("83010203")) == [1, 2, 3]
+        assert keystore._cbor_decode(bytes.fromhex("a26161016162820203")) == {"a": 1, "b": [2, 3]}
+        assert keystore._cbor_decode(bytes.fromhex("4401020304")) == b"\x01\x02\x03\x04"
+        # 무한길이 배열
+        assert keystore._cbor_decode(bytes.fromhex("9f018202039f0405ffff")) == [1, [2, 3], [4, 5]]
+        # 카톡식: 바이트열을 uint8 배열로 — info_prefix "v2:" = [0x76,0x32,0x3a]
+        # 실제 구조 흉내: {info_prefix:[118,50,58], salt:[1,2]}
+        synth = bytes.fromhex("a2")  # map(2)
+        synth += bytes([0x6b]) + b"info_prefix" + bytes([0x83, 0x18, 118, 0x18, 50, 0x18, 58])
+        synth += bytes([0x64]) + b"salt" + bytes([0x82, 0x01, 0x02])
+        d = keystore._cbor_decode(synth)
+        assert keystore._to_bytes(d["info_prefix"]) == b"v2:", keystore._to_bytes(d["info_prefix"])
+        assert keystore._to_bytes(d["salt"]) == b"\x01\x02"
+        # chatId 추출
+        assert keystore.chatid_of_relpath("chat_data\\chatLogs_12345.edb") == "12345"
+        assert keystore.chatid_of_relpath("Contacts\\mpi_v2.edb") is None
 
 
 class TestKeystoreDerivation(Base):

@@ -181,31 +181,3 @@ def load_store(path: str) -> dict:
 def chatid_of_relpath(relpath: str) -> str | None:
     m = CHATLOG_RE.search(relpath.replace("\\", "/"))
     return m.group(1) if m else None
-
-
-# ----------------------------------------------------------------- self-test
-def _selftest() -> bool:
-    """카톡 없이 도는 결정적 CBOR 벡터 검증."""
-    # RFC 8949 예시들
-    assert _cbor_decode(bytes.fromhex("00")) == 0
-    assert _cbor_decode(bytes.fromhex("1818")) == 24
-    assert _cbor_decode(bytes.fromhex("190100")) == 256
-    assert _cbor_decode(bytes.fromhex("20")) == -1
-    assert _cbor_decode(bytes.fromhex("6161")) == "a"
-    assert _cbor_decode(bytes.fromhex("83010203")) == [1, 2, 3]
-    assert _cbor_decode(bytes.fromhex("a26161016162820203")) == {"a": 1, "b": [2, 3]}
-    assert _cbor_decode(bytes.fromhex("4401020304")) == b"\x01\x02\x03\x04"
-    # 무한길이 배열
-    assert _cbor_decode(bytes.fromhex("9f018202039f0405ffff")) == [1, [2, 3], [4, 5]]
-    # 카톡식: 바이트열을 uint8 배열로 — info_prefix "v2:" = [0x76,0x32,0x3a]
-    # 실제 구조 흉내: {info_prefix:[118,50,58], salt:[1,2]}
-    synth = bytes.fromhex("a2")  # map(2)
-    synth += bytes([0x6b]) + b"info_prefix" + bytes([0x83, 0x18, 118, 0x18, 50, 0x18, 58])
-    synth += bytes([0x64]) + b"salt" + bytes([0x82, 0x01, 0x02])
-    d = _cbor_decode(synth)
-    assert _to_bytes(d["info_prefix"]) == b"v2:", _to_bytes(d["info_prefix"])
-    assert _to_bytes(d["salt"]) == b"\x01\x02"
-    # chatId 추출
-    assert chatid_of_relpath("chat_data\\chatLogs_12345.edb") == "12345"
-    assert chatid_of_relpath("Contacts\\mpi_v2.edb") is None
-    return True

@@ -355,20 +355,14 @@ def commit(ctx, oruns, manifest):
 
 def update_srcmap(ledger, oruns):
     """Flat {source_id: relpath} (SPEC 3), private to .state (relpaths of MM files carry display names).
-    A source_id is sha256(relpath)[:12], so one relpath has one id whichever origin saw it. The nested
-    {origin: {...}} form written before 2026-10-04 is flattened on read."""
+    A source_id is sha256(relpath)[:12], so one relpath has one id whichever origin saw it."""
     path = Path(ledger.state_dir, "srcmap.json")
     try:
         with path.open(encoding="utf-8") as fh:
             old = json.load(fh)
     except (OSError, ValueError):
         old = {}
-    m = {}
-    for k, v in (old.items() if isinstance(old, dict) else ()):
-        if isinstance(v, dict):
-            m.update((sk, sv) for sk, sv in v.items() if isinstance(sv, str))
-        elif isinstance(v, str):
-            m[k] = v
+    m = {k: v for k, v in old.items() if isinstance(v, str)} if isinstance(old, dict) else {}
     for _o, r in sorted(oruns.items()):
         m.update(r.srcmap)
     fsio.atomic_write(path, json.dumps(m, ensure_ascii=False, sort_keys=True).encode("utf-8"))

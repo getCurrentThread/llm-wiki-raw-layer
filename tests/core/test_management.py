@@ -104,9 +104,8 @@ class TestDispatch(unittest.TestCase):
             self.assertIn("bad: does not load (error ModuleNotFoundError not_a_module_anywhere", out)
 
     def test_collect_refuses_an_app_without_a_wiki_declaration(self):
-        """`collect` exports an app's index to the wiki vault: an app that declares no AppConfig.wiki (and a stale
-        task still registered as `manage.py collect <app> --config <cfg>`, the capture command's previous name) is
-        refused, exit 2, and nothing is read or written."""
+        """`collect` exports an app's index to the wiki vault: an app that declares no AppConfig.wiki is refused,
+        exit 2, and nothing is read or written."""
         with Project({"a1": app_files("a1")}):
             rc, out, err = run("collect", "a1")
             self.assertEqual((rc, out), (2, ""))
