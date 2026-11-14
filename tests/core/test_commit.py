@@ -222,21 +222,20 @@ class TestRecovery(T.ToyCase):
 
 class TestLedgerDefects(T.ToyCase):
     def test_removed_manifest_is_a_seq_gap(self):
-        """A missing manifest is a seq gap: capture, replay and export-state refuse (exit 1)."""
+        """A missing manifest is a seq gap: capture and replay refuse (exit 1)."""
         for _ in range(3):
             self.assertEqual(capture(self.fx), 0)
         lg = ledger(self.fx)
         lg.manifests()[1][2].unlink()
         self.assertEqual(invariants(self.fx)[0].get("seq_gap"), 1)
-        out = lg.verify_root / "x.tsv"
-        for argv in (["capture", "--origins", "toy_a"], ["replay", "--check"], ["export-state", "--out", out]):
+        for argv in (["capture", "--origins", "toy_a"], ["replay", "--check"]):
             with self.subTest(command=argv[0]):
                 self.assertEqual(cli_main(self.fx, *argv), 1)
         self.assertEqual(len(T.names(lg.man_dir)), 2)
 
     def test_flipped_segment_byte(self):
-        """A damaged segment: the seal check sees the sha mismatch, and replay (which folds the ledger again) and
-        export-state stop with exit 1 instead of producing a state or an export from it."""
+        """A damaged segment: the seal check sees the sha mismatch, and replay (which folds the ledger again) stops
+        with exit 1 instead of producing a state from it."""
         self.assertEqual(capture(self.fx), 0)
         seg = sorted(ledger(self.fx).ledger_dir.glob("*/*/*.jsonl.gz"), key=str)[0]    # text order, as glob.glob's
         seg.chmod(0o600)
@@ -247,10 +246,7 @@ class TestLedgerDefects(T.ToyCase):
             fh.write(bytes([b[0] ^ 0xFF]))
         seg.chmod(0o400)
         self.assertEqual(invariants(self.fx)[0].get("sha_mismatch"), 1)
-        out = ledger(self.fx).verify_root / "x.tsv"
-        for argv in (["replay", "--check"], ["export-state", "--out", out]):
-            with self.subTest(command=argv[0]):
-                self.assertEqual(cli_main(self.fx, *argv), 1)
+        self.assertEqual(cli_main(self.fx, "replay", "--check"), 1)
 
     def test_seal_catches_what_still_folds(self):
         """A segment recompressed (valid gzip, the same records) or an earlier manifest rewritten (the same JSON, other
@@ -296,7 +292,7 @@ class TestLedgerDefects(T.ToyCase):
 
     def test_manifest_that_parses_but_lost_a_field(self):
         """Valid JSON with a renamed key, a wrong type or a status outside the vocabulary is an unreadable manifest:
-        replay and export-state stop with exit 1 and change nothing."""
+        replay stops with exit 1 and changes nothing."""
         def rename_path(m):
             m["segments"][0]["pbth"] = m["segments"][0].pop("path")
 
@@ -324,8 +320,7 @@ class TestLedgerDefects(T.ToyCase):
                     rewrite(first, json.dumps(m, sort_keys=True, indent=1).encode("ascii"))
                     state_p = ledger(fx).state_dir / "state.sqlite"
                     state_before = state_p.read_bytes()
-                    out = ledger(fx).verify_root / "x.tsv"
-                    for argv in (["replay", "--check"], ["replay"], ["export-state", "--out", out]):
+                    for argv in (["replay", "--check"], ["replay"]):
                         self.assertEqual(cli_main(fx, *argv), 1, argv[0])
                     self.assertEqual(state_p.read_bytes(), state_before)
                 finally:

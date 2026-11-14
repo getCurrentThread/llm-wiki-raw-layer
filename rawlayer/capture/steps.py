@@ -1,24 +1,22 @@
 # -*- coding: utf-8 -*-
-"""The capture-side steps, run in-process by `manage.py capture` (capture) and `manage.py check` (replay --check,
-export-state); not a command surface of their own:
+"""The capture-side steps, run in-process by `manage.py capture` (capture) and `manage.py check` (replay
+[--check]); not a command surface of their own:
   <step> --config <path> [--input-set live|T1|T2] [--origins a,b]   (SPEC 13)
 
-step = capture | replay [--check] | export-state --out <path under raw/.verify>. --origins defaults to every
+step = capture | replay [--check]. --origins defaults to every
 origin of the app. A data root whose ledger belongs to another app is refused (ledger.foreign_origins). Exit codes:
 0 ok, 3 suspect, 75 busy or skipped, 2 refused, 1 error."""
 import argparse
-import heapq
-import os
 import sys
 from pathlib import Path
 
 from .. import registry
 from . import publicout, run, state
 from .config import Config, ConfigError, INPUT_SETS
-from .ledger import Ledger, LedgerCorrupt, foreign_origins, manifest_ok
+from .ledger import LedgerCorrupt, foreign_origins
 from .publicout import lit
 
-COMMANDS = ("capture", "replay", "export-state")
+COMMANDS = ("capture", "replay")
 
 
 def _parser():
@@ -28,7 +26,6 @@ def _parser():
     ap.add_argument("--input-set", default="live", choices=INPUT_SETS)
     ap.add_argument("--origins", default=None, help="comma-separated (default: every installed origin)")
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--out", default=None)
     return ap
 
 
@@ -49,8 +46,6 @@ def main(argv=None):
             return run.capture(cfg, a.input_set, origins)
         if a.command == "replay":
             return replay(cfg, a.check)
-        if a.command == "export-state":
-            return export_state(cfg, a.out)
     except ConfigError:
         publicout.say(lit("refused: precondition or configuration"))
         return run.EXIT_CFG
@@ -96,38 +91,3 @@ def replay(cfg, check_only):
                 pass
         con.close()
         lock.release()
-
-
-def export_lines(ledger: Ledger):
-    """(origin, key, rev, op, h) for every record, sorted (origin, key, rev)."""
-    by_origin = {}
-    for _seq, _run, path in ledger.manifests():
-        man = ledger.read_manifest(path)
-        if not manifest_ok(man):
-            raise LedgerCorrupt("manifest")
-        for seg in man.get("segments", []):
-            by_origin.setdefault(seg["origin"], []).append(Path(ledger.raw, *seg["path"].split("/")))
-    for origin in sorted(by_origin):
-        streams = [((r["key"], r["rev"], r["op"], r["h"]) for r in Ledger.iter_segment(p)) for p in by_origin[origin]]
-        for key, rev, op, h in heapq.merge(*streams, key=lambda t: (t[0], t[1])):
-            yield origin, key, rev, op, h
-
-
-def export_state(cfg, out):
-    ledger = Ledger(cfg.raw)
-    if not out:
-        raise ConfigError("--out required")
-    # strings on purpose: abspath folds ".." without following links, and the test is case-blind on every OS
-    vr = os.path.abspath(ledger.verify_root)
-    out = os.path.abspath(out)
-    if not out.lower().startswith(vr.lower() + os.sep):
-        raise ConfigError("--out must be under raw/.verify")
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    n = 0
-    with out.open("w", encoding="utf-8", newline="\n") as fh:
-        for origin, key, rev, op, h in export_lines(ledger):
-            fh.write(f"{origin}\t{key}\t{rev}\t{op}\t{h if h is not None else '-'}\n")
-            n += 1
-    publicout.say(lit("export-state"), lines=n)
-    return 0

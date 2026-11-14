@@ -55,7 +55,7 @@ class Config:
         if inputs_root is not None and not (isinstance(inputs_root, str) and os.path.isabs(inputs_root)):
             raise ConfigError("inputs_root relative")
         self.inputs_root = None if inputs_root is None else Path(inputs_root)
-        # SPEC 10.1: private writes (ledger, state, export-state output under .verify) stay under the ACL'd,
+        # SPEC 10.1: private writes (ledger, state, .verify) stay under the ACL'd,
         # Search-excluded parent; checked here so every command refuses before it writes anything.
         # resolve() too: a junction inside the parent must not lead out of it.
         if not paths.inside(self.data_root, paths.DATA_PARENT):

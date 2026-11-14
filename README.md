@@ -126,7 +126,7 @@ Every data root has the same layout:
 Run from `<PROJECT>`, always as `python -s -B manage.py <command> [<app>] ...`. `help` lists commands;
 `help <command>` gives a synopsis, and a command's `--help` gives its options. `--config` is optional at this
 entry point and defaults to `<DATA_PARENT>/raw/<app>/config.json`. Eight commands are the whole surface: the steps
-between them (capture, index, replay, export-state, the per-app input derivations) run inside `capture`, `check`
+between them (capture, index, replay, the per-app input derivations) run inside `capture`, `check`
 and `setup`, not as commands of their own.
 
 | invocation after `manage.py` | purpose and options |
@@ -136,7 +136,7 @@ and `setup`, not as commands of their own.
 | `collect <app> [--config CFG] [--project DIR] [--include S ...] [--exclude S ...] [--since YYYY-MM] [--dry-run] [--prune]` | the owner-only export step: render the app's index as Markdown sources of the wiki vault, whose headless ingest sends them to its LLM (llm.md 13). Needs `AppConfig.wiki` in the app's `apps.py`; refuses to run as LocalSystem; `--prune` deletes orphaned source files (their wiki pages stay) and runs only on the owner's explicit yes; prints counts only; not part of any scheduled task |
 | `search <app> [QUERY] [--config CFG] [options]` | search the app's index ("Search" below); `search <app> --help` lists the options |
 | `embed <app> [--config CFG] [--model M] [--dims N] [--url U] [--limit N] [--dry-run] [--rebuild]` | build or refresh the optional dense sidecar that `search --hybrid` reads; needs Ollama on a loopback address and sqlite-vec's windows-x86_64 build (llm.md 12) |
-| `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts and collisions; with an app, load its config and verify the ledger's hash chain and segments and the folded state against the ledger; `--export-state` also dumps every record's (origin, key, rev, op, h), `--rebuild-state` rebuilds the state from the ledger |
+| `check [<app>] [--config CFG] [--rebuild-state] [--traceback]` | validate settings, app contracts and collisions; with an app, load its config and verify the ledger's hash chain and segments and the folded state against the ledger; `--rebuild-state` rebuilds the state from the ledger |
 | `test [core\|<app> ...] [-k PATTERN] [-v] [-f]` | run core and app suites, each in its own process; defaults to all suites |
 | `schedule install\|status\|run\|remove [<app>] [--config CFG] [--python EXE] [--run-now\|--dry-run]` | register, inspect, start once or unregister the app's Windows task; status compares the registered definition, reports the last result and the task log, and returns 3 when attention is needed |
 

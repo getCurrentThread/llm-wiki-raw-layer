@@ -160,7 +160,7 @@ def capture(fx, origins=ORIGINS, input_set="live"):
 
 
 def cli_main(fx, *argv):
-    """The internal capture CLI in-process (its replay/export-state actions included), with --config; returns the
+    """The internal capture CLI in-process (its replay action included), with --config; returns the
     exit code. A path in argv is passed as its text, as a command line passes it."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         return steps.main([os.fspath(a) for a in argv] + ["--config", os.fspath(fx.config_path)])

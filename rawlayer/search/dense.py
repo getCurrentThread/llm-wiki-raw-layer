@@ -49,7 +49,6 @@ words otherwise push the semantic hits down. A hit is the unit's anchor row (its
 row sharing the most query bigrams that no hit above shows) with "sources" (rank in each list), "score" and
 "context" (the chunk's rows).
 """
-import argparse
 import array
 import hashlib
 import http.client

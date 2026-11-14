@@ -85,11 +85,10 @@ class TestConfig(T.ToyCase):
         elsewhere = self.fx.base / "parent"
         elsewhere.mkdir()
         before = T.names(self.fx.data_root)
-        out = self.fx.data_root / "raw" / ".verify" / "x.tsv"
         with mock.patch.object(paths, "DATA_PARENT", elsewhere):
             with self.assertRaises(ConfigError):
                 Config(self.fx.config_path)
-            for argv in (["capture"], ["replay"], ["export-state", "--out", out]):
+            for argv in (["capture"], ["replay"]):
                 with self.subTest(command=argv[0]):
                     self.assertEqual(cli_main(self.fx, *argv), 2)
         self.assertEqual(T.names(self.fx.data_root), before)

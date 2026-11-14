@@ -136,8 +136,7 @@ class TestOwnership(T.ToyCase):
         the app's own ledger goes through."""
         raw = self.fx.data_root / "raw"
         before = T.names(raw / "manifests")
-        argv = {"capture": ["--input-set", "live"], "replay": ["--check"],
-                "export-state": ["--out", str(raw / ".verify" / "state.json")]}
+        argv = {"capture": ["--input-set", "live"], "replay": ["--check"]}
         with mock.patch.object(registry, "origin_order", lambda: ("toy_a",)):
             for command, extra in argv.items():
                 with self.subTest(command=command):

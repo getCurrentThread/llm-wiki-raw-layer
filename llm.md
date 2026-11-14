@@ -951,9 +951,7 @@ model or the dims, run `embed <app> --model <model> --rebuild`. A sidecar that
 another sqlite-vec version made is refused at search time with that reason. A batch the server fails is retried
 twice (after 2 and 10 seconds) before the run exits 75.
 
-**12.7 Measuring.** `tools/search_eval.py` (its docstring is the manual) scores search on the app's own ledger:
-Hit@k, Recall@k and MRR by mode (`default`, `literal`, `hybrid`), printing aggregates only. Run it before and after
-a change to query normalization, ranking or the embedder, only when the owner asks; it writes under `<DATA_ROOT>\eval`.
+**12.7 Measuring.** No measuring tool ships any more (removed 2026-11-14); judge a ranking change on the owner's own queries.
 
 ## 13. The wiki vault (headless ingest)
 
