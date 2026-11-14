@@ -112,7 +112,7 @@ repeating them.
 | `check` | 0 · 1 errors (including `differing_rows>0`) · 2 config refused. It does not test the ACL or Windows Search. |
 | `setup` | 0 ready · 3 placeholders remain, the config refused, or an ACL/Windows Search problem (read every line) · 2 refused (usage, or the config is already there) · 1 error |
 | `schedule` | 0 · 2 refused or not elevated · 1 `schtasks` failed · 3 needs attention (from a non-elevated prompt, possibly only "not readable") |
-| `tools/bootstrap.py` | 0 ok · 3 needs attention (`doctor`: an item under `need attention`; `config`: placeholders left or the config refused; `agents status`: an item not current; `agents sync-repo --check`: the checkout's copies differ; `agents uninstall`: an item kept) · 2 refused, nothing written (usage, kakaotalk, a key or value the app refuses, an edit that would make an accepted config refused) · 1 error |
+| `tools/bootstrap.py` | 0 ok · 3 needs attention (`doctor`: an item under `need attention`; `config`: placeholders left or the config refused; `agents status`: an item not current; `agents uninstall`: an item kept) · 2 refused, nothing written (usage, kakaotalk, a key or value the app refuses, an edit that would make an accepted config refused) · 1 error |
 
 - **`check <app>` lines:**
   - `config: ok`
@@ -876,12 +876,12 @@ Never include the items listed in rule 3.
 
 ## 11. Agent integration (Claude Code)
 
-`python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; its docstring is the reference for the states,
-options and backups) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
+`python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; `--help` and its docstring give the states and
+options) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
 be searched and this runbook found from any folder: a marked block in `<HOME>\.claude\CLAUDE.md`, the `raw-search`
 and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`, and the user-scope MCP server
 `llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app; its app `all` covers them all). It needs
-no elevation and touches no data. Its manifest and backups live in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
+no elevation and touches no data. Its manifest lives in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
 never in `<PROJECT>`.
 
 1. `agents status`. Exit 0 when every item is `current`. `project_mismatch` means the integration points at another
@@ -889,17 +889,15 @@ never in `<PROJECT>`.
    by hand.
 2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and
    wait for an explicit yes: it rewrites their global configuration (rule 10).
-3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item unless
-   `--force` names it, and backs up whatever it replaces. `--python <PY>` names the interpreter the MCP server runs
+3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item and replaces
+   nothing: the owner moves it away by hand first. `--python <PY>` names the interpreter the MCP server runs
    with. When a `claude mcp` call fails, the error ends with the CLI's own reason.
    Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for every app.
 4. Re-run `install` after `git pull` or a moved checkout: a template change shows as `stale`, a moved one as
    `project_mismatch`. It keeps the recorded interpreter; pass `--python` again to change it.
 
-`agents uninstall [--restore] [--force] [--dry-run]` undoes install and keeps what was changed by hand unless
-`--force` names it (the docstring says what is backed up and restored). After editing a template, run
-`agents sync-repo` to refresh the checkout's own copies (`.claude/skills`, `.claude/agents`, `.agents/skills`);
-`agents sync-repo --check` exits 3 while they differ, and a test fails.
+`agents uninstall [--dry-run]` undoes install and keeps, and names, what was changed by hand. After editing a
+template, run `install` again.
 
 ## 12. Dense retrieval (optional)
 

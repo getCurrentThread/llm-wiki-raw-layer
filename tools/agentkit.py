@@ -1,35 +1,27 @@
 # -*- coding: utf-8 -*-
 """python -s -B <PROJECT>/tools/bootstrap.py agents <command> ... -- this checkout's agent integration, from one
-source (tools/agent_templates/) rendered into Claude Code's global configuration and into the repository's own agent
-folders. Standard library only.
+source (tools/agent_templates/) rendered into Claude Code's global configuration. Standard library only.
 
   status [--json]
       Each item and its state: absent, current, stale (an older version this tool wrote), modified (changed by hand
       since this tool wrote it), foreign (there, but not written by this tool), unreadable (a global CLAUDE.md that is
       not UTF-8 or whose markers are broken); and project_mismatch when the integration was installed from another
       checkout. Exit 0 only when every item is current.
-  install [--dry-run] [--force] [--python EXE]
+  install [--dry-run] [--python EXE]
       For Claude Code (the owner's profile):
         .claude/CLAUDE.md                     a marked block; the rest of the file is kept byte for byte
         .claude/skills/raw-search/SKILL.md, .claude/skills/llm-wiki-setup/SKILL.md, .claude/agents/raw-retriever.md
         the user-scope MCP server llm_wiki_raw (tools/mcp_rawsearch.py, through `claude mcp add-json`)
-      A modified or foreign item is replaced only with --force. Whatever is replaced is backed up first. --dry-run
-      prints the diff (paths masked) and changes nothing. The MCP server runs with --python, else the interpreter it
-      was installed with (while that is still there), else the one running this command.
-  uninstall [--dry-run] [--restore] [--force]
-      Removes what install wrote and nobody changed since (a modified item is kept and named; --force removes it
-      too, saving the hand-changed copy first). --restore also puts back what install replaced, from the backups
-      (also an original whose earlier restore failed); without it, the backups of the removed items are forgotten
-      (their files stay in the state folder).
-  sync-repo [--check]
-      Renders the templates into this checkout (.claude/skills, .claude/agents, .agents/skills), with commands that
-      run from the checkout. --check changes nothing and exits 3 on a difference.
+      A modified or foreign item is refused, never replaced. --dry-run prints the diff (paths masked) and changes
+      nothing. The MCP server runs with --python, else the interpreter it was installed with (while that is still
+      there), else the one running this command.
+  uninstall [--dry-run]
+      Removes what install wrote and nobody changed since; an item changed by hand is kept and named.
 
-The manifest and the backups live in %LOCALAPPDATA%\\llm-wiki-raw-layer\\agentkit, never in the checkout.
+The manifest lives in %LOCALAPPDATA%\\llm-wiki-raw-layer\\agentkit, never in the checkout.
 
 Exit codes: 0 ok / current | 3 needs attention | 2 refused or usage | 1 error or interrupted."""
 import argparse
-import datetime
 import difflib
 import hashlib
 import json
@@ -58,18 +50,8 @@ MCP_SERVER = PROJECT / "tools" / "mcp_rawsearch.py"
 GLOBAL_FILES = (("raw-search.md", "skill", ".claude/skills/raw-search/SKILL.md"),
                 ("llm-wiki-setup.md", "skill", ".claude/skills/llm-wiki-setup/SKILL.md"),
                 ("raw-retriever.md", "agent", ".claude/agents/raw-retriever.md"))
-REPO_FILES = GLOBAL_FILES + (("raw-search.md", "plain", ".agents/skills/raw-search/SKILL.md"),
-                             ("raw-retriever.md", "plain", ".agents/skills/raw-retriever/SKILL.md"),
-                             ("llm-wiki-setup.md", "plain", ".agents/skills/llm-wiki-setup/SKILL.md"))
 FRONT = {"skill": ("name", "description", "argument-hint", "allowed-tools"),
-         "agent": ("name", "description", "tools", "model"),
-         "plain": ("name", "description")}
-# Backup keys. A key without EDITED holds an original from before install (a foreign item), which
-# --restore puts back; key + EDITED holds a copy of this tool's own item as changed by hand, kept for reference only.
-EDITED = "#edited"
-BLOCK_KEY = CLAUDE_MD + "#block"
-BLOCK_KEYS = (BLOCK_KEY, BLOCK_KEY + EDITED)
-MCP_KEYS = ("mcp", "mcp" + EDITED)
+         "agent": ("name", "description", "tools", "model")}
 _VAR = re.compile(r"\{\{(include:)?([A-Za-z0-9_.-]+)\}\}")
 
 
@@ -95,9 +77,6 @@ def _sha(text):
     return hashlib.sha256(text.replace("\r\n", "\n").rstrip("\n").encode("utf-8")).hexdigest()
 
 
-def _stamp():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-
 
 # ---------------------------------------------------------------------------------------------------- rendering
 
@@ -106,18 +85,13 @@ def apps():
     return list(registry.discover())
 
 
-def values(target, found):
-    """The template variables of a target: "global" (absolute paths, any folder) or "repo" (the checkout)."""
-    mcp = ", ".join(f"mcp__{MCP_NAME}__{t}" for t in MCP_TOOLS)
-    if target == "global":
-        posix = PROJECT.as_posix()
-        run = f'python -s -B "{posix}/manage.py"'
-        return {"PROJECT": str(PROJECT), "APPS": ", ".join(found), "RUN": run, "MCP_TOOLS": mcp,
-                "BOOT": f'python -s -B "{posix}/tools/bootstrap.py"', "DOC": f"{posix}/", "WHERE": "from any folder",
-                "BASH_SEARCH": f"Bash({run} search:*)"}
-    run = "python -s -B manage.py"
-    return {"APPS": ", ".join(found), "RUN": run, "MCP_TOOLS": mcp, "BOOT": "python -s -B tools/bootstrap.py",
-            "DOC": "", "WHERE": "from the repository root (the folder holding manage.py)",
+def values(found):
+    """The template variables: absolute paths, so the files work from any folder."""
+    posix = PROJECT.as_posix()
+    run = f'python -s -B "{posix}/manage.py"'
+    return {"PROJECT": str(PROJECT), "APPS": ", ".join(found), "RUN": run,
+            "MCP_TOOLS": ", ".join(f"mcp__{MCP_NAME}__{t}" for t in MCP_TOOLS),
+            "BOOT": f'python -s -B "{posix}/tools/bootstrap.py"', "DOC": f"{posix}/", "WHERE": "from any folder",
             "BASH_SEARCH": f"Bash({run} search:*)"}
 
 
@@ -215,12 +189,6 @@ def _same_mcp(a, b):
     return isinstance(a, dict) and isinstance(b, dict) and norm(a) == norm(b)
 
 
-def _points_here(s):
-    """True when an MCP entry runs this checkout's server."""
-    here = os.path.normcase(str(MCP_SERVER))
-    return isinstance(s, dict) and any(os.path.normcase(str(x)) == here for x in s.get("args") or [])
-
-
 def _claude_cli(argv):
     exe = shutil.which("claude")
     if not exe:
@@ -234,22 +202,19 @@ def _claude_cli(argv):
 
 
 class Kit:
-    """Claude Code's configuration in `home` (its .claude/ folder and .claude.json), with the manifest and backups
-    in `state`. `claude(argv) -> rc` runs the claude CLI; `found` are the apps the MCP server may search; `python`
-    is the MCP server's interpreter (None: the one it was installed with while that is still there, else this one)."""
+    """Claude Code's configuration in `home` (its .claude/ folder and .claude.json), with the manifest in `state`.
+    `claude(argv) -> rc` runs the claude CLI; `found` are the apps the MCP server may search; `python` is the MCP
+    server's interpreter (None: the one it was installed with while that is still there, else this one)."""
 
     def __init__(self, home=None, state=None, python=None, claude=None, found=None):
         self.home = Path(home) if home else Path.home()
         self.state = Path(state) if state else state_dir()
         self.claude = claude or _claude_cli
         self.found = list(found if found is not None else apps())
-        self.vals = values("global", self.found)
+        self.vals = values(self.found)
         self.manifest = self._load()
-        self._settle_pending()
         self.python = self._interpreter(python)
         self.problems = []              # status: why an item is unreadable
-        self.notes = []                 # uninstall: where saved copies are, what was not put back
-        self.unrestored = []
 
     def _interpreter(self, python):
         if python:
@@ -261,82 +226,29 @@ class Kit:
                 return recorded
         return os.path.abspath(sys.executable)
 
-    def _settle_pending(self):
-        """An add-json recorded as pending was cut off (an interrupt, or a kill before it could record the outcome):
-        its entry is this tool's only when it landed."""
-        pending = self.manifest.get("mcp_pending")
-        if pending is None:
-            return
-        if _same_mcp(self.mcp_now(), pending):
-            self.manifest["mcp"] = pending
-        self.manifest["mcp_pending"] = None
-        self._save()
-
     # ---- the manifest
     def _load(self):
+        empty = self._empty()
         try:
             m = json.loads((self.state / "manifest.json").read_text(encoding="utf-8"))
             if isinstance(m, dict) and m.get("v") == 1:
-                return {**self._empty(), **m}
+                # an older version's keys (backups, mcp_pending) are dropped: nothing reads them any more
+                return {k: m.get(k, v) for k, v in empty.items()}
         except (OSError, ValueError):
             pass
-        return self._empty()
+        return empty
 
     @staticmethod
     def _empty():
-        # files: path -> sha256 written; block: {sha256, before, after, created, replaces}; mcp: the entry registered;
-        # mcp_pending: an entry being registered; backups: key -> backup file; dirs: folders install created
-        return {"v": 1, "project": None, "files": {}, "block": None, "mcp": None, "mcp_pending": None,
-                "backups": {}, "dirs": []}
+        # files: path -> sha256 written; block: {sha256, before, after, created}; mcp: the entry registered;
+        # dirs: folders install created
+        return {"v": 1, "project": None, "files": {}, "block": None, "mcp": None, "dirs": []}
 
     def _save(self):
         self.state.mkdir(parents=True, exist_ok=True)
         tmp = self.state / "manifest.json.part"
         tmp.write_text(json.dumps(self.manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         tmp.replace(self.state / "manifest.json")
-
-    def _backup(self, key, data, stamp):
-        """Save `data` (bytes) in a backup file of its own, never overwritten, and point `key` at it. Install backs up
-        only what it does not own under a restorable key, so the newest such backup is the original to put back."""
-        folder = self.state / "backups" / stamp
-        folder.mkdir(parents=True, exist_ok=True)
-        base, n = re.sub(r"[^A-Za-z0-9._-]", "_", key), 0
-        while True:
-            p = folder / (base if n == 0 else f"{base}.{n}")
-            try:
-                with open(p, "xb") as f:
-                    f.write(data)
-                break
-            except FileExistsError:
-                n += 1
-        self.manifest["backups"][key] = str(p)
-        self._save()
-        return p
-
-    def _restored(self, key):
-        """The backup of `key` as bytes, or None."""
-        p = self.manifest["backups"].get(key)
-        try:
-            return Path(p).read_bytes() if p else None
-        except (OSError, ValueError):
-            return None
-
-    def _restored_text(self, key):
-        data = self._restored(key)
-        return None if data is None else data.decode("utf-8", "replace")
-
-    def _used(self, key):
-        """`key`'s backup was put back: it is done with."""
-        self.manifest["backups"].pop(key, None)
-        self._save()
-
-    def _forget(self, *keys):
-        """Drop the backups of an item that left the manifest; an original that was not put back is counted."""
-        for key in keys:
-            p = self.manifest["backups"].pop(key, None)
-            if p and not key.endswith(EDITED):
-                self.unrestored.append(p)
-        self._save()
 
     def _cli(self, argv):
         rc = self.claude(argv)
@@ -413,79 +325,53 @@ class Kit:
         return rows, mismatch
 
     # ---- install
-    def plan_install(self, force=False):
-        """[(label, old, new, apply)] -- old/new texts for the diff (None: no such file), apply(stamp) does it."""
+    def plan_install(self):
+        """[(label, old, new, apply)] -- old/new texts for the diff (None: no such file), apply() does it. Only what
+        is absent or this tool's own unchanged copy (stale) is written: anything else is refused, never replaced."""
         plan, refusals = [], []
         st, text, span, bom = self.block_state()
         nl = newline_of(text)
         want = block(self.vals, nl)
         if st == "absent":
-            created = text is None
             before = "" if not text else ("" if text.endswith(("\n", "\r")) else nl) + nl
             new = (text or "") + before + want
-
-            def apply_append(stamp, new=new, before=before, created=created):
-                # a backup of what an earlier block replaced is left only when that block was removed by hand: its
-                # place is gone, so --restore no longer puts it back
-                if BLOCK_KEY in self.manifest["backups"]:
-                    self.notes.append(f"the block had been removed from {CLAUDE_MD} by hand, so uninstall --restore "
-                                      f"no longer puts back what it first replaced; that is saved at "
-                                      f"{self.manifest['backups'][BLOCK_KEY]}")
-                for key in BLOCK_KEYS:
-                    self.manifest["backups"].pop(key, None)
-                self._write_block(new, bom, before=before, after="", created=created)
-            plan.append((CLAUDE_MD, text, new, apply_append))
-        elif st == "stale" or (st in ("modified", "foreign") and force):
-            old_block = text[span[0]:span[1]]
-            new = text[:span[0]] + want + text[span[1]:]
+            plan.append((CLAUDE_MD, text, new, lambda new=new, before=before, created=text is None:
+                         self._write_block(new, bom, before, "", created)))
+        elif st == "stale":
             prev = self.manifest["block"] or {}
-
-            def apply_replace(stamp, new=new, old_block=old_block, st=st, prev=prev):
-                if st != "stale":       # foreign: the original; modified: this tool's block as changed by hand
-                    self._backup(BLOCK_KEY if st == "foreign" else BLOCK_KEY + EDITED, old_block.encode("utf-8"), stamp)
-                self._write_block(new, bom, before=prev.get("before", ""), after=prev.get("after", ""),
-                                  created=prev.get("created", False),
-                                  replaces=BLOCK_KEY if st == "foreign" else prev.get("replaces"))
-            plan.append((CLAUDE_MD, text, new, apply_replace))
+            new = text[:span[0]] + want + text[span[1]:]
+            plan.append((CLAUDE_MD, text, new, lambda new=new, prev=prev: self._write_block(
+                new, bom, prev.get("before", ""), prev.get("after", ""), prev.get("created", False))))
         elif st in ("modified", "foreign"):
-            refusals.append(f"{CLAUDE_MD}: the block is {st}; --force replaces it (backed up)")
-
+            refusals.append(f"{CLAUDE_MD}: the block is {st}; change it back or take it out by hand, then install")
         for rel, body in self.files().items():
             fst = self.file_state(rel, body)
-            if fst in ("absent", "stale") or (fst in ("modified", "foreign") and force):
-                plan.append((rel, _shown(self.home / rel), body,
-                             lambda stamp, rel=rel, body=body, fst=fst: self._write_file(rel, body, fst, stamp)))
+            if fst in ("absent", "stale"):
+                plan.append((rel, _shown(self.home / rel), body, lambda rel=rel, body=body: self._write_file(rel, body)))
             elif fst in ("modified", "foreign"):
-                refusals.append(f"{rel}: {fst}; --force replaces it (backed up)")
-
-        ms = self.mcp_state()
-        now = self.mcp_now()
-        if ms in ("absent", "stale") or (ms in ("modified", "foreign") and force):
+                refusals.append(f"{rel}: {fst}; move it away by hand, then install")
+        ms, now = self.mcp_state(), self.mcp_now()
+        if ms in ("absent", "stale"):
             plan.append((f"mcp {MCP_NAME} (claude mcp add-json --scope user)",
                          json.dumps(now, indent=1) + "\n" if now else None,
-                         json.dumps(self.mcp_spec(), indent=1) + "\n",
-                         lambda stamp, ms=ms, now=now: self._add_mcp(ms, now, stamp)))
-        elif ms == "modified":
-            refusals.append(f"mcp {MCP_NAME}: changed by hand; --force replaces it (backed up)")
-        elif ms == "foreign":
-            refusals.append(f"mcp {MCP_NAME}: registered with another command; --force replaces it (backed up)")
+                         json.dumps(self.mcp_spec(), indent=1) + "\n", lambda now=now: self._add_mcp(now)))
+        elif ms in ("modified", "foreign"):
+            refusals.append(f"mcp {MCP_NAME}: {ms}; `claude mcp remove --scope user {MCP_NAME}` it, then install")
         if refusals:
             raise Refused("; ".join(refusals))
         return plan
 
-    def install(self, dry_run=False, force=False):
-        self.notes = []
+    def install(self, dry_run=False):
         if not dry_run and self.mcp_state() != "current" and not MCP_SERVER.is_file():
             raise Refused("tools/mcp_rawsearch.py is not in this checkout")
-        plan = self.plan_install(force=force)
+        plan = self.plan_install()
         if dry_run:
             return plan
         if plan:
             self.manifest["project"] = str(PROJECT)
             self._save()
-        stamp = _stamp()
         for _label, _old, _new, apply in plan:
-            apply(stamp)
+            apply()
         return plan
 
     def _mkdirs(self, rel):
@@ -501,174 +387,100 @@ class Kit:
                 self.manifest["dirs"].append(r)
         self._save()
 
-    def _write_block(self, new, bom, before, after, created, replaces=None):
-        """`replaces`: the backup key of what the block was written in place of (a foreign block), which uninstall
-        --restore puts back in its place."""
+    def _write_block(self, new, bom, before, after, created):
         self._mkdirs(CLAUDE_MD)
         write_doc(self.home / CLAUDE_MD, new, bom)
         self.manifest["block"] = {"sha256": _sha(block(self.vals)), "before": before, "after": after,
-                                  "created": created, "replaces": replaces}
+                                  "created": created}
         self._save()
 
-    def _write_file(self, rel, body, fst, stamp):
-        p = self.home / rel
-        if fst in ("modified", "foreign"):
-            self._backup(rel if fst == "foreign" else rel + EDITED, p.read_bytes(), stamp)
+    def _write_file(self, rel, body):
         self._mkdirs(rel)
-        write_doc(p, body)
+        write_doc(self.home / rel, body)
         self.manifest["files"][rel] = _sha(body)
         self._save()
 
-    def _add_mcp(self, ms, now, stamp):
+    def _add_mcp(self, now):
         spec = self.mcp_spec()
         add = ["mcp", "add-json", "--scope", "user", MCP_NAME]
-        backups = dict(self.manifest["backups"])
-        if now is not None and ms in ("foreign", "modified"):
-            # an unrecorded entry of this server's never replaces an original already backed up
-            ours = ms == "modified" or ("mcp" in backups and _points_here(now))
-            self._backup("mcp" + EDITED if ours else "mcp", json.dumps(now, ensure_ascii=False).encode("utf-8"), stamp)
-        self.manifest["mcp_pending"] = spec     # a kill during the add: the next run records it only if it landed
-        self._save()
+        if now is not None:
+            self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
         try:
-            if now is not None:
-                self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
             self._cli([*add, json.dumps(spec, ensure_ascii=False)])
         except BaseException:
-            self._settle_pending()              # an add that landed before an interrupt is recorded
-            if self.manifest["mcp"] is not spec and now is not None:
-                if self.mcp_now() is None:      # removed, not added: put it back
-                    try:
-                        self.claude([*add, json.dumps(now, ensure_ascii=False)])
-                    except Exception:  # noqa: BLE001 -- the first failure is the one to report
-                        pass
-                if _same_mcp(self.mcp_now(), now):  # back as it was: so are the backups (a failed add changes nothing)
-                    self.manifest["backups"] = backups
-                    self._save()
+            if now is not None and self.mcp_now() is None:      # removed, not added: put the old entry back
+                try:
+                    self.claude([*add, json.dumps(now, ensure_ascii=False)])
+                except Exception:  # noqa: BLE001 -- the first failure is the one to report
+                    pass
             raise
-        self.manifest["mcp"], self.manifest["mcp_pending"] = spec, None
+        self.manifest["mcp"] = spec
         self._save()
 
     # ---- uninstall
-    def plan_uninstall(self, restore=False, force=False):
-        """([(label, old, new, apply)], kept, tidy): apply(stamp) does a step; tidy steps only update the manifest
-        for items already gone by hand."""
-        plan, kept, tidy = [], [], []
-        backups = self.manifest["backups"]
+    def plan_uninstall(self):
+        """([(label, old, new, apply)], kept): what this tool wrote and nobody changed since is removed; an item
+        changed by hand is kept and named."""
+        plan, kept = [], []
         st, text, span, bom = self.block_state()
-        if span is not None and (st in ("current", "stale") or force):
+        if span is not None and st in ("current", "stale"):
             info = self.manifest["block"] or {}
             start, end = span
-            # only what this very block was written in place of goes back in its place
-            old_block = self._restored_text(BLOCK_KEY) if restore and info.get("replaces") == BLOCK_KEY else None
-            if old_block is not None:
-                new = text[:start] + old_block + text[end:]
-            else:
-                before, after = info.get("before", ""), info.get("after", "")
-                if before and text[max(0, start - len(before)):start] == before:
-                    start -= len(before)
-                if after and text[end:end + len(after)] == after:
-                    end += len(after)
-                new = text[:start] + text[end:]
+            before, after = info.get("before", ""), info.get("after", "")
+            if before and text[max(0, start - len(before)):start] == before:
+                start -= len(before)
+            if after and text[end:end + len(after)] == after:
+                end += len(after)
+            new = text[:start] + text[end:]
             gone = new == "" and info.get("created")
-            used = BLOCK_KEY if old_block is not None else None
-            mine = None if st in ("current", "stale") else text[span[0]:span[1]]
 
-            def apply_block(stamp, new=new, gone=gone, used=used, mine=mine, st=st):
-                if mine is not None:
-                    saved = self._backup(BLOCK_KEY + EDITED, mine.encode("utf-8"), stamp)
-                    self.notes.append(f"the block removed from {CLAUDE_MD} ({st}) is saved at {saved}")
+            def apply_block(new=new, gone=gone):
                 p = self.home / CLAUDE_MD
                 if gone:
                     p.unlink()
                 else:
                     write_doc(p, new, bom)
                 self.manifest["block"] = None
-                if used:
-                    self._used(used)
-                self._forget(*BLOCK_KEYS)
+                self._save()
             plan.append((CLAUDE_MD, text, None if gone else new, apply_block))
         elif span is not None:
             kept.append(f"{CLAUDE_MD} (block {st})")
-        elif self.manifest["block"] is not None or any(k in backups for k in BLOCK_KEYS):
-            # the block was removed by hand: its original place is unknown, so what it replaced is not put back blindly
-            lost = backups.get(BLOCK_KEY)
-
-            def tidy_block(lost=lost):
-                if restore and lost:
-                    self.notes.append(f"the block is no longer in {CLAUDE_MD}, so what it replaced was not put back; "
-                                      f"it is saved at {lost}")
-                self.manifest["block"] = None
-                self._forget(*BLOCK_KEYS)
-            tidy.append(tidy_block)
-
         for rel, body in self.files().items():
             fst = self.file_state(rel, body)
-            back = self._restored(rel) if restore else None
-            shown = None if back is None else back.decode("utf-8", "replace")
-            if fst in ("current", "stale") or (fst == "modified" and force):
-                def apply_file(stamp, rel=rel, back=back, edited=fst == "modified"):
-                    p = self.home / rel
-                    if edited:
-                        saved = self._backup(rel + EDITED, p.read_bytes(), stamp)
-                        self.notes.append(f"{rel} (changed by hand) is saved at {saved}")
-                    if back is None:
-                        p.unlink()
-                    else:
-                        write_raw(p, back)
-                        self._used(rel)
+            if fst in ("current", "stale"):
+                def apply_file(rel=rel):
+                    (self.home / rel).unlink()
                     self.manifest["files"].pop(rel, None)
-                    self._forget(rel, rel + EDITED)
-                plan.append((rel, _shown(self.home / rel), shown, apply_file))
+                    self._save()
+                plan.append((rel, _shown(self.home / rel), None, apply_file))
             elif fst == "modified":
                 kept.append(f"{rel} (modified)")
-            elif fst == "absent" and back is not None:
-                def apply_back(stamp, rel=rel, back=back):
-                    p = self.home / rel
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    write_raw(p, back)
-                    self._used(rel)
-                    self.manifest["files"].pop(rel, None)
-                    self._forget(rel + EDITED)
-                plan.append((rel, None, shown, apply_back))
-            elif fst == "absent" and (rel in self.manifest["files"] or rel in backups):
-                def tidy_file(rel=rel):
-                    self.manifest["files"].pop(rel, None)
-                    self._forget(rel, rel + EDITED)
-                tidy.append(tidy_file)
         ms, now = self.mcp_state(), self.mcp_now()
-        back, shown = self._restored("mcp") if restore else None, None
-        if back is not None:
-            if _is_json(back):
-                shown = json.dumps(json.loads(back), indent=1) + "\n"
-            else:
-                back = None             # an unreadable backup is never handed to the CLI
-        if ms in ("current", "stale") or (ms == "modified" and force):
-            plan.append((f"mcp {MCP_NAME} (claude mcp remove --scope user)", json.dumps(now, indent=1) + "\n",
-                         shown, lambda stamp, back=back, edited=ms == "modified": self._remove_mcp(now, back, edited,
-                                                                                                  stamp)))
+        if ms in ("current", "stale"):
+            def apply_mcp():
+                self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
+                self.manifest["mcp"] = None
+                self._save()
+            plan.append((f"mcp {MCP_NAME} (claude mcp remove --scope user)", json.dumps(now, indent=1) + "\n", None,
+                         apply_mcp))
         elif ms == "modified":
             kept.append(f"mcp {MCP_NAME} (modified)")
-        elif ms == "absent" and back is not None:
-            plan.append((f"mcp {MCP_NAME} (claude mcp add-json --scope user: the entry install replaced)", None, shown,
-                         lambda stamp, back=back: self._readd_mcp(back)))
-        elif ms == "absent" and (self.manifest["mcp"] is not None or "mcp" in backups):
-            def tidy_mcp():
-                self.manifest["mcp"] = None
-                self._forget(*MCP_KEYS)
-            tidy.append(tidy_mcp)
-        return plan, kept, tidy
+        return plan, kept
 
-    def uninstall(self, dry_run=False, restore=False, force=False):
-        plan, kept, tidy = self.plan_uninstall(restore=restore, force=force)
+    def uninstall(self, dry_run=False):
+        plan, kept = self.plan_uninstall()
         if dry_run:
             return plan, kept
-        self.notes, self.unrestored = [], []
-        stamp = _stamp()
         try:
             for _label, _old, _new, apply in plan:
-                apply(stamp)
-            for step in tidy:
-                step()
+                apply()
+            # what was already gone by hand leaves the manifest too
+            if self.block_state()[2] is None:
+                self.manifest["block"] = None
+            for rel in [r for r in self.manifest["files"] if not (self.home / r).is_file()]:
+                self.manifest["files"].pop(rel)
+            if self.mcp_now() is None:
+                self.manifest["mcp"] = None
             for rel in sorted(self.manifest["dirs"], key=len, reverse=True):
                 d = self.home / rel
                 try:
@@ -679,72 +491,10 @@ class Kit:
                 except OSError:
                     pass
             if not self.manifest["files"] and not self.manifest["block"] and not self.manifest["mcp"]:
-                # nothing of this tool's is left: the install cycle is over, and so are its backups
                 self.manifest["project"] = None
-                self._forget(*list(self.manifest["backups"]))
-        finally:                        # a failed step still reports what the steps before it saved or forgot
-            if self.unrestored:
-                self.notes.append(f"{len(self.unrestored)} backup(s) of what install replaced were not put back"
-                                  f"{'' if restore else ' (--restore was not given)'} and are forgotten; their files "
-                                  f"stay under {self.state / 'backups'}")
+        finally:
             self._save()
         return plan, kept
-
-    def _remove_mcp(self, now, back, edited, stamp):
-        if edited:
-            saved = self._backup("mcp" + EDITED, json.dumps(now, ensure_ascii=False).encode("utf-8"), stamp)
-            self.notes.append(f"the {MCP_NAME} entry (changed by hand) is saved at {saved}")
-        self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
-        self.manifest["mcp"] = None
-        self._save()
-        if back is not None:            # on a failure the backup stays recorded: the next --restore puts it back
-            self._readd_mcp(back)
-        else:
-            self._forget(*MCP_KEYS)
-
-    def _readd_mcp(self, back):
-        self._cli(["mcp", "add-json", "--scope", "user", MCP_NAME, back.decode("utf-8")])
-        self.manifest["mcp"] = None
-        self._used("mcp")
-        self._forget(*MCP_KEYS)
-
-
-def _is_json(data):
-    try:
-        return isinstance(json.loads(data.decode("utf-8")), dict)
-    except ValueError:
-        return False
-
-
-# ---------------------------------------------------------------------------------------------------- the checkout
-
-def repo_plan(found=None):
-    """[("write", path, text)]: what sync-repo writes in the checkout."""
-    vals = values("repo", found if found is not None else apps())
-    plan = []
-    for template, kind, rel in REPO_FILES:
-        want = artifact(template, kind, vals)
-        p = PROJECT / rel
-        cur = p.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n") if p.is_file() else None
-        if cur != want:
-            plan.append(("write", rel, want))
-    return plan
-
-
-def sync_repo(check):
-    plan = repo_plan()
-    for action, rel, _text in plan:
-        _out(f"agents: sync-repo: {'would ' if check else ''}{action} {rel}")
-    if check:
-        if not plan:
-            _out("agents: sync-repo: the checkout's agent files match the templates")
-        return 3 if plan else 0
-    for _action, rel, text in plan:
-        p = PROJECT / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(text.encode("utf-8"))
-    _out(f"agents: sync-repo: {len(plan)} change(s)" if plan else "agents: sync-repo: nothing to change")
-    return 0
 
 
 # ---------------------------------------------------------------------------------------------------- main
@@ -773,15 +523,10 @@ def parser():
     s.add_argument("--json", action="store_true")
     i = sub.add_parser("install")
     i.add_argument("--dry-run", action="store_true")
-    i.add_argument("--force", action="store_true")
     i.add_argument("--python", help="the interpreter the MCP server runs with (default: the one it was installed "
                                     "with, while that is still there, else this one)")
-    u =sub.add_parser("uninstall")
+    u = sub.add_parser("uninstall")
     u.add_argument("--dry-run", action="store_true")
-    u.add_argument("--restore", action="store_true")
-    u.add_argument("--force", action="store_true")
-    r = sub.add_parser("sync-repo")
-    r.add_argument("--check", action="store_true")
     return ap
 
 
@@ -797,10 +542,7 @@ def _status_lines(k, rows, mismatch):
 
 def main(argv=None, kit=None):
     a = parser().parse_args(argv)
-    k = None
     try:
-        if a.command == "sync-repo":
-            return sync_repo(a.check)
         k = kit or Kit(python=getattr(a, "python", None))
         if a.command == "install" and kit is None:
             from rawlayer import schedule  # noqa: PLC0415 -- the MCP server's interpreter, as the task's is checked
@@ -817,7 +559,7 @@ def main(argv=None, kit=None):
                 _status_lines(k, rows, mismatch)
             return rc
         if a.command == "install":
-            plan = k.install(dry_run=a.dry_run, force=a.force)
+            plan = k.install(dry_run=a.dry_run)
             if not plan:
                 rows, mismatch = k.status()
                 if set(rows.values()) == {"current"} and not mismatch:
@@ -830,13 +572,12 @@ def main(argv=None, kit=None):
                 _diff(plan)
             _show(plan, "would" if a.dry_run else "did")
             return 0
-        plan, kept = k.uninstall(dry_run=a.dry_run, restore=a.restore, force=a.force)
+        plan, kept = k.uninstall(dry_run=a.dry_run)
         if a.dry_run:
             _diff(plan)
         _show(plan, "would" if a.dry_run else "did")
         for x in kept:
-            _out(f"agents: kept {x}: changed by hand or not written by this tool (`uninstall"
-                 f"{' --restore' if a.restore else ''} --force` removes it, saving it first)")
+            _out(f"agents: kept {x}: changed by hand; remove it by hand if it should go")
         if not plan and not kept:
             _out("agents: nothing installed")
         return 3 if kept else 0
@@ -849,6 +590,3 @@ def main(argv=None, kit=None):
     except Exception as e:  # noqa: BLE001 -- never a traceback: it would print unmasked paths
         _err(f"error {type(e).__name__}: {e}")
         return 1
-    finally:                            # also after a failed step: where saved copies are, what was forgotten
-        for n in (k.notes if k is not None and a.command in ("install", "uninstall") else []):
-            _out(f"agents: {n}")

@@ -21,9 +21,9 @@ core stays as it is); standard library only; it runs from any folder.
   checkpoint show <app> | mark <app> GATE [--field NAME=VALUE ...] | clear <app> [GATE]
       The llm.md gates an app has passed, kept in <DATA_ROOT>\\reports\\bootstrap.json (gate ids and integer or
       boolean fields only), so a later session resumes where the last one stopped.
-  agents status | install | uninstall | sync-repo ...
+  agents status | install | uninstall ...
       The agent integration (tools/agentkit.py; `agents -h` for its options): the global CLAUDE.md block, the
-      skills, the raw-retriever subagent and the MCP server for Claude Code, and the checkout's own copies.
+      skills, the raw-retriever subagent and the MCP server for Claude Code.
 
 Every path printed is masked (<DATA_PARENT>, <PROJECT>, <HOME>, <user>), and no config value, token or archive
 content is printed. It does not cover kakaotalk yet (llm.md 6.5): doctor leaves it out, the others refuse it.

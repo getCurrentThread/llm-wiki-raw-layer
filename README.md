@@ -67,12 +67,9 @@ archive contract and search rows.
   appkit/archive.py            the apps' shared library: the fetch steps' file, lock, token and exit-code helpers and
                                `ArchiveOrigin`; appkit/setup.py: the shared setup defaults (AppConfig.setup_defaults)
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)
-  tools/agentkit.py            the agent integration (bootstrap.py agents): global install, sync-repo
+  tools/agentkit.py            the agent integration (bootstrap.py agents): global install
   tools/agent_templates/       the one source of the skills, the subagent and the global CLAUDE.md block
   tests/tools/                 tests of tools/ (run with the core suite)
-  .claude/skills/, .claude/agents/, .agents/skills/
-                               raw-search, llm-wiki-setup and raw-retriever, generated from the templates
-                               (`bootstrap.py agents sync-repo`; edit the templates, not these)
   AGENTS.md, CLAUDE.md         rules for coding agents (CLAUDE.md imports AGENTS.md)
   llm.md                       the operations runbook for agents
   CORE.md                      core contract
