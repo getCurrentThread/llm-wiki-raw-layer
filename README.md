@@ -5,21 +5,23 @@ its own append-only, crash-safe ledger of what they say. Capture records changes
 committed ledger records searchable. The apps share one root project and framework, but have separate data
 roots, ledgers, indexes, configs and scheduled tasks.
 
-| app (folder name) | origins, in ledger order | index under its data root |
-|---|---|---|
-| `kakaotalk` | backup_decrypted, edb, macdb | `index/kakaotalk.sqlite` |
-| `mattermost` | mm_archive | `index/mattermost.sqlite` |
-| `discord` | dc_archive | `index/discord.sqlite` |
-| `notion` | nt_archive | `index/notion.sqlite` |
-| `gmail` | gm_archive | `index/gmail.sqlite` |
-| `claudecode` | cc_archive | `index/claudecode.sqlite` |
+| app (folder name) | origins, in ledger order |
+|---|---|
+| `kakaotalk` | backup_decrypted, edb, macdb |
+| `mattermost` | mm_archive |
+| `discord` | dc_archive |
+| `notion` | nt_archive |
+| `gmail` | gm_archive |
+| `claudecode` | cc_archive |
 
 Python standard library is used throughout, with pycryptodome for KakaoTalk `.edb` decryption. Message data and
 machine configs belong outside the repository. The record format, keys, canonical form, hashes, change detection
 and commit protocol come from `SPEC.md` and `SPEC-CLARIFICATIONS.md` in the `llm-wiki` checkout.
 
-[AGENTS.md](AGENTS.md) holds the rules for coding agents working here, and [llm.md](llm.md) is the gated
-runbook an agent follows to bring an app into live operation, keep it healthy and recover it.
+[AGENTS.md](AGENTS.md) holds the rules for coding agents working here, [llm.md](llm.md) is the gated runbook an
+agent follows to bring an app into live operation, keep it healthy and recover it, and [CORE.md](CORE.md) is the
+framework's contract. This file holds what every app shares; each `<app>/README.md` holds that app's sources,
+archive contract and search rows.
 
 ## Quick start
 
@@ -29,10 +31,8 @@ runbook an agent follows to bring an app into live operation, keep it healthy an
 2. Clone the repository under your user profile (`%USERPROFILE%\...`): the scheduled tasks run as SYSTEM and
    find the data parent through the profile that holds the checkout.
 3. From the checkout, run `python -s -B manage.py check`; it ends with `check: ok errors=0 refused=0`.
-4. `python -s -B tools/bootstrap.py doctor` shows the machine's state and each app's state. For each app it names
-   the next runbook step: `5.1` for an app not set up yet, `8` for one that is live. Without elevation it cannot
-   read the scheduled tasks, so it shows `8` only for an app whose live check the runbook recorded (llm.md 5.10;
-   for an app that went live before the tool, the health routine in llm.md section 8 records it).
+4. `python -s -B tools/bootstrap.py doctor` shows the machine's state and, for each app, the next runbook step:
+   `5.1` for an app not set up yet, `8` for one that is live (llm.md section 4).
 5. Give a coding agent [llm.md](llm.md) and name the app to bring up, e.g. "llm.md를 따라 gmail 수집을 켜줘".
    It runs the steps, gates each one and hands back only the steps a person must do (sign-ins, consent, UAC).
 6. Optional, for Claude Code from any folder: `python -s -B tools/bootstrap.py agents install --dry-run`, then,
@@ -107,6 +107,20 @@ README. `<DATA_ROOT>` denotes the selected app's data root (by convention `<DATA
 inside `DATA_PARENT`, outside git work trees, with the required ACL and Windows Search exclusion. Frozen `T1`
 and `T2` inputs require `inputs_root`; live capture does not require it to exist.
 
+Every data root has the same layout:
+
+```
+<DATA_ROOT>/                     <DATA_PARENT>/raw/<app>
+  config.json                    the machine config
+  archive/                       what the app's fetch step keeps (the apps that have one)
+  raw/ledger/<origin>/<YYYY>/    committed records, as gzipped JSONL segments
+  raw/manifests/                 one manifest per capture commit
+  raw/.state/state.sqlite        capture's fold of the ledger
+  raw/log.md                     one line per committed capture
+  index/<app>.sqlite             the search index (<app>.vec.sqlite: the optional dense sidecar, llm.md 12)
+  reports/task.log               the step log of `capture` (llm.md section 3)
+```
+
 ## Commands
 
 Run from `<PROJECT>`, always as `python -s -B manage.py <command> [<app>] ...`. `help` lists commands;
@@ -120,22 +134,82 @@ and `setup`, not as commands of their own.
 | `setup <app> [--from CFG\|-] [--force] [--provision] [--scan] [--root HEXFILE] [--restart-client]` | prepare the data parent, app data root and config; `-` reads config from stdin; force replaces an existing config; the app fills its own config defaults and runs its provisioning (kakaotalk: the root key, keystore, decrypted backup, and on a Mac the client database); `--provision` reruns only that provisioning — the recovery path when a credential rotated — with `--scan` (memory fallback), `--root` (a root file to install, verified first) and `--restart-client` |
 | `capture <app> [--config CFG] [--input-set live\|T1\|T2] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
 | `collect <app> [--config CFG] [--project DIR] [--include S ...] [--exclude S ...] [--since YYYY-MM] [--dry-run] [--prune]` | the owner-only export step: render the app's index as Markdown sources of the wiki vault, whose headless ingest sends them to its LLM (llm.md 13). Needs `AppConfig.wiki` in the app's `apps.py`; refuses to run as LocalSystem; `--prune` deletes orphaned source files (their wiki pages stay) and runs only on the owner's explicit yes; prints counts only; not part of any scheduled task |
-| `search <app> [QUERY] [--config CFG] [options]` | search the app's index; query options are in the app README and `search <app> --help` |
+| `search <app> [QUERY] [--config CFG] [options]` | search the app's index ("Search" below); `search <app> --help` lists the options |
 | `embed <app> [--config CFG] [--model M] [--dims N] [--url U] [--limit N] [--dry-run] [--rebuild]` | build or refresh the optional dense sidecar that `search --hybrid` reads; needs Ollama on a loopback address and sqlite-vec's windows-x86_64 build (llm.md 12) |
-| `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts and collisions; with an app, load its config and verify the ledger's hash chain and segments and the folded state against the ledger (the old replay --check); `--export-state` also dumps every record's (origin, key, rev, op, h) (the old export-state), `--rebuild-state` rebuilds the state from the ledger (the old replay) |
+| `check [<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]` | validate settings, app contracts and collisions; with an app, load its config and verify the ledger's hash chain and segments and the folded state against the ledger; `--export-state` also dumps every record's (origin, key, rev, op, h), `--rebuild-state` rebuilds the state from the ledger |
 | `test [core\|<app> ...] [-k PATTERN] [-v] [-f]` | run core and app suites, each in its own process; defaults to all suites |
 | `schedule install\|status\|run\|remove [<app>] [--config CFG] [--python EXE] [--run-now\|--dry-run]` | register, inspect, start once or unregister the app's Windows task; status compares the registered definition, reports the last result and the task log, and returns 3 when attention is needed |
 
-`setup` creates a protected data parent when missing, checks an existing parent's permissions and Search
-exclusion, and writes the app config from its example or the supplied config. The app then fills the config
-placeholders it can resolve itself and runs its own provisioning before the config is validated (kakaotalk:
-default source paths, the client's user directory, and the root key derived from the research tree's copy or
-recovered from the running client's memory — see the app README). Fill in any remaining source placeholders
-before using it. It checks Windows Search exclusion rather than changing the indexer's settings.
+`setup` creates a protected data parent when missing; it checks an existing parent's permissions and Windows
+Search exclusion rather than changing them. It names the source placeholders it could not resolve: fill them in
+before using the config.
 
-Capture exit codes are 0 ok, 3 suspect, 75 busy or skipped, 2 refused, and 1 error. Suspect origins commit nothing
-that run; other origins may commit. Search returns 0 even for zero hits, 2 for usage/query/index problems, 75
-for a busy index lock, and 1 for an unexpected error. Consult command output for other commands' results.
+Discord, Notion, Gmail, Mattermost and Claude Code have an app-owned fetch step that fills the archive capture
+reads: `python -s -B -m <app>.fetch [--auth-check] [--max-items N] [--full] [--capture] [--config CFG]`. With the
+app's sync option on (`dc_sync`, `nt_sync`, `gm_sync`, `mm_sync`, `cc_sync`), live capture runs it first; frozen
+inputs never do. The app READMEs define the options, archive contracts and authentication boundaries.
+
+Capture exit codes are 0 ok, 3 suspect, 75 busy, below the disk floor or skipped, 2 refused, and 1 error. Suspect
+origins commit nothing that run; other origins may commit. Search returns 0 even for zero hits, 2 for
+usage/query/index problems, 75 for a busy index lock, and 1 for an unexpected error. Consult command output for
+other commands' results.
+
+## Search
+
+`manage.py search <app> --help` lists an app's modes, filters and cursors, and the app README says what a row is
+and where its text and labels come from. Every app shares the rest.
+
+**The index.** `capture`'s index step brings `<DATA_ROOT>/index/<app>.sqlite` up to the committed ledger (search
+reads only `data_root` from the config):
+
+- **Incremental.** Manifests are applied in seq order, one transaction per manifest together with the
+  index's watermark (head seq, plus the sha256 and run id of that manifest).
+- **Full rebuild.** It runs on `capture --rebuild-index`, when the index is missing, unreadable or stamped with
+  another schema/tokenizer/extractor version, when the watermark no longer matches the ledger (the ledger was
+  reset), when a manifest is not a capture manifest, or when the catch-up is very large.
+- **Rebuild and catch-up give the same index.** Both run the same record handling in ledger order.
+- **Only committed manifests are read.** If a manifest's segments are still `*.part`, capture is
+  mid-commit: the index stops before it and reports `behind` (exit 0). An unreadable committed file is
+  a ledger defect (exit 1).
+- **Crash safety.** A rebuild is written to `<name>.sqlite.new`, checked with FTS5 `integrity-check`
+  and `quick_check`, then swapped in. A crash never loses the live index.
+- **One writer.** The index has a writer lock (exit 75 when busy). Searches open the index read-only and are
+  never blocked by it.
+
+**The query language.**
+
+| Query | Meaning |
+|---|---|
+| `배포 일정` | both terms (AND) |
+| `"정기 회의"` | the exact phrase |
+| `회의 OR 미팅` | either term |
+| `배포 -롤백` | the first term, excluding the second |
+| `api*` | prefix |
+
+Text is normalised as NFC + casefold. Each row gets an n-gram shadow column: Korean/CJK runs become overlapping
+bigrams and Latin/digit runs become one token. A query term is issued as an FTS5 phrase over the same tokens
+(tokenizer `ngram-3`; `rawlayer/search/fts.py`'s docstring holds the rules and why each exists). As a result:
+
+- Korean matches as a substring: `배포` finds `배포를` and `재배포`. Particles and common endings are also
+  stripped from query terms unless `--literal` is given or the term is quoted (AGENTS.md).
+- A lone space between Korean words may be left out: `회의실예약` finds `회의실 예약`. Two spaces, a line break
+  or punctuation still separate, and `가나다` does not match `가나 나다`.
+- A Latin/digit run at a term's edge must match a whole run: `api` finds `API 키` but not `rapid`, and
+  `api*` finds `apis`.
+- Quoted phrases and terms with punctuation (`C++`, `AES-256`) match literally after normalisation.
+- Excluded terms use the same match rule as positive ones, and `OR` next to an excluded term is refused.
+- An unquoted term with a Latin/digit run longer than 32,000 characters is refused: SQLite FTS5 cuts tokens at
+  32,768 bytes, so such a run would also match longer runs that start with it.
+- Snippets mark matches with the same case folding the search uses, so `straße` marks `STRASSE`.
+
+A property test in `tests/core/test_fts.py` checks the index against an independent model of these rules on
+thousands of random queries.
+
+**Output.** `--json` prints one envelope: the query as given and as run, `total`, `rows` and
+`index{seq, ledger_seq, stale}`, plus `page` when browsing; large ids are strings. `--explain` prints the FTS5
+expression (the separator token is shown as `<S>`). A stderr note appears when the index is behind the ledger, and
+when a query falls back to a full scan. There is no masking, pseudonymisation or redaction: names, titles and
+texts are shown as they are, and whoever uses the output applies their own privacy rules (AGENTS.md).
 
 ## Scheduled tasks
 
@@ -157,16 +231,18 @@ The action's Command is the selected Python interpreter, WorkingDirectory is `<P
 ```
 
 Paths containing spaces are quoted by the generated definition. `install` checks the config, data root,
-interpreter and app task checks before registration. Install, run and remove require elevation; status and dry-run do not. Without an app, install and status
-operate on every app that has a schedule, using default configs; an explicit `--config` belongs to one app.
-Run and remove require an app when several are discovered.
+interpreter and app task checks before registration, replaces a task of the same name and compares the definition
+read back; `--dry-run` prints the definition without registering it. Install, run and remove require elevation;
+status and dry-run do not. Without an app, install and status operate on every app that has a schedule, using
+default configs; an explicit `--config` belongs to one app. Run and remove require an app when several are
+discovered.
 
-A new start is ignored while a task runs; a missed start runs when the machine returns. Collect runs its steps
-in this one process — the capture step with the live input set, then the index step after every capture exit
+A new start is ignored while a task runs; a missed start runs when the machine returns. `capture` runs its steps
+in one process — the capture step with the live input set, then the index step after every capture exit
 code (a failed, refused or busy capture included), because only committed manifests enter the index. Steps go to
-`<DATA_ROOT>/reports/task.log`; the command returns the capture step's code. `status` reports the newest run that finished a
-step, marks an incomplete run and returns 3 when the task, definition, last result or logged step needs
-attention.
+`<DATA_ROOT>/reports/task.log`; the command returns the capture step's code. `status` reports the newest run that
+finished a step, marks an incomplete run and returns 3 when the task, definition, last result or logged step
+needs attention.
 
 ## Tests
 
@@ -183,14 +259,4 @@ real conversation data are committed. The default test command runs every suite 
 `core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok`
 when all suites pass. Agents run the named form above (AGENTS.md).
 
-Discord, Notion, Gmail, Mattermost and Claude Code include app-owned fetch steps; enable `dc_sync` / `nt_sync` /
-`gm_sync` / `mm_sync` / `cc_sync` to fetch before live capture. Claude Code reads local conversation files from
-`cc_claude_dir` (setup fills `<HOME>\.claude`) without credentials:
-`python -s -B -m claudecode.fetch [--max-items N] [--capture]`.
-Discord and Notion support token-free desktop-cache sources; their API sources use Discord credentials or the official `ntn` keychain. Desktop caches provide partial coverage and never
-treat eviction as deletion. Gmail reads IMAP, read-only, with a Google app password, and Mattermost's fetch step (a
-port of the mattertok archiver, REST API v4 with a session token) writes mattertok's archive format. Their READMEs
-define the options, archive contracts and authentication boundaries.
-
-After changing a core file, run every suite (`test`) and `check`. See `CORE.md` for ledger guarantees; the layout
-and command examples above describe the current root project.
+After changing a core file, run every suite (`test`) and `check`. See `CORE.md` for ledger guarantees.

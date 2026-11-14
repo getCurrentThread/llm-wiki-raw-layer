@@ -32,7 +32,7 @@ the wiki's retrieval side. Message data, indexes, configs and tokens live outsid
 sign-in, first collection, the SYSTEM scheduled task), the health routine and recovery. Read it whole before
 running any of its steps. Start with `python -s -B tools/bootstrap.py doctor`: it changes nothing and names each
 app's next llm.md step. Edit a config only with `tools/bootstrap.py config set` or `config defaults` (llm.md 5.0),
-which print no values; llm.md 5.3's `$setKey` helper is only for when the tool itself cannot run.
+which print no values.
 [README.md](README.md), [CORE.md](CORE.md) and each `<app>/README.md` hold the contracts and design.
 
 ## Searching the raw ledgers

@@ -87,9 +87,6 @@ every following block. A newly inserted block gets its own first version.
 ## Search
 
 ```
-python -s -B manage.py setup notion
-# Fill sources.nt_archive with the absolute existing archive path in the external config.
-python -s -B manage.py capture notion
 python -s -B manage.py search notion deployment --page Project --context 2 --json
 python -s -B manage.py search notion --page-text 00000000-0000-0000-0000-000000000001 --json
 python -s -B manage.py search notion --list-pages --json
@@ -107,22 +104,19 @@ cut down this whole-page mode. `--before` / `--after` browse by printed `ts_ms.n
 sender and deletion for incremental manifests and rebuilds. A block is deleted when tombstoned, its page is
 trashed/gone, or it is missing from current page order; missing pages leave order NULL. Thus blocks arriving
 before their page still fold deterministically. Breadcrumbs query parent links recursively, with cycle guards.
-Search JSON includes watermark/freshness. Search results are private plaintext.
+The index, the query language and the output are the root README's ("Search").
 
 Frozen inputs read `<inputs_root>/<set>/nt/archive`. SYSTEM capture runs on the schedule in
 [../README.md](../README.md#scheduled-tasks). Desktop mode can use this task. API sync with `ntn` must run as the owning user because its
 keychain is per-user; the existing SYSTEM task installer refuses `nt_sync` with `nt_source: "api"`.
 Archive-only SYSTEM capture can still consume an archive completed by a user-account API fetch step.
-Preview with `python -s -B manage.py schedule install notion --config <CFG> --dry-run` after preparing the
-external config and its data root.
 
 ## API collection details
 
 The fetch step overlaps minute-level edit timestamps and performs daily full sweeps. Child pages/databases
 remain separate containers; synced blocks fetch original children. It queries comments on each block instead
 of assuming page-level queries include inline discussions. Failed child/comment requests cannot mark a page
-gone: only an inaccessible page lookup does so. Backoff handles throttling/transient failures. See
-[third-party references](../THIRD_PARTY.md) for SQLite cache and API sources.
+gone: only an inaccessible page lookup does so. Backoff handles throttling/transient failures.
 
 ## Wiki export
 

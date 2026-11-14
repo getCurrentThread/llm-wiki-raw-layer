@@ -5,7 +5,7 @@ Claude Code conversations: prompts, Claude's reply text and a one-line summary o
 thinking and attachments are left out. The app includes a stdlib fetch step (`fetch.py`) that copies what it
 keeps from the owner's `.claude` folder into the archive. Claude Code deletes transcripts after about 30 days; the
 archive keeps them. With `cc_sync: true`, live `manage.py capture claudecode` updates the archive before capturing
-it. Frozen inputs never call the fetch step. Core files are unchanged.
+it. Frozen inputs never call the fetch step.
 
 ```
 python -s -B -m claudecode.fetch --max-items 20
@@ -112,18 +112,14 @@ The fetch step reads a source file only when its `(size, mtime_ns)` differs from
 When a source file disappears its `files` entry, container and partitions stay: Claude Code's cleanup is not a
 deletion. Nothing in the archive is ever deleted or rewritten except `manifest.json`, published atomically last.
 
-## Fetch interface
+## Fetch step
 
-`claudecode/fetch.py` follows `discord/desktop.py` and `appkit/archive.py`:
+`claudecode/fetch.py` runs under the archive lock (`appkit/archive.py`), writes partitions as immutable files and
+publishes the manifest last.
 
-- `sync(root, claude_dir, max_items=0, full=False, clock=None) -> stats`: under `archive.locked(root)`;
-  partitions with `archive.atomic(..., immutable=True)`; manifest last. `max_items` bounds the number of
-  changed source files processed (then `limited: true`). `clock` (epoch ms) is for tests (the 24-hour rule).
-- `sync_config(cfg, auth_only=False, full=False, max_items=0)`: refuses with `FetchError("source_missing")`
-  unless `cfg.cc_claude_dir` is an absolute existing folder; `auth_only` returns
-  `{"status": "local_ready", "authentication_required": False}`; else `sync(cfg.sources["cc_archive"],
-  cfg.cc_claude_dir, max_items, full)`.
-- `if __name__ == "__main__": raise SystemExit(archive.main("claudecode", sync_config))`.
+- `--max-items N` bounds the number of changed source files processed (then `limited: true`).
+- It refuses with `source_missing` unless `cc_claude_dir` is an absolute existing folder; `--auth-check` only
+  confirms that: `{"status": "local_ready", "authentication_required": false}`.
 - stats: `status` (`ok`), `files_seen`, `files_changed`, `files_gone`, `rows_written`, `partitions_written`,
   `lines_bad`, `errors`, `limited`. A source file that cannot be read counts in `errors` (its previous archive
   stays), and any error makes live capture stop with `collection_incomplete`. Normal conditions are therefore not

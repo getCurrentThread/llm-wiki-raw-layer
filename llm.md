@@ -24,8 +24,8 @@ repeating them.
 - Use PowerShell 7.3 or newer (`pwsh`) as the shell that runs your commands. Windows PowerShell 5.1 and pwsh
   7.0–7.2 strip the double quotes inside native-command arguments, so a JSON list given to `config set` (5.3)
   arrives broken.
-- Agent shells usually keep no variables between tool calls. Send every `$name = ...` definition (the 5.3 helper,
-  the 7.2 values) in the same command that uses it.
+- Agent shells usually keep no variables between tool calls. Send every `$name = ...` definition (the 7.2 values,
+  for example) in the same command that uses it.
 - Run every command from `<PROJECT>`. Pass `--config <CFG>` to every command that accepts it: `check <app>`,
   `capture`, `search`, the fetch steps, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
   and `schedule remove` take none; `setup` writes `<CFG>` itself.
@@ -52,10 +52,8 @@ repeating them.
 | `<DATA_ROOT>` | `<DATA_PARENT>\raw\<app>` |
 | `<CFG>` | `<DATA_ROOT>\config.json` |
 | `<PY>` | absolute path of the Python interpreter the scheduled task will start (0.2) |
-| `<source_key>` | the app's `sources` entry: `gm_archive`, `dc_archive`, `nt_archive` or `mm_archive` |
-| `<sync_key>` | the app's sync option: `gm_sync`, `dc_sync`, `nt_sync` or `mm_sync` (5.6) |
-| `<MM_ARCHIVE>` | the absolute path of an existing mattertok archive folder to continue from, if there is one (6.4) |
-| `<mattertok>` | the mattertok checkout that `<MM_ARCHIVE>` came from, the folder holding its `.env` (6.4) |
+| `<source_key>` | the app's `sources` entry: `gm_archive`, `dc_archive`, `nt_archive`, `mm_archive` or `cc_archive` |
+| `<sync_key>` | the app's sync option: `gm_sync`, `dc_sync`, `nt_sync`, `mm_sync` or `cc_sync` (5.6) |
 | `<REPO_URL>` | the clone URL of this repository, which the owner gives (section 4) |
 | `<keys>` | the key names a `setup` line lists after `fill in config.json:` (5.1) |
 | `<N>` | a fetch step bound, given by the app card |
@@ -208,7 +206,7 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 
 | step | action | gate |
 |---|---|---|
-| 0.1 | Prerequisites. This checkout sits under the owner's profile (`<HOME>\...`): outside a profile the owner's commands still work, but every SYSTEM run fails at start (`1 (capture error)`, no task.log block), so never move the checkout yourself. Git for Windows is installed machine-wide on PATH: the SYSTEM task's precheck runs `git` and refuses the data root when it cannot. PowerShell 7.3 or newer. The four apps use the standard library only; no pip installs. If `pwsh` or `git` is missing: **[human]** the owner installs it (the Microsoft Store package of PowerShell needs no UAC prompt; an MSI or a machine-wide Git install shows one), then restart the agent session in pwsh. | `git --version` succeeds; `([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';').Where({ $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }).Count` is 1 or more (the SYSTEM task sees only the machine PATH); `$PSVersionTable.PSVersion` is 7.3 or newer; `$PSNativeCommandArgumentPassing` is not `Legacy` |
+| 0.1 | Prerequisites. This checkout sits under the owner's profile (`<HOME>\...`): outside a profile the owner's commands still work, but every SYSTEM run fails at start (`1 (capture error)`, no task.log block), so never move the checkout yourself. Git for Windows is installed machine-wide on PATH: the SYSTEM task's precheck runs `git` and refuses the data root when it cannot. PowerShell 7.3 or newer. These five apps use the standard library only; no pip installs. If `pwsh` or `git` is missing: **[human]** the owner installs it (the Microsoft Store package of PowerShell needs no UAC prompt; an MSI or a machine-wide Git install shows one), then restart the agent session in pwsh. | `git --version` succeeds; `([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';').Where({ $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }).Count` is 1 or more (the SYSTEM task sees only the machine PATH); `$PSVersionTable.PSVersion` is 7.3 or newer; `$PSNativeCommandArgumentPassing` is not `Legacy` |
 | 0.2 | Choose `<PY>`. In a shell opened after any Python install: `python -s -B -c "import sys; print(sys.executable)"` (if `python` is missing or opens the Store, use `py -c ...`). `(Get-Command python).Source` is not the test: the python.org install manager's `python` is a `WindowsApps` alias that starts a real interpreter. If nothing qualifies: **[human]** install Python 3.12+ from python.org: the Python install manager needs no UAC prompt; the classic installer shows one unless **Use admin privileges when installing py.exe** is unticked. Then open a new shell and repeat. Wherever bare `python` does not start `<PY>`, run `& '<PY>' -s -B` in place of `python -s -B`. | `<PY>` is not under `\WindowsApps\`; `& '<PY>' -s -B --version` is 3.12 or newer |
 | 0.3 | `python -s -B manage.py check`, then `python -s -B -c "from pathlib import Path; from rawlayer import conf; print(Path(conf.PROJECT_DIR).is_relative_to(Path.home().resolve()))"` | exit 0 with `apps: 6 apps, no collision`, `check: ok errors=0 refused=0`; the second command prints `True` |
 | 0.4 | Optional: `python -s -B manage.py test core claudecode discord gmail kakaotalk mattermost notion`. This is the full suite an agent may run; every app's tests build synthetic data in temporary directories, kakaotalk's included. | exit 0 and the last line `test: core ok; claudecode ok; discord ok; gmail ok; kakaotalk ok; mattermost ok; notion ok` |
@@ -261,8 +259,7 @@ Gates:
 
 **5.2 Archive folder.** 5.1 creates `<DATA_ROOT>\archive`. For a config written before `setup` filled defaults,
 run `python -s -B tools/bootstrap.py config defaults <app>`. It creates the folder and fills only keys that are
-still unset. The fallback without the tool is
-`New-Item -ItemType Directory -Force -Path <DATA_ROOT>\archive | Out-Null`.
+still unset.
 Gate: `Test-Path -LiteralPath <DATA_ROOT>\archive` is True. Inside `<DATA_ROOT>` the folder inherits the protected
 ACL.
 
@@ -283,31 +280,9 @@ ACL.
   reason, `<CFG>` unchanged. A config that is not accepted yet can be filled one key at a time.
 - It keeps the file it replaces as `config.json.prev`.
 
-Only when `tools/bootstrap.py` itself cannot run (it is missing, or exits 1), use this `$setKey` helper; never
-after the tool refuses (exit 2): a refusal is a stop-and-fix, and the helper would skip its checks. The helper
-applies the same value rule, but it checks nothing. Send the `$setKey` definition and the `python` call in one
-command, every time (5.6 too).
+If the tool itself exits 1 (an error), stop and report; never fall back to a text edit of `<CFG>`.
 
-```powershell
-$setKey = @'
-import json, re, sys
-path, key, raw = sys.argv[1:4]
-literal = raw in ('true', 'false', 'null') or raw[:1] in ('[', '{') or re.fullmatch(r'-?(0|[1-9][0-9]*)', raw)
-value = json.loads(raw) if literal else raw
-with open(path, encoding='utf-8') as f:
-    cfg = json.load(f)
-node = cfg
-*parents, last = key.split('.')
-for name in parents:
-    node = node.setdefault(name, {})
-node[last] = value
-with open(path, 'w', encoding='utf-8') as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-'@
-python -s -B -c $setKey '<CFG>' 'sources.<source_key>' '<DATA_ROOT>\archive'
-```
-
-Gate: `config set` exits 0 with `config ok` (with the helper: it exits 0), and
+Gate: `config set` exits 0 with `config ok`, and
 `python -s -B manage.py check <app> --config <CFG>` exits 0 with `config: ok`. Exit 3 with `fill in:` names the
 keys still to set.
 
@@ -336,12 +311,10 @@ Once a run reports `"limited": false` with these gates passed, record it:
 Until it is recorded (or 5.10, which comes after genesis), doctor's `next` for an app with sync off stays 5.5.
 
 **5.6 Turn on sync**, only where the app card allows it:
-`python -s -B tools/bootstrap.py config set <app> <sync_key> true`. Only when the tool cannot run (5.3), run
-`python -s -B -c $setKey '<CFG>' <sync_key> true` in the same command as the 5.3 definition.
+`python -s -B tools/bootstrap.py config set <app> <sync_key> true`.
 Gates:
 - That command exits 0, and `config set` prints no `schedule install would refuse:` line.
-- `python -s -B tools/bootstrap.py config get <app>` shows `<sync_key>` as `true`. Without the tool:
-  `(Get-Content -LiteralPath '<CFG>' -Raw | ConvertFrom-Json).<sync_key>` prints `True`.
+- `python -s -B tools/bootstrap.py config get <app>` shows `<sync_key>` as `true`.
 - `check <app> --config <CFG>` exits 0 and prints no line starting with
   `note: schedule install would refuse this config:`. Examples of such a note:
   `app gmail: gm_sync requires the app password file`,
@@ -411,13 +384,16 @@ alone, with a new `<T0>`.
 
 ## 6. App cards
 
-| app | task | start / every / limit | keys to set or check after `setup` (5.1) | sync option | details |
-|---|---|---|---|---|---|
-| gmail | `\llm-wiki\gmail-capture` | 00:44 / 3 h / 1 h | `gm_imap_user` (the Gmail address); `setup` fills `sources.gm_archive` and `gm_imap_password_file` | `gm_sync` | [gmail/README.md](gmail/README.md) |
-| discord | `\llm-wiki\discord-capture` | 00:14 / 3 h / 1 h | `dc_source` (the example sets `desktop`), then `config defaults discord` after changing it; `dc_desktop_path` when the cache is not at its standard place | `dc_sync` | [discord/README.md](discord/README.md) |
-| notion | `\llm-wiki\notion-capture` | 03:29 / 6 h / 1 h | `nt_source` (the example sets `desktop`); `nt_desktop_path` when the database is not at its standard place | `nt_sync` | [notion/README.md](notion/README.md) |
-| mattermost | `\llm-wiki\mattermost-capture` | 02:14 / 3 h / 1 h | `mm_url`, `mm_exclude_patterns` (the owner's values) | `mm_sync` | [mattermost/README.md](mattermost/README.md) |
-| claudecode | `\llm-wiki\claudecode-capture` | 02:44 / 3 h / 1 h | none: `setup` fills `sources.cc_archive` and `cc_claude_dir` (`<HOME>\.claude`) | `cc_sync` | [claudecode/README.md](claudecode/README.md) |
+| app | keys to set or check after `setup` (5.1) | sync option | details |
+|---|---|---|---|
+| gmail | `gm_imap_user` (the Gmail address); `setup` fills `sources.gm_archive` and `gm_imap_password_file` | `gm_sync` | [gmail/README.md](gmail/README.md) |
+| discord | `dc_source` (the example sets `desktop`), then `config defaults discord` after changing it; `dc_desktop_path` when the cache is not at its standard place | `dc_sync` | [discord/README.md](discord/README.md) |
+| notion | `nt_source` (the example sets `desktop`); `nt_desktop_path` when the database is not at its standard place | `nt_sync` | [notion/README.md](notion/README.md) |
+| mattermost | `mm_url`, `mm_exclude_patterns` (the owner's values) | `mm_sync` | [mattermost/README.md](mattermost/README.md) |
+| claudecode | none: `setup` fills `sources.cc_archive` and `cc_claude_dir` (`<HOME>\.claude`) | `cc_sync` | [claudecode/README.md](claudecode/README.md) |
+
+Every task is `\llm-wiki\<app>-capture`, with a run limit of one hour; [README.md](README.md#scheduled-tasks) has
+the start times and intervals.
 
 ### 6.1 gmail (IMAP, app password)
 
@@ -648,9 +624,9 @@ Values (5.1 fills the archive and the token file):
 - `sources.mm_archive` = `<DATA_ROOT>\archive`
 - `mm_url` = the server's `https://` address, which the owner gives
 - `mm_token_file` = `<DATA_ROOT>\token.txt`
-- `mm_exclude_patterns` = `[]` unless the owner names channels to skip, or mattertok's effective list when step 1
-  continues a mattertok archive. Each pattern is a plain text fragment, not a glob or regex: a channel is skipped
-  when its display name or name contains it, ignoring case, and it is never fetched. Never report the patterns.
+- `mm_exclude_patterns` = `[]` unless the owner names channels to skip. Each pattern is a plain text fragment,
+  not a glob or regex: a channel is skipped when its display name or name contains it, ignoring case, and it is
+  never fetched. Never report the patterns.
   Pass a list as one argument, e.g. `'["one", "two"]'`.
 - `mm_files_max_mb` = `0` (no attached files kept) unless the owner wants them kept: then the size cap in MB
   they give. Kept files go to `<DATA_ROOT>\archive\files\` outside the ledger, and the first runs after turning
@@ -666,17 +642,7 @@ allows one, can go into the token file instead (the 6.2 token file handshake); i
 5.4 and 5.5 commands with `$env:MM_TOKEN = $null;` in the same command.
 
 Steps:
-1. Run 5.1–5.3 with the values above. With the owner's approval, an existing mattertok archive at `<MM_ARCHIVE>`
-   can be continued instead of downloaded again: copy only its `manifest.json`, `users.json` and `posts\` into
-   `<DATA_ROOT>\archive` (`files\` and `markdown\` are not read):
-   `robocopy '<MM_ARCHIVE>' '<DATA_ROOT>\archive' manifest.json users.json /COPY:DAT; robocopy '<MM_ARCHIVE>\posts' '<DATA_ROOT>\archive\posts' /E /COPY:DAT`
-   Exit 1 means files were copied. The first sync then resumes from mattertok's cursors.
-   mattertok skipped some channels by default and this app skips none, so before the first sync set
-   `mm_exclude_patterns` to mattertok's effective list: its `MM_EXCLUDE_CHANNELS` setting (comma-separated), or,
-   when that is unset, the `DEFAULT_EXCLUDED_CHANNELS` tuple in mattertok's `src\mattertok\config.py`. The setting
-   sits in mattertok's `.env` beside its credentials, and an agent never reads a `.env` file: ask the owner for
-   the list. Without the list,
-   the channels mattertok skipped are downloaded.
+1. Run 5.1–5.3 with the values above.
 2. The sign-in above, then 5.4. Gate: `"status": "authenticated"`.
 3. Run 5.5 with `<N>` = 20; it bounds channels. A new archive downloads whole histories at four requests a
    second, and a run also stops by itself after 40 minutes with `"limited": true`; repeat until
@@ -872,7 +838,7 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | `setup` exit 2, config already there | existing config | keep it; `--force` only on the owner's request |
 | `setup` line `data parent: not excluded from Windows Search`; `schedule install` (also `--dry-run`) exit 2 `config refused (data root not excluded from Windows Search)`. A fetch step exit 1 with `"error_type": "ConfigError"` (discord, notion) or `{"app": "gmail", "status": "error"}` (gmail) can mean this or any other config or precheck problem; run 5.7's dry run to see which. A capture refusal names no reason (capture 2 row) | the indexer would index private data | **[human]** 0.5, then the 5.1 probe (not `setup`, which is refused once the config exists) |
 | `setup` line `data parent:` about the ACL (`without (OI)(CI)`, `not protected`, `ACL unreadable`); `schedule install` (also `--dry-run`) exit 2 `config refused (data root ACL ...)` | `<DATA_PARENT>` was not created by `setup`, or its ACL was changed | stop and report. Never delete, move, rename or re-create `<DATA_PARENT>`: it holds every app's data, kakaotalk's included. Never hand-edit ACLs. **[human]** the owner decides |
-| `check` exit 2, `config unreadable` | invalid JSON after a text edit (backslashes) | stop and report: neither `tools/bootstrap.py config set` nor the 5.3 `$setKey` helper can read invalid JSON. **[human]** the owner repairs the file, or approves (rule 10) putting back the `config.json.prev` that the last `config set` kept, or `setup --force` |
+| `check` exit 2, `config unreadable` | invalid JSON after a text edit (backslashes) | stop and report: `tools/bootstrap.py config set` cannot read invalid JSON. **[human]** the owner repairs the file, or approves (rule 10) putting back the `config.json.prev` that the last `config set` kept, or `setup --force` |
 | `check` refuses a path | a source folder that is missing or not absolute, or a data root outside `<DATA_PARENT>` | create it, use absolute paths |
 | `check` prints `ledger busy`, no replay line | a capture is running | not verified yet; check again after it finishes |
 | capture 2: `last result:` `2 (capture refused)`, or task.log `step=capture rc=2` with `refused: precondition or configuration` | the config or the data-root precheck failed: a missing path, a data root inside a git work tree, the ACL, Windows Search | run 5.7's dry run without elevation; its stderr names the reason. If the dry run exits 0, the cause is most likely one that only SYSTEM meets: git missing from the machine PATH (rerun the 0.1 machine-PATH git gate) |
@@ -906,8 +872,7 @@ for every bring-up, health check and recovery, and reply with its summary. Inclu
   `schedule status`; then the change from the previous baseline;
 - for each step: the step id, the command (placeholders instead of real paths), its exit code and the aggregate
   fields (counts, booleans, `head_seq`, `total`);
-- what the human did, described without values; for a gmail bring-up, the project name and the app name, never
-  the id;
+- what the human did, described without values;
 - what remains, with the `next run:` time from `schedule status`.
 
 Never include the items listed in rule 3.

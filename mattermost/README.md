@@ -2,27 +2,23 @@
 
 This app captures private Mattermost conversations into an append-only, crash-safe raw ledger and builds an
 SQLite FTS5 search index at `<DATA_ROOT>/index/mattermost.sqlite`. It shares the root project's **rawlayer**
-framework (see `../README.md` and `../CORE.md`). Its app label and package are its folder name, `mattermost`.
-Message data and machine config remain outside the repository.
+framework: the root README holds what every app shares (commands, machine config and data root, the search
+index and query language, scheduled tasks, tests) and `../CORE.md` the contract. Message data and machine config
+remain outside the repository.
 The implementation uses the Python standard library.
 
 ## Layout
 
-Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
-This app's folder contains `apps.py` (source keys, options and schedule), `origins.py`, `readers/`,
-`fetch.py`, `admin.py`, `keys.py`, `vocab.py`, `search.py`, `tests/` and `config.example.json`.
-Core tests are at `<PROJECT>/tests/core/`;
-app tests are at `<PROJECT>/mattermost/tests/`. The `/raw-search` skill is
-`<PROJECT>/.claude/skills/raw-search/SKILL.md` (shared by every app).
+`apps.py` (source keys, options and schedule), `origins.py`, `readers/`, `fetch.py`, `admin.py`, `keys.py`,
+`vocab.py`, `search.py` and `config.example.json`. App tests (`tests/`) synthesize inputs in code under temporary
+directories; the search tests capture made-up inputs through `tests/ledgerfix.py` and compare incremental indexing
+with rebuilds over threads, the search modes and filters.
 
 ## Config, origins and records
 
-`mattermost/config.example.json` shows the machine config shape. The default config is
-`<DATA_PARENT>/raw/mattermost/config.json`. Common keys are `v` (1), `impl` (matching settings.IMPL_NAME), `data_root`,
-`inputs_root`, and `sources`. Source paths must be absolute and exist; replace the example's placeholders with
-machine-specific paths. `<DATA_ROOT>` conventionally means `<DATA_PARENT>/raw/mattermost`. It must be inside
-`DATA_PARENT`, outside git work trees, with the parent's required ACL and Search exclusion. Frozen input sets
-need an existing `inputs_root`; live input resolution does not require it to exist.
+`mattermost/config.example.json` shows the machine config shape; the config is
+`<DATA_PARENT>/raw/mattermost/config.json` and `<DATA_ROOT>` is its folder (the root README has the common keys
+and the data root's layout).
 
 Capture reads the archive directory read-only. Its one origin is `mm_archive`, with record kinds
 `ch`, `post`, `file`, `user` and `blob`. The archive contains `manifest.json` channel records, `posts/**.jsonl`
@@ -34,18 +30,16 @@ manifest. A changed manifest retries the pass (at most three times); continued c
 Every version of a key seen in a stable pass is recorded once.
 
 `sources.mm_archive` is the archive directory. `mm_exclude_patterns` is a list of non-empty strings (default
-empty). A channel whose display name or name contains a pattern, casefolded, is excluded, using mattertok's rule.
-mattertok excluded channels by default and this app does not: when continuing an archive mattertok wrote, copy
-mattertok's effective list into `mm_exclude_patterns` — its `MM_EXCLUDE_CHANNELS` setting, or when that is unset
-the built-in `DEFAULT_EXCLUDED_CHANNELS` of `mattertok/config.py` — or the fetch step fetches the channels mattertok
-skipped. Frozen `T1`/`T2` inputs read `<inputs_root>/<set>/mm/archive`; live inputs read the configured archive.
+empty). A channel whose display name or name contains a pattern, casefolded, is excluded, using mattertok's rule;
+none is excluded by default. Frozen `T1`/`T2` inputs read `<inputs_root>/<set>/mm/archive`; live inputs read the configured archive.
 
 ## Collection and authentication
 
 `fetch.py` is a standard-library port of the mattertok archiver (REST API v4). It writes mattertok's archive
 format, so an archive mattertok wrote continues from its cursors, and it needs no other program. Archive-only
 configs stay read-only; `mm_sync: true` makes live `manage.py capture mattermost` update the archive before
-capturing it. Frozen inputs never call the fetch step.
+capturing it. Frozen inputs never call the fetch step. With `mm_sync`, `task_checks` (and `schedule install`)
+refuse a config without `mm_url` or an existing protected token file.
 
 - `mm_url` is the server's `https://` address; `mm_token_file` is a private file under `<DATA_PARENT>` holding a
   session token or personal access token on one line. `MM_TOKEN` takes precedence over the file. The token is
@@ -142,61 +136,10 @@ python -s -B -m mattermost.admin post   (--spec <spec.json> --key <key> | --chan
   username. Exit codes: 0 ok, 1 some keys failed or an error came after a write (rerun to continue), 2 refused
   before any write.
 
-The record format, canonical hashes and commit protocol follow `SPEC.md` and `SPEC-CLARIFICATIONS.md` of the
-`llm-wiki` checkout. Committed records are kept in `<DATA_ROOT>/raw/ledger/<origin>/<YYYY>/` as gzipped JSONL
-segments. Each capture commit has a manifest in `<DATA_ROOT>/raw/manifests/`; capture's fold is
-`<DATA_ROOT>/raw/.state/state.sqlite`, and its run log is `<DATA_ROOT>/raw/log.md`.
-
-## Commands
-
-All examples run from `<PROJECT>`. `--config <cfg>` is optional and overrides the default above.
-
-```
-python -s -B manage.py setup mattermost [--from <cfg>|-] [--force]
-python -s -B manage.py capture mattermost [--config <cfg>] [--input-set live|T1|T2] [--origins a,b,...] [--rebuild-index]
-python -s -B manage.py search mattermost [QUERY] [--config <cfg>] [options]
-python -s -B manage.py check mattermost [--config <cfg>] [--export-state <DATA_ROOT>/raw/.verify/<file>] [--rebuild-state]
-python -s -B manage.py test mattermost
-python -s -B manage.py schedule install|status|run|remove mattermost [--config <cfg>] [--python <exe>] [--run-now|--dry-run]
-```
-
-Brackets show optional arguments, not literal shell text. Capture returns 0 ok, 3 suspect, 75 busy, below the
-disk floor or skipped, 2 refused, and 1 error. A suspect origin commits nothing; other origins may commit.
-`check` verifies the folded state against the ledger, and its `--export-state` / `--rebuild-state` dump or
-rebuild that state (the old export-state and replay). The root README's command table describes the whole
-shared surface.
-
 ## Search
 
-### index (capture's index step)
-
-`capture`'s index step brings `<DATA_ROOT>\index\mattermost.sqlite` up to the committed ledger (the search reads only
-`data_root` from the config):
-
-- **Incremental.** Manifests are applied in seq order, one transaction per manifest together with the
-  index's watermark (head seq, plus the sha256 and run id of that manifest).
-- **Full rebuild.** It runs on `capture --rebuild-index`, when the index is missing, unreadable or stamped with another
-  schema/tokenizer/extractor version, when the watermark no longer matches the ledger (the ledger was reset),
-  when a manifest is not a capture manifest, or when the catch-up is very large.
-- **Rebuild and catch-up give the same index.** Both run the same record handling in ledger order.
-- **Only committed manifests are read.** If a manifest's segments are still `*.part`, capture is
-  mid-commit: the index stops before it and reports `behind` (exit 0). An unreadable committed file is
-  a ledger defect (exit 1).
-- **Crash safety.** A rebuild is written to `<name>.sqlite.new`, checked with FTS5 `integrity-check`
-  and `quick_check`, then swapped in. A crash never loses the live index.
-- **One writer.** The index has a writer lock (exit 75 when busy). Searches open the index read-only and are
-  never blocked by it.
-
-### search mattermost
-
-```
-python -s -B manage.py search mattermost "<query>" --json
-python -s -B manage.py search mattermost "<query>" --channel "<title fragment>" --since <date> --context 3
-python -s -B manage.py search mattermost "<query>" --mode timeline
-python -s -B manage.py search mattermost --channel "<title fragment>" --before <cursor>
-python -s -B manage.py search mattermost --list-channels
-python -s -B manage.py search mattermost --thread <post_id>
-```
+`search mattermost --help` lists the modes, filters and cursors; the index, the query language and the output are
+the root README's ("Search").
 
 - **One row per post key.** Each key `mm:post:<id>` has one row, and its latest version wins (an edit, a new
   reply count, a move to another channel file).
@@ -211,109 +154,8 @@ python -s -B manage.py search mattermost --thread <post_id>
   `--include-deleted` / `--include-system`.
 - **Labels.** The sender is the username from the user records (first/last name and nickname are kept too).
   The channel label and team come from the channel records. Renames relabel old rows.
-- **Filters.** `--channel` (label or URL-name substring, or channel id, repeatable), `--team`, `--sender`
-  (username, name or nickname substring, or user id), `--since` / `--until`.
 - **Threads.** `--thread <post_id>` takes any post of a thread and prints the root and every reply.
   Selection filters do not apply to a thread; each one that was given is reported on stderr.
-- **Browsing.** Filters without a query browse: the command shows the newest page (in time order), and you
-  walk through the pages with `--before` / `--after` cursors `<ts_ms>.<post_id>`.
-- `--mode hits|count|timeline|senders|channels`; `--context N` shows N posts before and after each hit in the
-  same channel, by time keyset; `--limit`, `--width`, and `--tz` (default `+09:00`; dates, month buckets and
-  display use this fixed offset). `--until` is inclusive of the whole period given (`--until 2024-10` ends with
-  the last second of October).
-- `--json` prints an envelope: `source, mode, query, fts, verify, weak, exclude, exclude_fts, filters, tz,
-  total, rows, built_at, updated_at, index{seq, ledger_seq, stale}`, plus `page` when browsing and the thread
-  fields for a thread. Large ids are strings. `--explain` prints the FTS5 expression; the separator token is
-  shown as `<S>`.
-- A stderr note appears when the index is behind the ledger, and when a query falls back to a full scan.
-- Exit codes: 0 ok (0 hits included) · 2 usage, bad query, missing or outdated index · 75 index lock busy
-  · 1 unexpected.
-
-There is no masking, pseudonymisation or redaction. Names, nicknames, channel titles, file names and texts are
-shown as they are. Whoever uses the output applies their own privacy rules.
-
-### Query language and tokenizer
-
-| Query | Meaning |
-|---|---|
-| `배포 일정` | both terms (AND) |
-| `"정기 회의"` | the exact phrase |
-| `회의 OR 미팅` | either term |
-| `배포 -롤백` | the first term, excluding the second |
-| `api*` | prefix |
-
-Text is normalised as NFC + casefold. Each post gets an n-gram shadow column: Korean/CJK runs become
-overlapping bigrams and Latin/digit runs become one token. A query term is issued as an FTS5 phrase over the
-same tokens. As a result:
-
-- Korean matches as a substring: `배포` finds `배포를` and `재배포`.
-- A lone space between Korean words may be left out: `회의실예약` finds `회의실 예약`.
-- A Latin/digit run at a term's edge must match a whole run: `api` finds `API 키` but not `rapid`, and
-  `api*` finds `apis`.
-- Quoted phrases and terms with punctuation (`C++`, `AES-256`) match literally after normalisation.
-
-Tokenizer `ngram-2` fixed two bugs of the knowledge-base engine (`ngram-1`) it was ported from:
-
-1. **Missed matches.** `10월` did not find `10월에`, nor `3시` find `3시에` or `SQL문` find `SQL문을`. The
-   query's lone `월` token never appeared in a document that held only `월에`. A Korean run that touches a
-   Latin/digit run now also emits a one-character head or tail token, so the phrase lines up.
-2. **False positives.** `가나다` matched `가나 나다`: the bigrams of two separate words lined up as one
-   phrase. A separator token now stands between runs that whitespace or punctuation kept apart.
-
-Tokenizer `ngram-3` bridges a lone space between two Korean/CJK runs with the bigram across it, so a term
-typed without that space still matches (`회의실예약` finds `회의실 예약`); two spaces, a line break or
-punctuation still separate, and `가나다` still does not match `가나 나다`.
-
-In addition, excluded terms use the same match rule as positive ones (`-api` no longer drops posts containing
-`rapid`), and `OR` next to an excluded term is refused instead of being silently ignored. A property test in
-`tests/core/test_fts.py` checks the index against an independent model of these rules on thousands of
-random queries.
-
-An unquoted term with a Latin/digit run longer than 32,000 characters is refused: SQLite FTS5 cuts tokens at
-32,768 bytes, so such a run would also match longer runs that start with it. Snippets mark matches with
-the same case folding the search uses, so `straße` marks `STRASSE`.
-
-## Scheduled task
-
-`AppConfig.schedule` in `mattermost/apps.py` defines `\llm-wiki\mattermost-capture`, run as SYSTEM
-(times and limit: [../README.md](../README.md#scheduled-tasks)). The generated Arguments are
-`-s -B <PROJECT>\manage.py capture mattermost --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
-
-```
-python -s -B manage.py schedule install mattermost [--config <cfg>] [--python <interpreter>] [--run-now|--dry-run]
-python -s -B manage.py schedule status mattermost [--config <cfg>] [--python <interpreter>]
-python -s -B manage.py schedule run mattermost
-python -s -B manage.py schedule remove mattermost
-```
-
-Install, run and remove need elevation. Install validates the config, data root, interpreter and task checks
-before registration, replaces a task of the same name and compares the definition read back. Dry-run prints
-the definition without registering it. Status shows definition differences, last result and the newest run's
-finished step lines; it returns 3 when attention is needed. A new start is ignored while one runs, and a missed
-start runs when the machine returns.
-
-`capture mattermost` runs the capture step (the live input set; with `mm_sync`, the fetch step first) and then the
-index step after every capture exit code. With `mm_sync`, `task_checks` refuses a config without `mm_url` or an
-existing protected token file. Only committed manifests enter the index, so the index step is a no-op when nothing new was committed.
-Steps are logged in `<DATA_ROOT>/reports/task.log`, and the command returns the capture step's exit code.
-
-## Slash command and tests
-
-The `raw-search` skill (`.claude/skills/raw-search/SKILL.md`, generated from `tools/agent_templates/`) provides
-`/raw-search` from the root project — one command for every app; it picks the app from the request. It searches
-through the `llm_wiki_raw` MCP tools when they are connected, else `manage.py search --json`; it aggregates
-first, widens empty results and cites dates, channels and masked senders. The search uses the app's default
-config, as the CLI does.
-
-```
-python -s -B manage.py test mattermost
-python -s -B manage.py test
-```
-
-App tests synthesize inputs in code under temporary directories. Search tests capture made-up inputs through
-`mattermost/tests/ledgerfix.py` and compare incremental indexing with rebuilds over threads, the search modes
-and filters. Resets, mid-commit, crashes, version checks and locks are core tests, which use toy apps without
-importing the real apps. See the root README for the full command table and core maintenance.
 
 ## Wiki export
 

@@ -140,8 +140,8 @@ substring or exact ID; multiple flags are AND), `--from`/`--sender` (sender subs
 `--since`, `--until`, `--limit`. Modes: hits, count, timeline, senders, labels, threads. Thread selection
 honors other filters; context shows neighbors in that thread. `--before`/`--after` use `ts_ms.hex_id` cursors.
 TRASH, SPAM and `_removedAt` are hidden unless `--include-removed` (or shared `--include-deleted`) is given.
-Label aggregation counts each membership once; a message can belong to multiple labels. All modes use the
-shared JSON envelope/watermark and Korean n-gram tokenizer. Search results are private plaintext.
+Label aggregation counts each membership once; a message can belong to multiple labels. The index, the query
+language and the output are the root README's ("Search").
 One derivation handles state before/after content identically during incremental updates and rebuilds.
 
 Frozen sources use `<inputs_root>/<set>/gm/archive`. The SYSTEM task `\llm-wiki\gmail-capture` runs on the
@@ -149,16 +149,14 @@ schedule in [../README.md](../README.md#scheduled-tasks). When gm_sync is true, 
 `gm_imap_user` and a missing or unsafe app password file. The owner must ensure SYSTEM can read that file through
 the protected inherited ACL. Scheduled sync should begin only after manual genesis and `--auth-check` succeed.
 
-## Later versions and limitations
+## Limitations
 
-v2 may add Takeout seeding with an `rb` streaming MBOX splitter, reading Gmail's decimal ID from the mbox
-`From <id>@...` separator; do not assume an X-GM-MSGID header. Neither Takeout, desktop/cache reading,
-attachment content indexing nor credential extraction is part of v1.
+Takeout seeding, desktop/cache reading, attachment content indexing and credential extraction are not
+implemented.
 The listing and lightweight ID/state maps occupy memory proportional to mailbox metadata;
 message bodies stay partition-bounded. One fetched message and its MIME parsing occupy one message's memory.
 Snapshots preserve the final state observed per sync, not every intermediate label event between captures.
-Live Gmail behavior (the category searches, the label names X-GM-LABELS sends) needs the owner's first run;
-tests use only temporary synthetic data and an injected fake IMAP connection.
+Tests use only temporary synthetic data and an injected fake IMAP connection.
 
 ## Wiki export
 
