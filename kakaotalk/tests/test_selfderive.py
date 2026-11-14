@@ -1,23 +1,15 @@
 # -*- coding: utf-8 -*-
 """The kakatok port that makes the app self-sufficient (2026-10): the deterministic crypto vectors of
 kakaotalk/keychain.py and kakaotalk/keystore.py, the keystore derivation setup provisions against a
-synthetic appstate.dat wrapping the keys of synthetic SQLCipher-4 rooms (kakaotalk/tests/edbfix.py), and the
-backup decryption against a synthetic EvaSQLite-encrypted backup user directory. Nothing here touches the
-real client, its files or the registry: read_deviceinfo and get_userid_live are patched, and every input is
-built in code under the fixture's temp directory. 
-"""
+synthetic appstate.dat wrapping the keys of synthetic SQLCipher-4 rooms (kakaotalk/tests/edbfix.py). Nothing
+here touches the real client or its files: every input is built in code under the fixture's temp directory."""
 import contextlib
 import io
 import json
 import shutil
-import sqlite3
 import unittest
-from unittest import mock
 
-from Crypto.Cipher import AES
 
-from kakaotalk import backup as backup_mod
-from kakaotalk import wincrypt as kd
 from kakaotalk import keychain, keystore, provision
 from kakaotalk.readers.edb import load_keystore
 from kakaotalk.tests import edbfix as E
@@ -26,8 +18,6 @@ from kakaotalk.tests.helpers import _force, capture, records
 
 ROOT = bytes(range(0x40, 0x60))
 SALT = bytes(range(32))
-DEV = {"dev_id": "dev-1", "sys_uuid": "uuid-1", "hdd_model": "model-x", "hdd_serial": "ser-9", "dev_id_type": ""}
-UID = "424242"
 
 
 @contextlib.contextmanager
@@ -74,29 +64,6 @@ def write_appstate(udir, wrapped):
     store = {"info_prefix": b"v2:", "salt": SALT,
              "wrapped_dek_map": [[rel, w] for rel, w in wrapped.items()]}
     (udir / "appstate.dat").write_bytes(_cbor_enc(store))
-
-
-def eva_encrypt(data, dbtype, pragma, userid):
-    """Inverse of wincrypt.eva_decrypt: page-wise AES-CBC under the fixed EvaSQLite key/iv."""
-    key, iv = kd.eva_key_iv(kd.eva_passphrase(dbtype, pragma, userid))
-    out = bytearray()
-    for pos in range(0, len(data), kd.PAGE):
-        blk = data[pos:pos + kd.PAGE]
-        n = len(blk) - (len(blk) % 16)
-        if n:
-            out += AES.new(key, AES.MODE_CBC, iv).encrypt(blk[:n])
-        out += blk[n:]
-    return bytes(out)
-
-
-def make_backup_room(bak, chat, rows):
-    plain = bak.parent / "plain"
-    plain.mkdir(parents=True, exist_ok=True)
-    src = plain / f"{chat}.sqlite"
-    E.plain_backup_room(src, rows)
-    (bak / "chat_data" / f"chatLogs_{chat}.edb").write_bytes(
-        eva_encrypt(src.read_bytes(), 3, kd.make_pragma(DEV), UID))
-    src.unlink()
 
 
 class Base(unittest.TestCase):
@@ -216,7 +183,6 @@ class TestKeystoreDerivation(Base):
         keys, _all, ok_ids = load_keystore(inputs.keystore)
         self.assertEqual(ok_ids, {"31", "32"})
         self.assertEqual(keys["31"], E.key_for(31))
-        self.assertTrue((self.keys_dir / "rotation_state.json").exists())      # rotation baseline kept
         self.assertEqual(capture(self.fx, ["edb"]), 0)
         recs = {r["key"] for r in records(self.fx)}
         self.assertIn("kakao:31:msg:1", recs)
@@ -226,51 +192,3 @@ class TestKeystoreDerivation(Base):
         (self.keys_dir / "root_v2.hex").write_text((b"\x22" * 32).hex())
         self.assertTrue(self.run_derive())                                     # the rotation attention line
         self.assertEqual(json.loads(self.fx.keystore.read_text(encoding="utf-8")), {})
-
-
-class TestBackupProvision(Base):
-    """the backup decryption (setup's provisioning, the old backup command): EvaSQLite decryption of a
-    synthetic *_backup_* user directory -> backup_decrypted."""
-
-    def setUp(self):
-        super().setUp()
-        self.bak = self.fx.inputs / "kakao_user_backup_20261006"
-        (self.bak / "chat_data").mkdir(parents=True)
-        self.fx.backup.joinpath("999.sqlite").write_bytes(b"stale from an earlier run")
-
-    def run_backup(self, dev=DEV):
-        cfg = {"sources": {"kakao_user_dir": str(self.fx.user_dir), "backup_decrypted": str(self.fx.backup)}}
-        with mock.patch.object(kd, "read_deviceinfo", return_value=dev), \
-                mock.patch.object(kd, "get_userid_live", return_value=UID), quiet():
-            return backup_mod.decrypt_backup(cfg, lambda m: None)
-
-    def test_decrypts_rooms_and_manifest(self):
-        make_backup_room(self.bak, 41, [E.msg(41, 1), E.msg(41, 2)])
-        self.assertEqual(self.run_backup(), 0)
-        room = self.fx.backup / "41.sqlite"
-        self.assertTrue(room.exists())
-        con = sqlite3.connect(room)
-        self.assertEqual(con.execute("SELECT COUNT(*) FROM chatLogs").fetchone()[0], 2)
-        con.close()
-        man = json.loads(self.fx.backup.joinpath("_manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["decrypted"],
-                         [{"chatId": "41", "rows": 2, "from": "chatLogs_41.edb", "to": "41.sqlite"}])
-        self.assertFalse(self.fx.backup.joinpath("999.sqlite").exists())       # room gone from the backup
-        self.assertEqual(capture(self.fx, ["backup_decrypted"]), 0)
-        recs = {r["key"]: r for r in records(self.fx)}
-        self.assertIn("kakao:41:msg:1", recs)
-        self.assertEqual(recs["kakao:41"]["derived"]["rows"], 2)
-
-    def test_wrong_pragma_removes_stale_and_is_suspect(self):
-        make_backup_room(self.bak, 41, [E.msg(41, 1)])
-        self.assertEqual(self.run_backup(), 0)
-        self.assertTrue(self.fx.backup.joinpath("41.sqlite").exists())
-        rc = self.run_backup(dict(DEV, hdd_serial="other-disk"))              # a different machine's pragma
-        self.assertEqual(rc, 3)
-        self.assertFalse(self.fx.backup.joinpath("41.sqlite").exists())       # the stale copy did not survive
-        man = json.loads(self.fx.backup.joinpath("_manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["decrypted"], [])
-
-    def test_no_backup_directory_skips(self):
-        shutil.rmtree(self.bak)
-        self.assertEqual(self.run_backup(), 2)

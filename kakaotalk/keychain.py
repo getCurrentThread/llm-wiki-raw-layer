@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""keychain.py — v2/v1 키저장소 언랩 체인 + 이중 루트 검증 + 회전 감지 지문.
+"""keychain.py — v2/v1 키저장소 언랩 체인 + 이중 루트 검증.
 
 kakatok(sample/kakatok/keychain.py)에서 kakaotalk app으로 옮겼다(독립화, 2026-10).
-CLI(verify/fingerprint)는 setup 프로비저닝(`manage.py setup kakaotalk --provision`, kakaotalk/provision.py)이 대신한다.
+CLI(verify)는 setup 프로비저닝(`manage.py setup kakaotalk --provision`, kakaotalk/provision.py)이 대신한다.
 
 루트 → DEK 언랩 (keystore.store 기반, 전 방 동시 파생)
 --------------------------------------------------------
@@ -30,15 +30,6 @@ info의 relpath는 map 키 문자열을 **원문 그대로**(역슬래시 포함
 해서 곧바로 "키 무효"가 아니다 — **appstate 언랩 성공률**이 권위 있는 판정이다
 (unwrap_store가 623/623이면 루트 유효, 0이면 회전됨).
 
-회전 감지 지문
---------------
-키 원천 파일(appstate.dat, keystore.bin, profile.dat, credential.bin,
-last_pc_login.dat)의 (sha256, size, mtime)을 찍어 둔다. 2026-10-03 실험: 강제종료·
-재시작·자동로그인으로는 **회전 없음**(3중 증거) — 회전 트리거 후보는 로그아웃/재로그인/
-기기추가로 좁혀져 있으므로, 운영 중 지문이 바뀌면 그 순간이 최초 관측 사례가 된다.
-fingerprint() → diff_fingerprint() 로 이전 상태와 비교해 어떤 파일이 언제 바뀌었는지
-돌려준다.
-
 의존성: 표준 라이브러리 + pycryptodome(AES). keystore(CBOR 파서) 재사용.
 프라이버시: DEK·루트는 키 자격증명 — 로그에는 절대 찍지 않고(개수/해시카운트만),
 보호된 data root 안에서만 다룬다.
@@ -49,25 +40,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
-import os
 import struct
-
-from . import keystore as kv
 
 from Crypto.Cipher import AES
 
 KW_IV = b"\xa6" * 8                      # RFC 3394 기본 IV(ICV)
 DEK_BYTES = 32
 
-# 회전 감지 대상 키 원천 파일(사용자 디렉토리 루트 상대). 없는 것은 스킵.
-ROTATION_FILES = (
-    "appstate.dat",          # v2 키저장소(라이브)
-    "keystore.bin",          # v1 키저장소(구버전)
-    "profile.dat",           # W로 래핑된 root_file(스트레일 후보)
-    "credential.bin",        # profile.dat 와 동일 바이트(실측)
-    "last_pc_login.dat",     # 자동로그인 토큰
-)
 
 
 # ----------------------------------------------------------------- HKDF (RFC 5869)
@@ -180,56 +159,3 @@ def read_root_hex(path: str) -> bytes | None:
         return root if len(root) == DEK_BYTES else None
     except (OSError, ValueError):
         return None
-
-
-# ----------------------------------------------------------------- 회전 감지 지문
-def fingerprint(users=None) -> dict:
-    """키 원천 파일들의 (sha256, size, mtime) 지문. rotation_state.json 저장용."""
-    udir = kv.user_dir(users)
-    fp: dict[str, dict] = {}
-    if not udir:
-        return fp
-    for name in ROTATION_FILES:
-        p = os.path.join(udir, name)
-        if not os.path.exists(p):
-            continue
-        try:
-            st = os.stat(p)
-            with open(p, "rb") as f:
-                fp[name] = {"sha256": hashlib.sha256(f.read()).hexdigest(),
-                            "size": st.st_size, "mtime": int(st.st_mtime)}
-        except OSError:
-            continue
-    return fp
-
-
-def diff_fingerprint(prev: dict, cur: dict) -> dict:
-    """두 지문 비교 → {added:[], removed:[], changed:[{name, what...}], same:n}."""
-    added = sorted(set(cur) - set(prev))
-    removed = sorted(set(prev) - set(cur))
-    changed = []
-    same = 0
-    for name in sorted(set(prev) & set(cur)):
-        if prev[name] == cur[name]:
-            same += 1
-            continue
-        what = [k for k in ("sha256", "size", "mtime") if prev[name].get(k) != cur[name].get(k)]
-        changed.append({"name": name, "fields": what})
-    return {"added": added, "removed": removed, "changed": changed, "same": same}
-
-
-def load_rotation_state(path: str) -> dict:
-    if os.path.exists(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            pass
-    return {}
-
-
-def save_rotation_state(path: str, state: dict):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=True, indent=1)
-    os.replace(tmp, path)

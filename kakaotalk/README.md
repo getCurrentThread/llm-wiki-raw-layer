@@ -23,8 +23,7 @@ admin.py's webhook post.
 
 `apps.py` (source keys, options, schedule and the setup hooks), `origins.py`, `inputs.py`, `readers/`, `keys.py`
 (value rules), `vocab.py`, `search.py`, `state.py` (the `schema_base` and `edb_salt` state tables), `provision.py`
-(setup's defaults and the provisioning of the root key, keystore, backup and macOS database), `backup.py` (the
-EvaSQLite backup decryption), `admin.py` (the write side — scriptable sending) and `config.example.json`.
+(setup's defaults and the provisioning of the root key, keystore and macOS database), `admin.py` (the write side — scriptable sending) and `config.example.json`.
 `wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit ported from
 kakatok (the owner's prior research project; its notes live outside this repository), and `maccrypt.py` is the
 macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the macOS section below). App tests (`tests/`) synthesize
@@ -50,10 +49,10 @@ senders: the account's display name (`nickName`), with the owner's own alias (`f
 the account has none — the join the kakatok research documented as the sender reconstruction. Both are read
 best-effort — a missing key means untitled or unnamed
 rooms, never an error — and only label-bearing columns are read, so records change only when the labels
-themselves change. The backup keeps its names the same way: setup's backup step decrypts the backup's own
-chat-list database and writes each room's title into the `_manifest.json` entry the `backup_decrypted` reader
-passes through as the room record's derived fields, while the decrypted `TalkUserDB.sqlite` beside the rooms
-names its senders.
+themselves change. The backup folder (`backup_decrypted`, decrypted earlier; the EvaSQLite step that wrote it
+was removed on 2026-11-14) keeps its names the same way: each room's title sits in its `_manifest.json` entry,
+which the reader passes through as the room record's derived fields, and the decrypted `TalkUserDB.sqlite`
+beside the rooms names its senders.
 
 | `sources` key | input |
 |---|---|
@@ -72,13 +71,13 @@ inputs remain at their configured paths and are checked against the freeze's has
 
 ## In-repo key derivation and decryption (the kakatok port)
 
-The app produces the keystore and the decrypted backups itself, with a toolkit ported from kakatok:
+The app produces the keystore itself, with a toolkit ported from kakatok:
 
 | module | what it does |
 |---|---|
 | `kakaotalk/keystore.py` | parses the client's CBOR keystore `appstate.dat` / `keystore.bin` (`info_prefix`, `salt`, `wrapped_dek_map`); the authoritative room inventory |
-| `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek`; the key-source rotation fingerprint |
-| `kakaotalk/wincrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
+| `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek` |
+| `kakaotalk/wincrypt.py` | `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
 
 The toolkit is self-contained: the rest of the app — readers, capture, search — reaches it only through the
 entry points above, so work outside these four modules never touches key material.
@@ -109,17 +108,8 @@ no command can read anywhere else, the root key:
   scan is best-effort and its failure is an attention line, not an error. With a live root setup also writes
   the keystore at once (`provision.write_keystore_for`: every entry the root unwraps, each key checked against
   its room file's page-1 header oracle; rooms whose entry does not unwrap are left out and read as `no_key` —
-  the honest signal of a rotated root — and `--scan` adds the room-DEK memory fallback for them). The
-  key-source files' fingerprint is diffed against `<DATA_ROOT>/keys/rotation_state.json`, so a rotation is
-  reported the moment it is observed. Keys are credentials: setup prints counts and paths only, never key
+  the honest signal of a rotated root — and `--scan` adds the room-DEK memory fallback for them). Keys are credentials: setup prints counts and paths only, never key
   material.
-- **Backup.** The `*_backup_*` user directory beside the configured `kakao_user_dir` decrypts into the
-  configured `backup_decrypted` source (`kakaotalk/backup.py`, EvaSQLite: the machine's pragma from the HKCU
-  `Software\Kakao\KakaoTalk\DeviceInfo` registry values and the userId from the backup's
-  `ActionLogDB.edb_*.backup`), with the `_manifest.json` the origin reads. A room whose source no longer
-  decrypts loses its stale decrypted file, so capture never mistakes an old copy for current content. The
-  registry read needs the KakaoTalk user's own HKCU — which is why provisioning lives in `setup`, run
-  interactively, never in the SYSTEM task. No backup directory on the machine is a skip, not a problem.
 - **Reruns.** `manage.py setup kakaotalk --provision` reruns exactly this provisioning against the config.json
   that is already there — the recovery path when the root has rotated (logout/re-login/device added): recover a
   new root with `--scan` (the running client's memory) or install one with `--root <hex file>` (verified

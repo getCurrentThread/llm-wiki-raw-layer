@@ -670,7 +670,7 @@ on any refusal. `tools/bootstrap.py` does not cover kakaotalk yet: doctor skips 
 refuse it, so check it with section 8 steps 2-5 directly.
 
 1. **Setup.** `python -s -B manage.py setup kakaotalk`: creates the data root and `config.json`, sets the default
-   sources, decrypts the backup. Exit 0, or exit 3 with `fill in config.json: <keys>`. `bootstrap.py config` refuses
+   sources. Exit 0, or exit 3 with `fill in config.json: <keys>`. `bootstrap.py config` refuses
    kakaotalk, so the owner fills those keys by hand; the agent does not write them.
 2. **Live root (scan).** `python -s -B manage.py setup kakaotalk --provision --scan --restart-client`: scans the
    running `KakaoTalk.exe` memory for the root key, restarting the client first so the key is in memory. It can take
