@@ -147,9 +147,9 @@ class Check:
             for p in schedule.task_problems(cfg, registry.apps()):
                 self.note(f"schedule install would refuse this config: {p}")
 
-    def ledger(self, path, rebuild=False, export=None):
+    def ledger(self, path, rebuild=False):
         """The folded state against the ledger: replay --check folded in (the old replay command), a full replay
-        with rebuild=True, and export-state's record dump to `export` (the old export-state command). A busy
+        with rebuild=True. A busy
         ledger (a capture is running) is a note, not a problem: there is nothing to verify against yet."""
         from ...capture import run, steps  # noqa: PLC0415
         argv = ["replay"] + ([] if rebuild else ["--check"]) + ["--config", str(path)]
@@ -158,10 +158,6 @@ class Check:
             self.note("ledger busy (a capture holds it); the folded state was not verified")
         elif rc != 0:
             self.errors += 1
-        if export:
-            rc = steps.main(["export-state", "--out", str(export), "--config", str(path)])
-            if rc != 0:
-                self.errors += 1
 
     def rc(self):
         return schedule.worst(1 if self.errors else 0, 2 if self.refused else 0)
@@ -171,14 +167,12 @@ class Command(BaseCommand):
     help = ("the apps keep the app contract and keep clear of each other (origins, source keys, options, state "
             "tables, task names); with <app>: that app, its "
             "config, and the ledger against the folded state")
-    args = "[<app>] [--config CFG] [--export-state PATH] [--rebuild-state] [--traceback]"
+    args = "[<app>] [--config CFG] [--rebuild-state] [--traceback]"
 
     def run(self, app, argv):
         ap = argparse.ArgumentParser(prog="manage.py check")
         ap.add_argument("app", nargs="?")
         ap.add_argument("--config", help="the app's config (default: <DATA_PARENT>\\raw\\<app>\\config.json, if any)")
-        ap.add_argument("--export-state", default=None, metavar="PATH",
-                        help="also write every record's (origin, key, rev, op, h) to this file")
         ap.add_argument("--rebuild-state", action="store_true",
                         help="rebuild the folded state from the ledger instead of only comparing")
         ap.add_argument("--traceback", action="store_true", help="the traceback of an app that does not load")
@@ -194,8 +188,8 @@ class Command(BaseCommand):
                       file=sys.stderr)
                 return 2
             a.app = apps[0]
-        if (a.export_state or a.rebuild_state) and a.app is None:
-            print("manage.py check: --export-state/--rebuild-state belong to one app: manage.py check <app> ...",
+        if a.rebuild_state and a.app is None:
+            print("manage.py check: --rebuild-state belongs to one app: manage.py check <app> ...",
                   file=sys.stderr)
             return 2
         c = Check(a.traceback)
@@ -203,9 +197,9 @@ class Command(BaseCommand):
         if a.app is not None:
             if c.app(a.app):
                 c.config(a.app, a.config or default_config(a.app), a.config is not None,
-                         ledger=not (a.export_state or a.rebuild_state))
-                if a.export_state or a.rebuild_state:
-                    c.ledger(a.config or default_config(a.app), rebuild=a.rebuild_state, export=a.export_state)
+                         ledger=not a.rebuild_state)
+                if a.rebuild_state:
+                    c.ledger(a.config or default_config(a.app), rebuild=True)
         else:
             if not apps:
                 print("apps: none")

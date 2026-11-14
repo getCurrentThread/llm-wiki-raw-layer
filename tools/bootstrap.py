@@ -1,32 +1,12 @@
 # -*- coding: utf-8 -*-
 """python -s -B <PROJECT>/tools/bootstrap.py <command> ... -- the setup steps of llm.md as commands, for the agent
-that brings this project's apps into live operation. A developer and operator tool, not a manage.py command (the
-core stays as it is); standard library only; it runs from any folder.
+that brings this project's apps into live operation. Standard library only; it runs from any folder.
 
-  doctor [--app APP ...] [--json] [--verify]
-      The machine (Python, git on the machine PATH, pwsh, the checkout, the data parent) and every
-      in-scope app: its config (placeholders left, refused or not, the sync option, what `schedule install` would
-      refuse), its credential and source files (whether they are there; nothing is opened), its index (total,
-      stale), its scheduled task (registered, last result; "unknown" from a prompt that is not elevated), the
-      newest task.log run and its checkpoints. Each app gets `next`: the llm.md step to do next. --verify also
-      runs `manage.py check <app>`, which takes the app's ledger lock: never while a capture may run.
-  config get <app> [--json]
-  config set <app> KEY VALUE [KEY VALUE ...] [--string] [--force]      config set <app> -   (a JSON object on stdin)
-  config defaults <app>
-      Read or change <DATA_PARENT>\\raw\\<app>\\config.json with a JSON-safe edit (llm.md 5.3): KEY is sources.<key> or
-      one of the app's options (v, impl, data_root and inputs_root need --force). A VALUE of true, false, null, a
-      plain integer, or one starting with [ or { is JSON, anything else a string (--string: always a string). The
-      file is rewritten as setup writes it, the one before kept as config.json.prev. `defaults` fills what the
-      app's setup defaults would (only keys still unset). `get` prints each key's state, never its value.
-  checkpoint show <app> | mark <app> GATE [--field NAME=VALUE ...] | clear <app> [GATE]
-      The llm.md gates an app has passed, kept in <DATA_ROOT>\\reports\\bootstrap.json (gate ids and integer or
-      boolean fields only), so a later session resumes where the last one stopped.
-  agents status | install | uninstall | sync-repo ...
-      The agent integration (tools/agentkit.py; `agents -h` for its options): the global CLAUDE.md block, the
-      skills, the raw-retriever subagent and the MCP server for Claude Code, and the checkout's own copies.
+  doctor | config get|set|defaults <app> | checkpoint show|mark|clear <app> | agents status|install|uninstall
 
-Every path printed is masked (<DATA_PARENT>, <PROJECT>, <HOME>, <user>), and no config value, token or archive
-content is printed. It does not cover kakaotalk yet (llm.md 6.5): doctor leaves it out, the others refuse it.
+llm.md says what each command does and prints (doctor: section 4; config and checkpoint: 5.0 and 5.3; agents: 11);
+`--help` lists the options. Every path printed is masked (<DATA_PARENT>, <PROJECT>, <HOME>, <user>), and no config
+value, token or archive content is printed. It does not cover kakaotalk yet (llm.md 6.5).
 
 Exit codes: 0 ok / ready | 3 needs attention | 2 refused or usage | 1 error."""
 import argparse
@@ -45,7 +25,7 @@ if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
 NOT_COVERED = ("kakaotalk",)
-CORE_KEYS = ("v", "impl", "data_root", "inputs_root")
+CORE_KEYS = ("v", "impl", "data_root")
 SHOWN = ("_source", "_token_type")      # options whose values are a fixed vocabulary, which `config get` prints
 CHECKPOINT = "bootstrap.json"
 PROBE_TIMEOUT = 300
@@ -97,8 +77,24 @@ def _out(text=""):
     print(mask(text))
 
 
-def _err(text):
-    print(mask(f"bootstrap: {text}"), file=sys.stderr)
+def _err(text, who="bootstrap"):
+    print(mask(f"{who}: {text}"), file=sys.stderr)
+
+
+def guarded(body, who="bootstrap", interrupted="interrupted"):
+    """body() -> its exit code. A Refused is exit 2, an interrupt or any other error exit 1, each one masked line on
+    stderr: never a traceback, which would print unmasked paths."""
+    try:
+        return body()
+    except Refused as e:
+        _err(f"refused: {e}", who)
+        return 2
+    except KeyboardInterrupt:
+        _err(interrupted, who)
+        return 1
+    except Exception as e:  # noqa: BLE001
+        _err(f"error {type(e).__name__}: {e}", who)
+        return 1
 
 
 # ---------------------------------------------------------------------------------------------------- masking
@@ -348,9 +344,8 @@ def read_checkpoints(data_root):
 
 def definition_state(schedule, s, app, back):
     """{enabled, definition[, differs]} of a registered task's definition (XML `back`), compared as
-    `schedule status` compares it: "current", "differs" (the field names that do), "outdated" (its action is this
-    checkout's previous `manage.py collect <app> --config <config>`: install replaces it) or "foreign" (its action is
-    not this checkout's `manage.py capture <app> --config <config>`)."""
+    `schedule status` compares it: "current", "differs" (the field names that do) or "foreign" (its action is not
+    this checkout's `manage.py capture <app> --config <config>`)."""
     f = schedule.fields(back)
     out = {"enabled": f["enabled"] == "true"}
     ns = schedule.NS
@@ -359,8 +354,7 @@ def definition_state(schedule, s, app, back):
     args = (exe.findtext(f"{{{ns}}}Arguments") if exe is not None else None) or ""
     project = schedule._project()
     if schedule.registered_config(project, app, args) is None:
-        previous = schedule.registered_config(project, app, args, "collect") is not None
-        out["definition"] = "outdated" if previous else "foreign"
+        out["definition"] = "foreign"
         return out
     diff = schedule.differences(back, schedule.task_xml(s, python, project, app, schedule._argv(args)[6]))
     out["definition"] = "differs" if diff else "current"
@@ -558,9 +552,6 @@ def _next_step(app, p, idx):
         if task.get("enabled") is False:
             return "5.7", ("the task is disabled (paused by hand in Task Scheduler): ask the owner; to resume it, "
                            "install it again (5.7, 5.8), which registers it enabled")
-        if task.get("definition") == "outdated":
-            return "5.7", ("the registered task runs this project's previous `manage.py collect` command (outdated): "
-                           f"re-register it with an elevated `manage.py schedule install {app}` (5.7, 5.8)")
         if task.get("definition") != "current":
             differs = f": {', '.join(task['differs'])}" if task.get("differs") else ""
             return "5.7", (f"the registered task is not this app's current definition ({task.get('definition')}"
@@ -1046,7 +1037,7 @@ def parser():
     s.add_argument("app")
     s.add_argument("pairs", nargs="*", metavar="KEY VALUE")
     s.add_argument("--string", action="store_true", help="every VALUE is a string")
-    s.add_argument("--force", action="store_true", help="allow v, impl, data_root and inputs_root")
+    s.add_argument("--force", action="store_true", help="allow v, impl and data_root")
     d = cs.add_parser("defaults")
     d.add_argument("app")
     p = sub.add_parser("checkpoint", help="the llm.md gates an app has passed")
@@ -1072,28 +1063,22 @@ def main(argv=None):
         from tools import agentkit  # noqa: PLC0415
         return agentkit.main(argv[1:])
     a = parser().parse_args(argv)
-    try:
-        if a.command == "doctor":
-            return doctor(a)
-        if a.command == "_probe":
-            _check_app(a.app)
-            print(json.dumps(probe(a.app), ensure_ascii=False))
-            return 0
-        if a.command == "config":
-            return {"get": config_get, "set": config_set, "defaults": config_defaults}[a.action](a)
-        if a.command == "checkpoint":
-            if a.action == "mark" and not a.gate:
-                raise Refused("mark needs a GATE")
-            return checkpoint(a)
-    except Refused as e:
-        _err(f"refused: {e}")
-        return 2
-    except KeyboardInterrupt:
-        _err("interrupted")
-        return 1
-    except Exception as e:  # noqa: BLE001 -- never a traceback: it would print unmasked paths
-        _err(f"error {type(e).__name__}: {e}")
-        return 1
+    return guarded(lambda: _dispatch(a))
+
+
+def _dispatch(a):
+    if a.command == "doctor":
+        return doctor(a)
+    if a.command == "_probe":
+        _check_app(a.app)
+        print(json.dumps(probe(a.app), ensure_ascii=False))
+        return 0
+    if a.command == "config":
+        return {"get": config_get, "set": config_set, "defaults": config_defaults}[a.action](a)
+    if a.command == "checkpoint":
+        if a.action == "mark" and not a.gate:
+            raise Refused("mark needs a GATE")
+        return checkpoint(a)
     return 2
 
 

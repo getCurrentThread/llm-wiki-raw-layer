@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 """Shared machinery of the raw-search indexes: config, ledger reading, the index driver (full rebuild and
-incremental catch-up), version gate, locking, time and rendering helpers.
-
-Each app with a search.py (<label>/search.py) owns one index file <data_root>/index/<name>.sqlite and plugs
-into this module with a SourceIndex subclass (module attribute SPEC) plus `add_arguments(parser)` and
-`run(args) -> exit code` for its search subcommand (steps.py wires them up).
+incremental catch-up), version gate, locking, time and rendering helpers. Each app's search.py owns one index file
+<data_root>/index/<name>.sqlite through a SourceIndex subclass (CORE.md, "search.py").
 
 THE INDEX IS A PURE FUNCTION OF THE LEDGER
 ------------------------------------------
@@ -49,13 +46,9 @@ SOURCE PLUG-IN CONTRACT (see SourceIndex)
                            persist counters here
                            finish: full mode derives every row (called once, after the last manifest)
   stats(con)              -> {name: int} for reports
-The driver owns transactions, the meta and counts tables, the watermark and the swap.
-
-A source of the simple shape -- one content table folded from one origin's records, an FTS5 table <table>_fts
-over it, rows derived once per manifest -- subclasses SimpleIndex and SimpleApplier below instead of writing the
-plumbing: the record header check, end_manifest, create_tables / create_triggers and the rows / deleted stats are
-theirs, the app supplies the fold (record), the derivation (finish, and derive for a catch-up that is narrower
-than finish) and its schema.
+The driver owns transactions, the meta and counts tables, the watermark and the swap. SimpleIndex and
+SimpleApplier below are the plumbing of the usual shape (one content table folded from one origin, an FTS5 table
+<table>_fts over it): the app supplies the fold (record), the derivation (finish, derive) and its schema.
 """
 import argparse
 import datetime as _dt
@@ -309,6 +302,11 @@ class SourceIndex:
 
 def is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
+
+
+def text(value):
+    """clean() of a str; '' for anything else (a native field of the wrong type)."""
+    return clean(value) if isinstance(value, str) else ""
 
 
 def clean(s):
@@ -794,6 +792,19 @@ def parse_cursor(s, flag, before=True):
     return int(m.group(1)), int(m.group(2)), row
 
 
+def cursor_parts(value, flag, form, n, ints, valid=lambda rest: True, range_text=None):
+    """A --before/--after cursor cut at '.' into n parts (the last keeps further dots): the first `ints` as ints of
+    at most 19 ASCII digits, the rest as they are and accepted by `valid`. UsageError `<flag>: expected <form>`
+    on another shape, `<flag>: <range_text>` (default the same) at 2**63 or more."""
+    parts = (value or "").split(".", n - 1)
+    if len(parts) != n or not all(len(p) <= 19 and p.isascii() and p.isdecimal() for p in parts[:ints]) \
+            or not valid(parts[ints:]):
+        raise UsageError(f"{flag}: expected {form}")
+    if any(int(p) >= _I63 for p in parts[:ints]):
+        raise UsageError(f"{flag}: {range_text or 'expected ' + form}")
+    return tuple(int(p) for p in parts[:ints]) + tuple(parts[ints:])
+
+
 # ------------------------------------------------------------------------------------------------ rendering
 
 def cells(text):
@@ -801,7 +812,7 @@ def cells(text):
     return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
 
 
-def pad(text, width, *, right=False):
+def pad(text, width):
     """Pad or cut to exactly `width` cells, so columns line up with Korean labels."""
     out, used = [], 0
     for ch in text:
@@ -810,9 +821,7 @@ def pad(text, width, *, right=False):
             break
         out.append(ch)
         used += step
-    fill = " " * (width - used)
-    s = "".join(out)
-    return fill + s if right else s + fill
+    return "".join(out) + " " * (width - used)
 
 
 def flat(text):

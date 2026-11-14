@@ -25,8 +25,8 @@ class ToyA(Origin):
         root = inputs.toy_a
         return sum(fsio.size(p) for p in root.iterdir()) if root.is_dir() else 0
 
-    def requires_system(self, cfg, input_set):
-        return input_set == "live" and cfg.toy_system
+    def requires_system(self, cfg):
+        return cfg.toy_system
 
 
 class ToyB(PendingAbsentMixin, Origin):

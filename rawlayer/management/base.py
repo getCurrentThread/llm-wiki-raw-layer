@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """What a command is: a module rawlayer/management/commands/<name>.py that defines `Command`, a BaseCommand
 subclass."""
-from pathlib import Path
 
 
 class BaseCommand:

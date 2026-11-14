@@ -1,41 +1,14 @@
 # -*- coding: utf-8 -*-
-"""kakaotalk's side of `manage.py setup` (the AppConfig.setup_defaults / setup_provision hooks): the config's
-default source paths, and the provisioning of every capture input the app derives itself — the root key, the
-keystore, the decrypted backup, the macOS database. setup runs all of it on a first run; `setup --provision`
-reruns it against the config.json that is already there (the recovery path when a credential rotated), with
-`--scan` (the client's memory fallback), `--root` (a root file to install, verified first) and
-`--restart-client` (restart KakaoTalk.exe to rescan a freshly started client).
+"""kakaotalk's side of `manage.py setup` (setup_defaults / setup_provision): the config's default source paths,
+and the inputs the app derives itself (the root key, the keystore, the macOS database). `setup --provision` reruns
+it on an existing config.json (the recovery path when a credential rotated), with `--scan` (the client's memory
+fallback), `--root` (a root file to install, verified first) and `--restart-client`.
 
-Defaults (setup_defaults -> fill_defaults): the client's user directory is detected under
-%LOCALAPPDATA%\\Kakao\\KakaoTalk\\users (the non-backup folder holding appstate.dat), and the app's own
-outputs — keystore, backup_decrypted — default to their place under the data root. Nothing is printed but the
-key names.
-
-The root (setup_provision -> provision): the one input capture cannot read anywhere else. Every room's DEK is
-wrapped under it (KEK = HKDF-SHA256(root, appstate.salt, info_prefix + relpath), keychain.py), and on-disk
-artifacts do not hold it (profile.dat's plaintext is a stray value; the session material behind the live root
-never leaves the client's VM transform — the kakatok research, PAPER.md §6). Setup therefore installs it in
-three steps, each verified against the client's own store, unwrap success being the root's only honest oracle
-(keychain.root_status):
-
-  1. a root already under <DATA_ROOT>/keys/root_v2.hex stays while it unwraps the store;
-  2. a copy on this machine is adopted — the research tree's root_v2.hex files, verified before installing;
-  3. the running client's memory is scanned for a 32-byte value that unwraps the store (the same candidate walk
-     the DEK scan uses; the rooms recover best right after they were opened, and --restart-client restarts
-     KakaoTalk.exe so its auto-opened rooms re-derive — clients that leave the root in memory a while can be
-     caught that way; residency is version-dependent, so this is best-effort).
-
-With a root the keystore follows (write_keystore_for, the derivation the old keys command ran: every entry the
-root unwraps, each key checked against its room file's page-1 header oracle — the client's own chat-list
-database's entry among them, which is what names the edb origin's rooms; --scan adds the room-DEK memory
-fallback for rooms the root does not key, the chat-list file riding along as one more target). The key-source files' (sha256, size, mtime) fingerprint is diffed
-against the previous run in <DATA_ROOT>/keys/rotation_state.json, so a logout/re-login rotation is reported the
-moment it is observed. Then the backup user directory decrypts (kakaotalk/backup.py, EvaSQLite: registry
-pragma + userId — needs the KakaoTalk user's own HKCU, which is why provisioning lives in setup, run
-interactively, not in the SYSTEM task), and on a Mac the client database decrypts (kakaocli port) when the
-config sets mac_db. Keys are credentials: every line this module prints is counts, paths and statuses — never
-key material.
-"""
+The root is the one input capture cannot read anywhere else: every room's DEK is wrapped under it, and no on-disk
+artifact holds it. It is kept, adopted from a copy on this machine, or scanned from the running client's memory, in
+that order, each verified by unwrapping the client's own store (keychain.root_status, the only honest oracle). The
+keystore follows from it (write_keystore_for). Keys are credentials: this module prints counts, paths and statuses,
+never key material."""
 from __future__ import annotations
 
 import hmac
@@ -283,7 +256,7 @@ def write_keystore(path: str, entries: dict) -> None:
 
 def write_keystore_for(cfg, note, root, store, udir, scan=False) -> list:
     """The old keys command's body: write the configured keystore source from `root` (or, with scan=True and no
-    root, from whatever the memory fallback recovers) and keep the key-source rotation fingerprint. Returns
+    root, from whatever the memory fallback recovers). Returns
     attention lines. No root and no scan writes nothing — the refusal the old command made."""
     if root is None and not scan:
         return []
@@ -304,20 +277,6 @@ def write_keystore_for(cfg, note, root, store, udir, scan=False) -> list:
         rooms = sum(1 for e in entries.values() if e["chatId"] is not None)
         ok = sum(1 for e in entries.values() if e["header_ok"] is True)
         note(f"keystore written: {ks} ({len(entries)} entries, {rooms} rooms, {ok} header-verified)")
-
-    keys_dir = Path(cfg["data_root"], "keys")
-    os.makedirs(keys_dir, exist_ok=True)
-    st_path = str(keys_dir / "rotation_state.json")
-    fp = keychain.fingerprint(os.path.dirname(udir))
-    prev = keychain.load_rotation_state(st_path).get("fingerprint")
-    state = {"fingerprint": fp, "at": int(time.time())}
-    if fp and prev:
-        d = keychain.diff_fingerprint(prev, fp)
-        if d["changed"] or d["added"] or d["removed"]:
-            names = [c["name"] for c in d["changed"]] + d["added"] + d["removed"]
-            note(f"key-source files changed since last run: {', '.join(names)}")
-            state["last_change"] = {"at": int(time.time()), "files": names}
-    keychain.save_rotation_state(st_path, state)
 
     if root is not None and store["map"] and not entries and not scan:
         return ["the root unwrapped nothing while the store has entries: the root has likely rotated "
@@ -382,10 +341,9 @@ def run_macdb(cfg, note, uuid=None, user_id=None, db=None, home=None, brute_limi
 
 # ----------------------------------------------------------------- the setup_provision hook
 def provision(cfg, note, restart_client=False, home=None, scan=False, root_file=None) -> list:
-    """Install a live root under <data_root>/keys, write the keystore, decrypt the backup and (on a Mac) the
+    """Install a live root under <data_root>/keys, write the keystore and (on a Mac) decrypt the
     client database (setup_provision's body). Returns the attention lines; an empty list means the app's
     capture inputs are as ready as this machine allows."""
-    from .backup import decrypt_backup
     src = cfg.get("sources") or {}
     udir = src.get("kakao_user_dir")
     if not isinstance(udir, str) or ("<" in udir and ">" in udir):
@@ -455,13 +413,6 @@ def provision(cfg, note, restart_client=False, home=None, scan=False, root_file=
                     note("the client's memory holds no root (current clients wipe it right after deriving it)")
 
     problems = write_keystore_for(cfg, note, root, store, udir, scan=scan)
-
-    brc = decrypt_backup(cfg, note)
-    if brc == 3:
-        problems.append("the backup user directory has rooms but none decrypt: the pragma (registry "
-                        "DeviceInfo) or the userId does not match this backup")
-    elif brc not in (0, 2):
-        problems.append(f"the backup did not decrypt (rc={brc})")
 
     if cfg.get("mac_db"):
         mrc = run_macdb(cfg, note)

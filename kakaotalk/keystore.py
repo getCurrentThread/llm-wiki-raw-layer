@@ -1,25 +1,12 @@
 # -*- coding: utf-8 -*-
-"""keystore.py — 카카오톡 v2/v1 키저장소(CBOR) 파서 + 방 전체 인벤토리.
+"""The KakaoTalk v2/v1 keystore (CBOR) parser and the inventory of every room the client knows (the denominator of
+key coverage).
 
-kakatok(sample/kakatok/keystore_v2.py)에서 kakaotalk app으로 옮겼다(독립화, 2026-10).
+  users/<hash>/appstate.dat (v2, live) and keystore.bin (v1, older): CBOR {info_prefix, salt, wrapped_dek_map}
+  wrapped_dek_map = [[relpath, wrapped_dek (40 bytes)], ...], one per room
 
-  users/<hash>/appstate.dat   (v2, 라이브)  — CBOR {info_prefix, salt, wrapped_dek_map}
-  users/<hash>/keystore.bin   (v1, 구버전)  — 같은 스키마
-  wrapped_dek_map = [ [relpath, wrapped_dek(40B)] , ... ]   방마다 1개
-
-여태 수집기는 디스크의 chatLogs_*.edb 를 glob 하고, "지금 열린" 방만 키를 회수했다. 그래서
-카톡이 아는 방 전체(=appstate.dat 의 wrapped_dek_map) 대비 **커버리지를 알 수 없었다**. 이
-모듈이 카톡의 권위 있는 방 목록(chatId ↔ relpath ↔ wrapped_dek)을 뽑아 그 분모를 준다.
-
-의존성 없음(표준 라이브러리만). 카톡의 직렬화기는 바이트열을 CBOR **uint8 배열**로 쓰므로
-(byte string 이 아님) 아래 미니 CBOR 디코더가 배열·바이트열 둘 다 바이트로 환원한다.
-
-프라이버시: wrapped_dek 는 래핑된 키다. 해시/요약만 로그로 남기고, 원문은 로컬 파일에만.
-KEK 가 없으면 wrapped_dek 로는 방을 못 연다(오프라인 언랩 불가 — Themida VM 차단). 인벤토리는
-"어떤 방이 존재하고, 어떤 방을 아직 못 땄는지"를 아는 용도다.
-Scope: the owner's own keystore on this machine (offline personal archival); wrapped keys are logged as
-hashes only.
-"""
+The client writes byte strings as CBOR arrays of uint8, so the small decoder below turns both into bytes. The
+owner's own keystore on this machine: wrapped keys are logged as hashes only."""
 from __future__ import annotations
 
 import os
@@ -181,31 +168,3 @@ def load_store(path: str) -> dict:
 def chatid_of_relpath(relpath: str) -> str | None:
     m = CHATLOG_RE.search(relpath.replace("\\", "/"))
     return m.group(1) if m else None
-
-
-# ----------------------------------------------------------------- self-test
-def _selftest() -> bool:
-    """카톡 없이 도는 결정적 CBOR 벡터 검증."""
-    # RFC 8949 예시들
-    assert _cbor_decode(bytes.fromhex("00")) == 0
-    assert _cbor_decode(bytes.fromhex("1818")) == 24
-    assert _cbor_decode(bytes.fromhex("190100")) == 256
-    assert _cbor_decode(bytes.fromhex("20")) == -1
-    assert _cbor_decode(bytes.fromhex("6161")) == "a"
-    assert _cbor_decode(bytes.fromhex("83010203")) == [1, 2, 3]
-    assert _cbor_decode(bytes.fromhex("a26161016162820203")) == {"a": 1, "b": [2, 3]}
-    assert _cbor_decode(bytes.fromhex("4401020304")) == b"\x01\x02\x03\x04"
-    # 무한길이 배열
-    assert _cbor_decode(bytes.fromhex("9f018202039f0405ffff")) == [1, [2, 3], [4, 5]]
-    # 카톡식: 바이트열을 uint8 배열로 — info_prefix "v2:" = [0x76,0x32,0x3a]
-    # 실제 구조 흉내: {info_prefix:[118,50,58], salt:[1,2]}
-    synth = bytes.fromhex("a2")  # map(2)
-    synth += bytes([0x6b]) + b"info_prefix" + bytes([0x83, 0x18, 118, 0x18, 50, 0x18, 58])
-    synth += bytes([0x64]) + b"salt" + bytes([0x82, 0x01, 0x02])
-    d = _cbor_decode(synth)
-    assert _to_bytes(d["info_prefix"]) == b"v2:", _to_bytes(d["info_prefix"])
-    assert _to_bytes(d["salt"]) == b"\x01\x02"
-    # chatId 추출
-    assert chatid_of_relpath("chat_data\\chatLogs_12345.edb") == "12345"
-    assert chatid_of_relpath("Contacts\\mpi_v2.edb") is None
-    return True

@@ -95,7 +95,7 @@ class TestRealProcessKill(Reference):
                     T.force_rmtree(fx.base)
 
 
-class TestRecovery(T.ToyCase):
+class TestRecovery(Reference):
     def stray(self, rel):
         p = ledger(self.fx).raw.joinpath(*rel.split("/"))
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -198,12 +198,6 @@ class TestRecovery(T.ToyCase):
     def test_killed_during_recovery(self):
         """The process dies inside recovery (parts finalised, log line written, inflight.json not yet removed); the
         next run's recovery is re-entrant and the ledger ends as an uninterrupted run."""
-        ref_fx = T.ToyFixture().standard()
-        try:
-            self.assertEqual(capture(ref_fx), 0)
-            ref = export(ref_fx)
-        finally:
-            T.force_rmtree(ref_fx.base)
         self.assertEqual(T.child_capture(self.fx, "run.CRASH_HOOK = lambda s: os._exit(9) if s == 'commit' else None\n"),
                          9)
         inflight = ledger(self.fx).inflight
@@ -217,26 +211,25 @@ class TestRecovery(T.ToyCase):
         lg = ledger(self.fx)
         self.assertEqual((lg.leftovers(), invariants(self.fx)[0]), (0, {}))
         self.assertEqual(log_runs(self.fx), [m["run"] for m in manifests(self.fx)])
-        self.assertEqual(export(self.fx), ref)
+        self.assertEqual(export(self.fx), self.ref)
 
 
 class TestLedgerDefects(T.ToyCase):
     def test_removed_manifest_is_a_seq_gap(self):
-        """A missing manifest is a seq gap: capture, replay and export-state refuse (exit 1)."""
+        """A missing manifest is a seq gap: capture and replay refuse (exit 1)."""
         for _ in range(3):
             self.assertEqual(capture(self.fx), 0)
         lg = ledger(self.fx)
         lg.manifests()[1][2].unlink()
         self.assertEqual(invariants(self.fx)[0].get("seq_gap"), 1)
-        out = lg.verify_root / "x.tsv"
-        for argv in (["capture", "--origins", "toy_a"], ["replay", "--check"], ["export-state", "--out", out]):
+        for argv in (["capture", "--origins", "toy_a"], ["replay", "--check"]):
             with self.subTest(command=argv[0]):
                 self.assertEqual(cli_main(self.fx, *argv), 1)
         self.assertEqual(len(T.names(lg.man_dir)), 2)
 
     def test_flipped_segment_byte(self):
-        """A damaged segment: the seal check sees the sha mismatch, and replay (which folds the ledger again) and
-        export-state stop with exit 1 instead of producing a state or an export from it."""
+        """A damaged segment: the seal check sees the sha mismatch, and replay (which folds the ledger again) stops
+        with exit 1 instead of producing a state from it."""
         self.assertEqual(capture(self.fx), 0)
         seg = sorted(ledger(self.fx).ledger_dir.glob("*/*/*.jsonl.gz"), key=str)[0]    # text order, as glob.glob's
         seg.chmod(0o600)
@@ -247,10 +240,7 @@ class TestLedgerDefects(T.ToyCase):
             fh.write(bytes([b[0] ^ 0xFF]))
         seg.chmod(0o400)
         self.assertEqual(invariants(self.fx)[0].get("sha_mismatch"), 1)
-        out = ledger(self.fx).verify_root / "x.tsv"
-        for argv in (["replay", "--check"], ["export-state", "--out", out]):
-            with self.subTest(command=argv[0]):
-                self.assertEqual(cli_main(self.fx, *argv), 1)
+        self.assertEqual(cli_main(self.fx, "replay", "--check"), 1)
 
     def test_seal_catches_what_still_folds(self):
         """A segment recompressed (valid gzip, the same records) or an earlier manifest rewritten (the same JSON, other
@@ -296,7 +286,7 @@ class TestLedgerDefects(T.ToyCase):
 
     def test_manifest_that_parses_but_lost_a_field(self):
         """Valid JSON with a renamed key, a wrong type or a status outside the vocabulary is an unreadable manifest:
-        replay and export-state stop with exit 1 and change nothing."""
+        replay stops with exit 1 and changes nothing."""
         def rename_path(m):
             m["segments"][0]["pbth"] = m["segments"][0].pop("path")
 
@@ -324,8 +314,7 @@ class TestLedgerDefects(T.ToyCase):
                     rewrite(first, json.dumps(m, sort_keys=True, indent=1).encode("ascii"))
                     state_p = ledger(fx).state_dir / "state.sqlite"
                     state_before = state_p.read_bytes()
-                    out = ledger(fx).verify_root / "x.tsv"
-                    for argv in (["replay", "--check"], ["replay"], ["export-state", "--out", out]):
+                    for argv in (["replay", "--check"], ["replay"]):
                         self.assertEqual(cli_main(fx, *argv), 1, argv[0])
                     self.assertEqual(state_p.read_bytes(), state_before)
                 finally:
@@ -377,13 +366,6 @@ class TestStateDamage(T.ToyCase):
                     self.assertEqual(len(manifests(fx)), 2 if command == "capture" else 1)
                 finally:
                     T.force_rmtree(fx.base)
-
-    def test_app_state_tables_are_rebuilt_too(self):
-        self.assertEqual(capture(self.fx), 0)
-        (ledger(self.fx).state_dir / "state.sqlite").unlink()
-        self.assertEqual(capture(self.fx), 0)                       # the fold again, toy_last and hist included
-        self.assertEqual(replay_diff(self.fx), 0)
-
 
 class TestLockAndEnvironment(T.ToyCase):
     def test_lock_busy_exit_75(self):

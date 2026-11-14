@@ -54,7 +54,6 @@ Names and room titles are printed as they are -- this tool does no masking or ps
 """
 import hashlib
 import re
-import sys
 from collections import Counter
 
 from rawlayer.capture.canon import as_int, as_str
@@ -507,6 +506,7 @@ class KakaoSearch(drv.SearchDriver):
     # room_src.seq marks a retitle, which re-chunks that room. key_col stays "": the stable key is the composite
     # string rec_key() builds, so rec_key/key_where below override the column-based defaults.
     container_col, container_src, chunk_gap_s = "chat_id", "room_src", 1800
+    context_col = "chat_id"
 
     def arguments(self, p):
         p.add_argument("--room", action="append", default=[], metavar="R",
@@ -562,41 +562,22 @@ class KakaoSearch(drv.SearchDriver):
              f"{r['sender'] or r['author_id'] or ''}: {r['message']}", False) for r in rows]
 
     def hit(self, r, tz, marks, width):
-        msg = r["message"]
         return {"id": r["id"], "key": rec_key(r["chat_id"], r["log_id"]), "chat_id": r["chat_id"],
                 "log_id": r["log_id"], "ts": r["ts"], "date": index.fmt_ts(r["ts"], tz), "room": r["room"],
                 "sender": r["sender"], "author_id": r["author_id"], "type": r["type"],
                 "type_name": type_name(r["type"]),
                 "origins": origin_names(r["origins"]), "source": r["source"], "deleted": bool(r["deleted"]),
                 "gone": bool(r["gone"]), "edited": bool(r["edited"]), "cursor": self.cursor(r),
-                "snippet": fts.highlight(msg, marks, width) if msg else self.placeholder(r), "text": msg}
+                "snippet": self.text_of(r, marks, width), "text": r["message"]}
 
     def context(self, con, r, n, a, tz):
-        """n rows before and after a hit in its room, by (ts, log_no, id) keyset; the hit itself marked."""
-        hide = "" if a.include_deleted else " AND deleted = 0"
-        key = (r["chat_id"], r["ts"], r["ts"], r["log_no"], r["log_no"], r["id"])
-        before = con.execute(
-            "SELECT * FROM kakao WHERE chat_id = ? AND (ts < ? OR (ts = ? AND (log_no < ? OR (log_no = ? AND id < ?))))"
-            f"{hide} ORDER BY ts DESC, log_no DESC, id DESC LIMIT ?", key + (n,)).fetchall()
-        after = con.execute(
-            "SELECT * FROM kakao WHERE chat_id = ? AND (ts > ? OR (ts = ? AND (log_no > ? OR (log_no = ? AND id > ?))))"
-            f"{hide} ORDER BY ts, log_no, id LIMIT ?", key + (n,)).fetchall()
-        out = []
-        for c in list(reversed(before)) + [r] + list(after):
-            text = index.flat(c["message"]) or self.placeholder(c)
-            out.append({"id": c["id"], "log_id": c["log_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
-                        "sender": c["sender"], "author_id": c["author_id"], "text": index.clip(text, a.width),
-                        "deleted": bool(c["deleted"]), "gone": bool(c["gone"]), "hit": c["id"] == r["id"]})
-        return out
+        return [{"id": c["id"], "log_id": c["log_id"], "ts": c["ts"], "date": index.fmt_ts(c["ts"], tz),
+                 "sender": c["sender"], "author_id": c["author_id"], "text": index.clip(self.text_of(c), a.width),
+                 "deleted": bool(c["deleted"]), "gone": bool(c["gone"]), "hit": c["id"] == r["id"]}
+                for c in self.neighbours(con, r, n, "" if a.include_deleted else " AND deleted = 0")]
 
     def placeholder(self, r):
         return "(" + (type_name(r["type"]) or "no type") + ", no text)"
-
-    def who(self, row):
-        return row.get("sender") or row.get("author_id") or "?"
-
-    def flags(self, h):
-        return "".join(f" [{k}]" for k in ("deleted", "gone", "edited") if h.get(k))
 
     def list_all(self, con, a, tz):
         where, params = [], []
@@ -615,48 +596,6 @@ class KakaoSearch(drv.SearchDriver):
             {"chat_id": r["chat_id"], "label": r["title"] or "(untitled)", "title": r["title"], "n": r["n"],
              "senders": r["senders"], "n_deleted": r["n_deleted"], "n_gone": r["n_gone"],
              **index.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
-
-    def render_rest(self, res, a, tz):
-        mode, rows, total = res["mode"], res["rows"], res["total"]
-        out = sys.stdout.write
-        if mode == "list":
-            out(f"=== {NAME}: {total} room(s) by message count ===\n")
-            for r in rows:
-                span = f"{r['first']}..{r['last']}" if r["first"] else ""
-                out(f"  {r['n']:7,}  {index.pad(r['label'], 40)} {span:22} id={r['chat_id']}\n")
-            return
-        if mode == "browse":
-            page = res["page"]
-            multi = res["rooms_in_page"] > 1
-            out(f"=== {NAME}: {total} message(s); this page {len(rows)} ===\n")
-            if rows:
-                out(f"  older: --before {page['before']}    newer: --after {page['after']}\n")
-            else:
-                out("  (no messages)\n")
-            for h in rows:
-                where = f" | {index.pad(h['room'] or h['chat_id'], 20)}" if multi else ""
-                text = index.flat(h["text"]) if h["text"] else h["snippet"]
-                out(f"{h['date']:16} | {index.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['log_id']}\n")
-            return
-        shown = len(rows)
-        head = f"=== {NAME}: {total} match(es)"
-        if total > shown:
-            head += f" (showing {shown} best)"
-        out(head + " ===\n")
-        if not rows:
-            out("  (no matches)\n")
-        prefix = f"[{NAME}] "
-        for h in rows:
-            out(f"{prefix}{h['date']:16} | {index.pad(self.who(h), 18)} | {index.pad(h['room'] or '(untitled)', 26)} "
-                f":: {h['snippet']}{self.flags(h)}\n")
-            out(f"{' ' * len(prefix)}chat={h['chat_id']} log={h['log_id']} cursor={h['cursor']} "
-                f"origins={','.join(h['origins']) or '-'}\n")
-            for c in h.get("context", []):
-                arrow = ">>" if c["hit"] else "  "
-                out(f"     {arrow} {c['date'][5:]:11} {index.pad(self.who(c), 14)} {c['text']}{self.flags(c)}\n")
-            if h.get("context"):
-                out("\n")
-
 
 DRIVER = KakaoSearch(SPEC)
 

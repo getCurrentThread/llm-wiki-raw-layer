@@ -7,7 +7,7 @@ import uuid
 from rawlayer.capture.canon import pk_text
 from appkit import archive
 from appkit.archive import FetchError
-from .keys import iso_ms
+from rawlayer.capture.canon import iso_ms
 
 
 PREFIXES = ("<local-command-stdout>", "<bash-stdout>", "<bash-stderr>",

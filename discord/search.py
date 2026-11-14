@@ -39,8 +39,7 @@ _LABEL = """channel=coalesce((SELECT CASE WHEN p.name IS NOT NULL THEN p.name ||
  sender=coalesce((SELECT name FROM users WHERE user_id=msgs.user_id),'')"""
 
 
-def _s(v):
-    return index.clean(v) if isinstance(v, str) else ""
+_s = index.text
 
 
 def _texts(value):
@@ -214,12 +213,8 @@ class DiscordSearch(drv.SearchDriver):
             return "thread"
 
     def parse_cursor(self, value, flag, before=True):
-        parts = (value or "").split(".")
-        if len(parts) != 3 or not all(len(p) <= 19 and p.isascii() and p.isdecimal() for p in parts):
-            raise index.UsageError(f"{flag}: expected ts_ms.snowflake.channel_id")
-        if any(int(p) >= 2 ** 63 for p in parts[:2]):
-            raise index.UsageError(f"{flag}: cursor out of range")
-        return int(parts[0]), int(parts[1]), parts[2]
+        return index.cursor_parts(value, flag, "ts_ms.snowflake.channel_id", 3, 2,
+                                  lambda rest: len(rest[0]) <= 19 and rest[0].isascii() and rest[0].isdecimal(), "cursor out of range")
 
     def hit(self, r, tz, marks, width):
         return {k: r[k] for k in ("id", "key", "msg_id", "channel_id", "channel", "guild_id", "guild", "user_id", "sender", "ts", "ts_ms", "body_from")} | {

@@ -31,14 +31,14 @@ Every version of a key seen in a stable pass is recorded once.
 
 `sources.mm_archive` is the archive directory. `mm_exclude_patterns` is a list of non-empty strings (default
 empty). A channel whose display name or name contains a pattern, casefolded, is excluded, using mattertok's rule;
-none is excluded by default. Frozen `T1`/`T2` inputs read `<inputs_root>/<set>/mm/archive`; live inputs read the configured archive.
+none is excluded by default.
 
 ## Collection and authentication
 
 `fetch.py` is a standard-library port of the mattertok archiver (REST API v4). It writes mattertok's archive
 format, so an archive mattertok wrote continues from its cursors, and it needs no other program. Archive-only
 configs stay read-only; `mm_sync: true` makes live `manage.py capture mattermost` update the archive before
-capturing it. Frozen inputs never call the fetch step. With `mm_sync`, `task_checks` (and `schedule install`)
+capturing it. With `mm_sync`, `task_checks` (and `schedule install`)
 refuse a config without `mm_url` or an existing protected token file.
 
 - `mm_url` is the server's `https://` address; `mm_token_file` is a private file under `<DATA_PARENT>` holding a
@@ -156,9 +156,3 @@ the root README's ("Search").
   The channel label and team come from the channel records. Renames relabel old rows.
 - **Threads.** `--thread <post_id>` takes any post of a thread and prints the root and every reply.
   Selection filters do not apply to a thread; each one that was given is reported on stderr.
-
-## Wiki export
-
-`mm_wiki_project`, `mm_wiki_include`, `mm_wiki_exclude` and `mm_wiki_since` configure `manage.py collect mattermost` (llm.md 13), which
-writes each channel's closed months, packed into Markdown files of about 16,000 characters, into the wiki
-vault's `raw/sources/mattermost/`. Empty by default: nothing is exported.

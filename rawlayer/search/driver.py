@@ -1,18 +1,9 @@
 # -*- coding: utf-8 -*-
-"""The query half of an app's search.py. An app's search module subclasses SearchDriver for its row model and
-delegates the module-level run()/add_arguments() the search step calls (rawlayer/search/steps.py) to the subclass
-instance; the fold/index half stays where it was, in the module's SourceIndex subclass (index.py):
-
-  class KakaoSearch(SearchDriver):
-      name, table, fts_table, sort_cols, ...   # the source's facts
-      Filters, hit(), context(), ...           # the source's row shape
-  DRIVER = KakaoSearch(SPEC)                   # SPEC: the module's SourceIndex
-
-What the base owns is what the apps had as copies: the shared arguments (--mode from group_modes, --before and
---after), the run() skeleton (argument checks, query build, keyset cursor, dispatch, the JSON envelope), the
-hits/browse/aggregate queries, the time-window and --include-deleted filters, the group rows of the aggregate
-modes (group_modes: one Group per mode) and the count/timeline/group text output. An app overrides the hooks its
-row model needs and adds its own dispatch (mattermost's --thread) through check_args/extra_result."""
+"""The query half of an app's search.py: an app subclasses SearchDriver for its row model (its facts as class
+attributes, its row shape as the hit/context/... hooks) and delegates its module-level run()/add_arguments() to an
+instance (DRIVER = <App>Search(SPEC)). The base owns the shared arguments, the run() skeleton and the JSON envelope,
+the hits/browse/aggregate queries and filters, and the group rows of the aggregate modes; an app adds its own
+dispatch (mattermost's --thread) through check_args/extra_result."""
 import json
 import sqlite3
 import sys
@@ -133,14 +124,25 @@ class SearchDriver:
     def context(self, con, r, n, a, tz):
         """n rows before and after a hit (--context) within its context_col by the sort key, the hit itself marked
         (a source whose neighbours are not a window of its sort key writes its own)."""
-        cols, marks = ", ".join(self.sort_cols), ", ".join("?" for _ in self.sort_cols)
         hide = "" if a.include_deleted else " AND " + self.Filters.deleted_sql
+        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in self.neighbours(con, r, n, hide)]
+
+    def neighbours(self, con, r, n, hide):
+        """The n rows before r within its context_col by the sort key, r, then the n after; `hide` is an
+        " AND ..." clause on the content table (alias t)."""
+        cols, marks = ", ".join(self.sort_cols), ", ".join("?" for _ in self.sort_cols)
         near = (f"SELECT t.* FROM {self.table} t WHERE t.{self.context_col}=? AND ({cols}) %s ({marks}){hide} "
                 f"ORDER BY %s LIMIT ?")
         args = [r[self.context_col], *(r[c] for c in self.sort_cols), n]
         before = con.execute(near % ("<", ", ".join(f"t.{c} DESC" for c in self.sort_cols)), args).fetchall()
         after = con.execute(near % (">", ", ".join(f"t.{c}" for c in self.sort_cols)), args).fetchall()
-        return [{**self.hit(c, tz, [], a.width), "hit": c["id"] == r["id"]} for c in [*reversed(before), r, *after]]
+        return [*reversed(before), r, *after]
+
+    def text_of(self, r, marks=None, width=None):
+        """A row's text: highlighted (marks, width) or flattened, or its placeholder when it has none."""
+        if marks is None:
+            return index.flat(r["message"]) or self.placeholder(r)
+        return fts.highlight(r["message"], marks, width) if r["message"] else self.placeholder(r)
 
     def placeholder(self, r):
         raise NotImplementedError

@@ -1,23 +1,15 @@
 # -*- coding: utf-8 -*-
 """The kakatok port that makes the app self-sufficient (2026-10): the deterministic crypto vectors of
 kakaotalk/keychain.py and kakaotalk/keystore.py, the keystore derivation setup provisions against a
-synthetic appstate.dat wrapping the keys of synthetic SQLCipher-4 rooms (kakaotalk/tests/edbfix.py), and the
-backup decryption against a synthetic EvaSQLite-encrypted backup user directory. Nothing here touches the
-real client, its files or the registry: read_deviceinfo and get_userid_live are patched, and every input is
-built in code under the fixture's temp directory. 
-"""
+synthetic appstate.dat wrapping the keys of synthetic SQLCipher-4 rooms (kakaotalk/tests/edbfix.py). Nothing
+here touches the real client or its files: every input is built in code under the fixture's temp directory."""
 import contextlib
 import io
 import json
 import shutil
-import sqlite3
 import unittest
-from unittest import mock
 
-from Crypto.Cipher import AES
 
-from kakaotalk import backup as backup_mod
-from kakaotalk import wincrypt as kd
 from kakaotalk import keychain, keystore, provision
 from kakaotalk.readers.edb import load_keystore
 from kakaotalk.tests import edbfix as E
@@ -26,8 +18,6 @@ from kakaotalk.tests.helpers import _force, capture, records
 
 ROOT = bytes(range(0x40, 0x60))
 SALT = bytes(range(32))
-DEV = {"dev_id": "dev-1", "sys_uuid": "uuid-1", "hdd_model": "model-x", "hdd_serial": "ser-9", "dev_id_type": ""}
-UID = "424242"
 
 
 @contextlib.contextmanager
@@ -76,29 +66,6 @@ def write_appstate(udir, wrapped):
     (udir / "appstate.dat").write_bytes(_cbor_enc(store))
 
 
-def eva_encrypt(data, dbtype, pragma, userid):
-    """Inverse of wincrypt.eva_decrypt: page-wise AES-CBC under the fixed EvaSQLite key/iv."""
-    key, iv = kd.eva_key_iv(kd.eva_passphrase(dbtype, pragma, userid))
-    out = bytearray()
-    for pos in range(0, len(data), kd.PAGE):
-        blk = data[pos:pos + kd.PAGE]
-        n = len(blk) - (len(blk) % 16)
-        if n:
-            out += AES.new(key, AES.MODE_CBC, iv).encrypt(blk[:n])
-        out += blk[n:]
-    return bytes(out)
-
-
-def make_backup_room(bak, chat, rows):
-    plain = bak.parent / "plain"
-    plain.mkdir(parents=True, exist_ok=True)
-    src = plain / f"{chat}.sqlite"
-    E.plain_backup_room(src, rows)
-    (bak / "chat_data" / f"chatLogs_{chat}.edb").write_bytes(
-        eva_encrypt(src.read_bytes(), 3, kd.make_pragma(DEV), UID))
-    src.unlink()
-
-
 class Base(unittest.TestCase):
     def setUp(self):
         self.fx = Fixture()
@@ -108,12 +75,73 @@ class Base(unittest.TestCase):
 
 
 class TestVectors(unittest.TestCase):
-    def test_selftests(self):
-        """keychain: RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract; keystore:
-        RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
-        for mod in (keychain, keystore):
-            with self.subTest(mod.__name__):
-                self.assertTrue(mod._selftest())
+    def test_keychain_vectors(self):
+        """RFC 5869/3394 vectors, the unwrap chain round-trip and the relpath-verbatim contract."""
+        # RFC 5869 Test Case 1 (SHA-256)
+        okm = keychain.hkdf_sha256(b"\x0b" * 22, bytes.fromhex("000102030405060708090a0b0c"),
+                          bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"), 42)
+        assert okm == bytes.fromhex(
+            "3cb25f25faacd57a90434f64d0362f2a"
+            "2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+            "34007208d5b887185865"), "HKDF RFC5869 TC1"
+
+        # RFC 3394 4.3 — 256-bit KEK, 128-bit key data
+        kek = bytes.fromhex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
+        kd16 = bytes.fromhex("00112233445566778899AABBCCDDEEFF")
+        assert keychain.aes_kw_wrap(kek, kd16) == bytes.fromhex(
+            "64E8C3F9CE0F5BA2"
+            "63E9777905818A2A"
+            "93C8191E7D6E8AE7"), "KW wrap RFC3394 4.3"
+        assert keychain.aes_kw_unwrap(kek, keychain.aes_kw_wrap(kek, kd16)) == kd16
+
+        # RFC 3394 4.6 — 256-bit KEK, 256-bit key data (카톡 DEK 와 같은 32B→40B)
+        kd32 = bytes.fromhex("00112233445566778899AABBCCDDEEFF000102030405060708090A0B0C0D0E0F")
+        assert keychain.aes_kw_wrap(kek, kd32) == bytes.fromhex(
+            "28C9F404C4B810F4"
+            "CBCCB35CFB87F826"
+            "3F5786E2D80ED326"
+            "CBC7F0E71A99F43B"
+            "FB988B9B7A02DD21"), "KW wrap RFC3394 4.6"
+        assert keychain.aes_kw_unwrap(kek, keychain.aes_kw_wrap(kek, kd32)) == kd32
+
+        # 카톡 체인 모형: 합성 store 에 대해 root→KEK→wrap→unwrap 왕복
+        store = {"version": "v2:", "salt": bytes(range(32)),
+                 "map": {r"chat_data\chatLogs_9.edb": keychain.aes_kw_wrap(
+                     keychain.hkdf_sha256(b"\x11" * 32, bytes(range(32)), b"v2:chat_data\\chatLogs_9.edb", 32),
+                     b"\xab" * 32)}}
+        assert keychain.derive_dek(b"\x11" * 32, store, r"chat_data\chatLogs_9.edb") == b"\xab" * 32
+        # relpath 를 정규화(/ 치환)한 KEK 로는 원본 wrapped 가 안 풀려야 한다 — 원문 그대로가 계약
+        wrong_kek = keychain.hkdf_sha256(b"\x11" * 32, bytes(range(32)),
+                                b"v2:chat_data/chatLogs_9.edb", 32)
+        with self.assertRaises(ValueError):
+            keychain.aes_kw_unwrap(wrong_kek, store["map"][r"chat_data\chatLogs_9.edb"])
+        # 잘못된 루트 → 전멸
+        assert keychain.unwrap_store(b"\x22" * 32, store) == {}
+
+    def test_keystore_vectors(self):
+        """RFC 8949 decode vectors and the kakatok uint8-array byte coercion."""
+        # RFC 8949 예시들
+        assert keystore._cbor_decode(bytes.fromhex("00")) == 0
+        assert keystore._cbor_decode(bytes.fromhex("1818")) == 24
+        assert keystore._cbor_decode(bytes.fromhex("190100")) == 256
+        assert keystore._cbor_decode(bytes.fromhex("20")) == -1
+        assert keystore._cbor_decode(bytes.fromhex("6161")) == "a"
+        assert keystore._cbor_decode(bytes.fromhex("83010203")) == [1, 2, 3]
+        assert keystore._cbor_decode(bytes.fromhex("a26161016162820203")) == {"a": 1, "b": [2, 3]}
+        assert keystore._cbor_decode(bytes.fromhex("4401020304")) == b"\x01\x02\x03\x04"
+        # 무한길이 배열
+        assert keystore._cbor_decode(bytes.fromhex("9f018202039f0405ffff")) == [1, [2, 3], [4, 5]]
+        # 카톡식: 바이트열을 uint8 배열로 — info_prefix "v2:" = [0x76,0x32,0x3a]
+        # 실제 구조 흉내: {info_prefix:[118,50,58], salt:[1,2]}
+        synth = bytes.fromhex("a2")  # map(2)
+        synth += bytes([0x6b]) + b"info_prefix" + bytes([0x83, 0x18, 118, 0x18, 50, 0x18, 58])
+        synth += bytes([0x64]) + b"salt" + bytes([0x82, 0x01, 0x02])
+        d = keystore._cbor_decode(synth)
+        assert keystore._to_bytes(d["info_prefix"]) == b"v2:", keystore._to_bytes(d["info_prefix"])
+        assert keystore._to_bytes(d["salt"]) == b"\x01\x02"
+        # chatId 추출
+        assert keystore.chatid_of_relpath("chat_data\\chatLogs_12345.edb") == "12345"
+        assert keystore.chatid_of_relpath("Contacts\\mpi_v2.edb") is None
 
 
 class TestKeystoreDerivation(Base):
@@ -151,11 +179,10 @@ class TestKeystoreDerivation(Base):
             self.assertEqual(d[f"chat_data\\chatLogs_{chat}.edb"]["key_hex"], E.key_for(chat).hex())
             self.assertIs(d[f"chat_data\\chatLogs_{chat}.edb"]["header_ok"], True)
         self.assertEqual(d["chat_data\\ocii_v2.edb"]["chatId"], None)          # carried, ignored by load_keystore
-        inputs = InputSet(Config(self.fx.config_path), "live")
+        inputs = InputSet(Config(self.fx.config_path))
         keys, _all, ok_ids = load_keystore(inputs.keystore)
         self.assertEqual(ok_ids, {"31", "32"})
         self.assertEqual(keys["31"], E.key_for(31))
-        self.assertTrue((self.keys_dir / "rotation_state.json").exists())      # rotation baseline kept
         self.assertEqual(capture(self.fx, ["edb"]), 0)
         recs = {r["key"] for r in records(self.fx)}
         self.assertIn("kakao:31:msg:1", recs)
@@ -165,51 +192,3 @@ class TestKeystoreDerivation(Base):
         (self.keys_dir / "root_v2.hex").write_text((b"\x22" * 32).hex())
         self.assertTrue(self.run_derive())                                     # the rotation attention line
         self.assertEqual(json.loads(self.fx.keystore.read_text(encoding="utf-8")), {})
-
-
-class TestBackupProvision(Base):
-    """the backup decryption (setup's provisioning, the old backup command): EvaSQLite decryption of a
-    synthetic *_backup_* user directory -> backup_decrypted."""
-
-    def setUp(self):
-        super().setUp()
-        self.bak = self.fx.inputs / "kakao_user_backup_20261006"
-        (self.bak / "chat_data").mkdir(parents=True)
-        self.fx.backup.joinpath("999.sqlite").write_bytes(b"stale from an earlier run")
-
-    def run_backup(self, dev=DEV):
-        cfg = {"sources": {"kakao_user_dir": str(self.fx.user_dir), "backup_decrypted": str(self.fx.backup)}}
-        with mock.patch.object(kd, "read_deviceinfo", return_value=dev), \
-                mock.patch.object(kd, "get_userid_live", return_value=UID), quiet():
-            return backup_mod.decrypt_backup(cfg, lambda m: None)
-
-    def test_decrypts_rooms_and_manifest(self):
-        make_backup_room(self.bak, 41, [E.msg(41, 1), E.msg(41, 2)])
-        self.assertEqual(self.run_backup(), 0)
-        room = self.fx.backup / "41.sqlite"
-        self.assertTrue(room.exists())
-        con = sqlite3.connect(room)
-        self.assertEqual(con.execute("SELECT COUNT(*) FROM chatLogs").fetchone()[0], 2)
-        con.close()
-        man = json.loads(self.fx.backup.joinpath("_manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["decrypted"],
-                         [{"chatId": "41", "rows": 2, "from": "chatLogs_41.edb", "to": "41.sqlite"}])
-        self.assertFalse(self.fx.backup.joinpath("999.sqlite").exists())       # room gone from the backup
-        self.assertEqual(capture(self.fx, ["backup_decrypted"]), 0)
-        recs = {r["key"]: r for r in records(self.fx)}
-        self.assertIn("kakao:41:msg:1", recs)
-        self.assertEqual(recs["kakao:41"]["derived"]["rows"], 2)
-
-    def test_wrong_pragma_removes_stale_and_is_suspect(self):
-        make_backup_room(self.bak, 41, [E.msg(41, 1)])
-        self.assertEqual(self.run_backup(), 0)
-        self.assertTrue(self.fx.backup.joinpath("41.sqlite").exists())
-        rc = self.run_backup(dict(DEV, hdd_serial="other-disk"))              # a different machine's pragma
-        self.assertEqual(rc, 3)
-        self.assertFalse(self.fx.backup.joinpath("41.sqlite").exists())       # the stale copy did not survive
-        man = json.loads(self.fx.backup.joinpath("_manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(man["decrypted"], [])
-
-    def test_no_backup_directory_skips(self):
-        shutil.rmtree(self.bak)
-        self.assertEqual(self.run_backup(), 2)

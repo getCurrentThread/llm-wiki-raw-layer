@@ -32,9 +32,7 @@ that shrinks (deleted messages) can move the start of every later file of its st
 old names become orphans while the renamed files are ingested again. Output is counts only, never a label, a path or
 a text.
 
-The command is `manage.py collect <app>` (rawlayer/management/commands/collect.py); this module is its logic.
-
-Exit codes: 0 ok | 2 refused (config, project, app, index, running as LocalSystem) | 75 busy | 1 error."""
+The command, its exit codes and when it may run: rawlayer/management/commands/collect.py."""
 import hashlib
 import json
 import os

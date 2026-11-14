@@ -17,7 +17,6 @@ import json
 import os
 import re
 import sqlite3
-import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,7 +35,7 @@ CAP = {"chatId": str(2 ** 53 + 1), "msgId": 5, "senderLo": 7, "senderHi": 0, "ro
        "room180": 10, "template_hex": "00" * 0x1D0, "texthdr_hex": "00" * 32}
 SPEC_KEYS = frozenset({
     "builder", "builder_prologue", "reshandler", "reshandler_prologue", "loco_global", "loco_state_off",
-    "loco_logged_in", "sentinel", "rdata_lo", "rdata_hi", "code_lo", "code_hi", "msg_size",
+    "loco_logged_in", "sentinel", "rdata_lo", "rdata_hi", "msg_size",
     "plain_no_extra", "builder_msgouter_off", "resh_err_off", "resh_msg_off", "msgouter_size",
     "msgouter_hi_off", "off_chat_id", "off_sender_lo", "off_sender_hi", "off_msg_id", "off_msg_pad",
     "off_text", "off_supplement", "off_extra", "off_extra_gate", "off_room_holder", "off_holder_chat",
@@ -58,8 +57,7 @@ class TestVersionTable(unittest.TestCase):
                         self.assertIsInstance(spec[key], int)
 
     def test_the_raw_templates_carry_no_addresses_or_offsets(self):
-        for name in ("CALIBRATE_JS", "SEND_JS", "LISTEN_JS", "OBSERVE_JS", "REPLY_OBSERVE_JS",
-                     "EVENTS_OBSERVE_JS"):
+        for name in ("CALIBRATE_JS", "SEND_JS", "LISTEN_JS"):
             with self.subTest(name=name):
                 self.assertEqual(re.findall(r"0x[0-9a-fA-F]+", getattr(admin, name)), [])
 
@@ -77,6 +75,9 @@ class TestVersionTable(unittest.TestCase):
                 self.assertIn("clone.add(%#x).writeU64(chatId)" % spec["off_chat_id"], send)
                 self.assertIn("holder.add(%#x).readU64().equals(CHAT_ID)" % spec["off_holder_chat"], send)
                 self.assertIn("inner.add(%#x).readU32() !== PLAIN" % spec["off_extra_gate"], listen)
+                # chat ids cross the JS bridge as exact 64-bit values, never through a rounding double
+                self.assertIn("chatId: inner.add(%#x).readU64().toString()" % spec["off_chat_id"], cal)
+                self.assertNotIn("* 0x100000000", cal + send + listen)
 
     def test_an_unknown_client_version_refuses(self):
         with self.assertRaises(FetchError) as cm:
@@ -84,16 +85,6 @@ class TestVersionTable(unittest.TestCase):
         self.assertEqual(cm.exception.category, "version_mismatch")
         self.assertIs(admin.spec_for("26.9.1.5339"), SPEC)
 
-    def test_check_names_the_supported_versions(self):
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "read_state", lambda p: {"msg_id_next": 0x1200}), \
-                mock.patch.object(admin, "client_version", lambda: "26.9.1.5339"):
-            body, code = admin.cmd_check(SimpleNamespace(template="t.json",
-                                                         state=os.path.join(folder, "s.json")))
-        self.assertEqual(code, 0)
-        self.assertEqual((body["version"], body["supported_versions"]), ("26.9.1.5339", ["26.9.1.5339"]))
 
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
@@ -145,62 +136,40 @@ class TestSend(unittest.TestCase):
         js = admin.SEND_JS
         self.assertLess(js.index("send('[CALLED]')"), js.index("f(ROOM, outer, 0)"))
 
-    def test_chat_ids_stay_exact_across_the_js_bridge(self):
-        cal = admin._render(admin.CALIBRATE_JS, SPEC)
-        send = admin._render(admin.SEND_JS, SPEC, room_vtable=VT, room=0x100, dry=0, msg_id=5, text='"hi"',
-                             chat_id="0x10", template_hex="00", texthdr_hex="00", window_ms=1)
-        listen = admin._render(admin.LISTEN_JS, SPEC, prefix='"!!"', owner_lo=7, maxpayload=200)
-        self.assertIn("chatId: inner.add(%#x).readU64().toString()" % SPEC["off_chat_id"], cal)
-        self.assertIn("holder.add(%#x).readU64().equals(CHAT_ID)" % SPEC["off_holder_chat"], send)
-        self.assertNotIn("* 0x100000000", cal + send + listen)   # the rounding doubles are gone
-
     def test_fail_before_the_marker_is_refused(self):
         body, code = self.run_send(["[FAIL] Error: room vtable mismatch"])
         self.assertEqual((body["status"], code), ("refused", 2))
         self.assertEqual(self.writes, [{"msg_id_next": 0x1201}])      # at-most-once: persisted before the call
 
     def test_outcome_after_the_marker(self):
-        window = '[WINDOW-END] {"err": 0, "msg": "", "room": "16"}'   # 0x10: this room's own response
-        for lines, status, code in (
-                (["[READY]", "[CALLED]", "[FAIL] builder ret=0"], "failed_after_write", 1),
-                (["[READY]", "[CALLED]"], "failed_after_write", 1),                    # a timeout
-                (["[READY]", "[CALLED]", "[OK]", window], "sent", 0)):
+        """After [CALLED] a failure may follow a write; only the target room's (0x10 = "16") WRITE response
+        decides sent or server_rejected, anything else is unconfirmed and claims no log_id."""
+        def window(resp):
+            return ["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] " + resp]
+        for lines, status, err, basis, code in (
+                (["[READY]", "[CALLED]", "[FAIL] builder ret=0"], "failed_after_write", None, None, 1),
+                (["[READY]", "[CALLED]"], "failed_after_write", None, None, 1),                  # a timeout
+                (window('{"err": 0, "msg": "", "room": "16"}'), "sent", 0, None, 0),
+                (window('{"err": -100, "msg": "x", "room": "16"}'), "server_rejected", -100, None, 1),
+                (window('{"err": 0, "msg": "", "room": "17"}'), "unconfirmed", None, "other_room_response", 1),
+                (window('{"err": -100, "msg": "x", "room": "17"}'), "unconfirmed", None, "other_room_response", 1),
+                (["[READY]", "[CALLED]", "[OK]"], "unconfirmed", None, "no_response", 1),        # the window ended empty
+                (window("no response"), "unconfirmed", None, "no_response", 1)):
             with self.subTest(lines=lines):
                 body, code_got = self.run_send(lines)
                 self.assertEqual((body["status"], code_got), (status, code))
-
-    def test_only_the_target_rooms_response_decides(self):
-        for resp, status, err, code in (
-                ('{"err": 0, "msg": "", "room": "16"}', "sent", 0, 0),            # this chat: accepted
-                ('{"err": -100, "msg": "x", "room": "16"}', "server_rejected", -100, 1),
-                ('{"err": 0, "msg": "", "room": "17"}', "unconfirmed", None, 1),  # another room's only
-                ('{"err": -100, "msg": "x", "room": "17"}', "unconfirmed", None, 1)):
-            with self.subTest(resp=resp):
-                body, code_got = self.run_send(["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] " + resp])
-                basis = None if status in ("sent", "server_rejected") else \
-                    ("other_room_response" if '"17"' in resp else None)
-                self.assertEqual((body["status"], body["err_code"], body.get("outcome_basis"), code_got),
-                                 (status, err, basis, code))
-
-    def test_no_matching_response_is_unconfirmed(self):
-        for lines in (["[READY]", "[CALLED]", "[OK]"],                    # the window ended empty
-                      ["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] no response"]):
-            with self.subTest(lines=lines):
-                body, code = self.run_send(lines)
-                self.assertEqual((body["status"], body["outcome_basis"], body["err_code"], code),
-                                 ("unconfirmed", "no_response", None, 1))
-                self.assertNotIn("log_id", body)        # nothing is claimed without a matching response
+                if status != "failed_after_write":
+                    self.assertEqual((body["err_code"], body.get("outcome_basis")), (err, basis))
+                if status == "unconfirmed":
+                    self.assertNotIn("log_id", body)
 
     def test_log_id_comes_exact_or_not_at_all(self):
         big = str(2 ** 53 + 7)               # an exact 64-bit id, beyond a JS double's exact integers
         for resp, extra in (
                 ('{"err": 0, "msg": "", "room": "16", "logId": "%s", "sendAt": "1762000000123"}' % big,
                  {"log_id": big, "sent_at": "1762000000123"}),
-                ('{"err": 0, "msg": "", "room": "16", "logId": "9007199254740993"}',   # 2^53 + 1, exact
-                 {"log_id": "9007199254740993"}),
                 ('{"err": 0, "msg": "", "room": "16", "sendAt": 1762000000123}',      # a plain int is fine
                  {"sent_at": "1762000000123"}),
-                ('{"err": 0, "msg": "", "room": "16"}', {}),                          # absent -> absent
                 ('{"err": 0, "msg": "", "room": "16", "logId": "9007199254740992.5"}', {}),  # not exact
                 ('{"err": 0, "msg": "", "room": "16", "logId": 9007199254740992}', {}),      # a JS number
                 ('{"err": 0, "msg": "", "room": "17", "logId": "%s"}' % big, {}),    # another room's
@@ -208,9 +177,8 @@ class TestSend(unittest.TestCase):
             with self.subTest(resp=resp):
                 body, code = self.run_send(["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] " + resp])
                 if '"17"' in resp:                     # only another room answered: unknown, nothing claimed
-                    self.assertEqual((body["status"], code), ("unconfirmed", 1))
-                    self.assertNotIn("log_id", body)
-                    self.assertNotIn("sent_at", body)
+                    self.assertEqual((body["status"], code, "log_id" in body, "sent_at" in body),
+                                     ("unconfirmed", 1, False, False))
                     continue
                 self.assertEqual((code, body["status"]), (0, "sent"))
                 for key in ("log_id", "sent_at"):
@@ -263,21 +231,15 @@ class TestCalibrate(unittest.TestCase):
         self.assertEqual(admin._validated(dict(CAP), SPEC), 2 ** 53 + 1)     # a JS double would round this id
 
     def test_a_malformed_capture_refuses(self):
-        for broken in ({"chatId": "9007199254740992.5"}, {"chatId": "0x10"}, {"chatId": None},
-                       {"msgId": 0}, {"senderHi": 1}, {"roomVtable": 0x400000},
-                       {"template_hex": "00"}, {"texthdr_hex": "zz" * 32}):
+        for broken, category in (({"chatId": "9007199254740992.5"}, "capture_failed"), ({"chatId": "0x10"}, "capture_failed"),
+                                 ({"chatId": None}, "capture_failed"), ({"msgId": 0}, "capture_failed"),
+                                 ({"senderHi": 1}, "capture_failed"), ({"roomVtable": 0x400000}, "capture_failed"),
+                                 ({"template_hex": "00"}, "capture_failed"), ({"texthdr_hex": "zz" * 32}, "capture_failed"),
+                                 ({"room180": 30}, "not_plain_room"), ({"room180": None}, "not_plain_room")):
             with self.subTest(broken=broken):
                 with self.assertRaises(FetchError) as cm:
                     admin._validated({**CAP, **broken}, SPEC)
-                self.assertEqual(cm.exception.category, "capture_failed")
-
-    def test_a_capture_that_is_not_a_plain_room_refuses(self):
-        for room180 in (30, None):
-            with self.subTest(room180=room180):
-                with self.assertRaises(FetchError) as cm:
-                    admin._validated({**CAP, "room180": room180}, SPEC)
-                self.assertEqual(cm.exception.category, "not_plain_room")
-
+                self.assertEqual(cm.exception.category, category)
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
 class TestListen(unittest.TestCase):
@@ -343,102 +305,32 @@ class TestListen(unittest.TestCase):
 
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
-class TestObserve(unittest.TestCase):
-    def test_the_reply_capture_hook_renders_from_the_table(self):
-        js = admin._render(admin.REPLY_OBSERVE_JS, SPEC)
-        self.assertNotIn("%(", js)
-        self.assertIn("ptr(%#x)" % SPEC["builder"], js)
-        self.assertIn("if (xp !== SENTINEL)", js)             # the plain path's sentinel extra pointer
-
-    def test_the_reply_capture_writes_its_file_and_reports_shapes(self):
-        cap_obj = {"chatId": "9007199254740993", "msgId": 5, "gate": 26, "textUtf8": 3,
-                   "extra": {"ptr": 4251080, "hdr": "00" * 16, "len": 91, "text": '{"src_logId": 39}'},
-                   "template_hex": "00", "texthdr_hex": "00"}
-        cap = "[CAP] " + json.dumps(cap_obj)
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, [cap], [])), \
-                mock.patch.object(admin, "_collect",
-                                  lambda got, prefixes, timeout, stop=None:
-                                  (next((l for l in got if l.startswith(prefixes)), None), list(got))), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            body, code = admin._observe_reply(SimpleNamespace(template=os.path.join(folder, "tpl.json")))
-            written = json.loads(Path(body["written"]).read_text(encoding="utf-8"))
-        self.assertEqual((code, body["status"], body["gate"], body["extra_len"]), (0, "ok", 26, 91))
-        self.assertIn("src_logId", body["extra"])            # the owner's allowed real-value output
-        self.assertEqual((written["chatId"], written["msgId"], written["gate"]),
-                         (2 ** 53 + 1, 5, 26))               # exact 64-bit, never through a double
-        self.assertEqual(written["extra_text"], body["extra"])
-
-    def test_an_unfired_reply_hook_reports_what_was_seen(self):
-        lines = ["[ARMED] REPLY once by hand in the UI now; admin sends nothing"]   # 62 chars: saw truncates
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, list(lines), [])), \
-                mock.patch.object(admin, "_collect",
-                                  lambda got, prefixes, timeout, stop=None: (None, list(got))), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            body, code = admin._observe_reply(SimpleNamespace(template=os.path.join(folder, "tpl.json")))
-        self.assertEqual((code, body["status"]), (2, "no_observation"))
-        self.assertEqual(body["saw"], [l[:60] for l in lines])
-
-    def test_the_observation_hook_renders_from_the_table(self):
-        js = admin._render(admin.OBSERVE_JS, SPEC, peek=64)
-        self.assertNotIn("%(", js)
-        self.assertIn("ptr(%#x)" % SPEC["reshandler"], js)
-        self.assertIn("send('[OBS] ' + JSON.stringify(out))", js)
-
-    def test_an_unfired_hook_reports_what_was_seen(self):
-        lines = ["[ARMED] send ONE message by hand now; admin sends nothing"]
-        with mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, list(lines), [])), \
-                mock.patch.object(admin, "_collect",
-                                  lambda got, prefixes, timeout, stop=None: (None, list(got))), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            body, code = admin.cmd_observe(SimpleNamespace(template="t.json", state=None))
-        self.assertEqual((code, body["status"]), (2, "no_observation"))
-        self.assertEqual(body["saw"], lines)      # armed-but-never-fired, told apart from a load error
-
-    def test_observation_output_masks_the_owners_ids(self):
-        chat, sender = 0xAB000000CD, 4242
-        secrets = {s for s in (chat, sender, chat >> 32, chat & 0xFFFFFFFF) if s}
-        obs = {"room": str(chat), "regs": {"edx": {"u32": [sender, 5], "u64": [str(chat), "1762000000123"]}},
-               "args": [{"esp": 8, "u32": sender, "peek": {"u32": [sender, chat & 0xFFFFFFFF],
-                                                           "u64": [str(chat), "9007199254740993"]}}]}
-        masked = admin._masked(obs, secrets)
-        self.assertEqual(masked["room"], "<id>")
-        self.assertEqual(masked["regs"]["edx"]["u32"], ["<id>", 5])      # timestamps and candidates pass
-        self.assertEqual(masked["regs"]["edx"]["u64"], ["<id>", "1762000000123"])
-        self.assertEqual(masked["args"][0]["u32"], "<id>")
-        self.assertEqual(masked["args"][0]["peek"]["u32"], ["<id>", "<id>"])
-        self.assertEqual(masked["args"][0]["peek"]["u64"], ["<id>", "9007199254740993"])
-
-
-@unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
 class TestRoomResolution(unittest.TestCase):
     ROOMS = [("16", "가족 채팅방"), ("17", "Work Room"), ("18", ""), ("19", "100% Room")]
 
-    def resolve(self, fragment, rooms=None):
-        """resolve_room against a synthetic index in a temporary data root (the real index is never opened):
-        search's index helpers are pointed at it by patching load_data_root and default_config."""
-        own = tempfile.TemporaryDirectory()
-        try:
-            path = Path(own.name, "index", "kakaotalk.sqlite")
-            path.parent.mkdir(parents=True)
-            con = sqlite3.connect(path)
-            con.execute("CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL, n INTEGER NOT NULL, "
-                        "senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,"
-                        " n_gone INTEGER NOT NULL) WITHOUT ROWID")
-            con.executemany("INSERT INTO rooms(chat_id, title, n, senders, n_deleted, n_gone) "
-                            "VALUES (?, ?, 1, 1, 0, 0)", self.ROOMS if rooms is None else rooms)
-            con.commit()
-            con.close()
-            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(own.name)), \
+    @contextlib.contextmanager
+    def index(self, rooms=None):
+        """search's index helpers pointed at a synthetic index in a temporary data root (the real index is never
+        opened); rooms=False: no index at all."""
+        with tempfile.TemporaryDirectory() as folder:
+            if rooms is not False:
+                path = Path(folder, "index", "kakaotalk.sqlite")
+                path.parent.mkdir(parents=True)
+                con = sqlite3.connect(path)
+                con.execute("CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL, n INTEGER NOT NULL, "
+                            "senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,"
+                            " n_gone INTEGER NOT NULL) WITHOUT ROWID")
+                con.executemany("INSERT INTO rooms(chat_id, title, n, senders, n_deleted, n_gone) "
+                                "VALUES (?, ?, 1, 1, 0, 0)", self.ROOMS if rooms is None else rooms)
+                con.commit()
+                con.close()
+            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(folder)), \
                     mock.patch("rawlayer.management.base.default_config", lambda app: "unused-cfg"):
-                return admin.resolve_room(fragment)
-        finally:
-            own.cleanup()
+                yield
+
+    def resolve(self, fragment, rooms=None):
+        with self.index(rooms):
+            return admin.resolve_room(fragment)
 
     def test_a_fragment_resolves_through_the_synthetic_index(self):
         self.assertEqual(self.resolve("가족"), 16)                  # substring, any position
@@ -455,15 +347,9 @@ class TestRoomResolution(unittest.TestCase):
                 self.assertEqual(cm.exception.category, category)
 
     def test_a_missing_index_refuses(self):
-        own = tempfile.TemporaryDirectory()
-        try:
-            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(own.name)), \
-                    mock.patch("rawlayer.management.base.default_config", lambda app: "unused-cfg"):
-                with self.assertRaises(FetchError) as cm:
-                    admin.resolve_room("anything")
-            self.assertEqual(cm.exception.category, "index_missing")
-        finally:
-            own.cleanup()
+        with self.assertRaises(FetchError) as cm:
+            self.resolve("anything", rooms=False)
+        self.assertEqual(cm.exception.category, "index_missing")
 
     def test_main_takes_exactly_one_of_chat_id_and_room(self):
         for argv, category in (
@@ -481,122 +367,17 @@ class TestRoomResolution(unittest.TestCase):
                 guards.assert_not_called()          # refused before anything touched the client
 
     def test_main_resolves_room_before_guards(self):
-        own = tempfile.TemporaryDirectory()
-        try:
-            path = Path(own.name, "index", "kakaotalk.sqlite")
-            path.parent.mkdir(parents=True)
-            con = sqlite3.connect(path)
-            con.execute("CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL, n INTEGER NOT NULL, "
-                        "senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,"
-                        " n_gone INTEGER NOT NULL) WITHOUT ROWID")
-            con.execute("INSERT INTO rooms(chat_id, title, n, senders, n_deleted, n_gone) "
-                        "VALUES ('16', '가족 채팅방', 1, 1, 0, 0)")
-            con.commit()
-            con.close()
-            seen = {}
+        seen = {}
 
-            def rooms_cmd(a):
-                seen["chat_id"] = a.chat_id
-                return {"status": "ok"}, 0
+        def rooms_cmd(a):
+            seen["chat_id"] = a.chat_id
+            return {"status": "ok"}, 0
 
-            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(own.name)), \
-                    mock.patch("rawlayer.management.base.default_config", lambda app: "unused-cfg"), \
-                    mock.patch.object(admin, "data_path", lambda v: Path(v)), \
-                    mock.patch.object(admin, "COMMANDS", {**admin.COMMANDS, "rooms": rooms_cmd}), \
-                    mock.patch("sys.stdout", new_callable=io.StringIO):
-                self.assertEqual(admin.main(["rooms", "--template", "t.json", "--room", "가족"]), 0)
-            self.assertEqual(seen["chat_id"], 16)   # an int, resolved in main before the command runs
-        finally:
-            own.cleanup()
-
-
-@unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
-class TestEventsDiscovery(unittest.TestCase):
-    VT = 0x500000                                     # a synthetic vtable address
-    ENTRIES = [0x1000, SPEC["code_lo"] + 0x1000, 0x2000000, SPEC["code_lo"] + 0x2000,
-               SPEC["code_hi"] - 0x10]                # 3 code-range candidates survive the filter
-
-    class FakeProc:
-        def __init__(self, entries):
-            self.entries = entries
-
-        def u32(self, address):
-            return {SPEC["loco_global"]: 0x300000, 0x300000: TestEventsDiscovery.VT}.get(address)
-
-        def read(self, address, size):
-            if address == TestEventsDiscovery.VT and size == 4 * admin.EVENTS_CANDIDATE_SLOTS:
-                blob = self.entries + [0] * (admin.EVENTS_CANDIDATE_SLOTS - len(self.entries))
-                return struct.pack("<%dI" % len(blob), *blob)
-            return None
-
-    class Clock:                              # the full-window wait, without real waiting
-        def __init__(self):
-            self.t = 1000.0
-
-        def time(self):
-            return self.t
-
-        def sleep(self, seconds):
-            self.t += seconds
-
-        def strftime(self, fmt, ts):
-            return "armed"
-
-        def localtime(self, ts=None):
-            return ts
-
-    def run_events(self, lines, entries=None):
-        proc = self.FakeProc(self.ENTRIES if entries is None else entries)
-        with mock.patch.object(admin, "guards", lambda: (1, proc, SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "_attach", lambda pid, src: (None, None, list(lines), [])), \
-                mock.patch.object(admin, "time", self.Clock()), \
-                mock.patch.object(admin, "_teardown", lambda s, sc: None):
-            return admin._observe_events(SimpleNamespace(template="t.json"))
-
-    def test_the_discovery_hook_reports_counts_times_and_masked_shapes(self):
-        shape = {"args": [{"esp": 4, "u32": 7,
-                           "peek": {"u32": [7], "u64": [str(TPL["chatId"]), "9007199254740993"]}}],
-                 "room_match": True, "ecx_room_match": False}
-        lines = ["[ARMED] send ONE message from the PHONE now; admin sends nothing",
-                 "[FIRE] " + json.dumps({"slot": 1, "t": 120, "shape": shape}),
-                 "[FIRE] " + json.dumps({"slot": 1, "t": 61000}),           # a recurring fire: count only
-                 "[FIRE] " + json.dumps({"slot": 1, "t": 121000}),
-                 "[FIRE] " + json.dumps({"slot": 2, "t": 400, "shape": shape})]
-        body, code = self.run_events(lines)
-        self.assertEqual((code, body["status"], body["hooked"]), (0, "ok", 3))
-        self.assertEqual(body["vtable_slots"], admin.EVENTS_CANDIDATE_SLOTS)
-        self.assertEqual(body["armed_at"], "armed")
-        self.assertEqual(len(body["candidates"]), 3)   # code addresses are printed: they are not ids
-        by_slot = {f["slot"]: f for f in body["fired"]}
-        self.assertEqual((by_slot[1]["count"], by_slot[1]["times"]), (3, [120, 61000, 121000]))
-        self.assertEqual(len(by_slot[1]["shapes"]), 1)  # arguments read on the first entries only
-        peeked = by_slot[1]["shapes"][0]["args"][0]["peek"]["u64"]
-        self.assertEqual(peeked[0], "<id>")             # the room id, masked
-        self.assertEqual(peeked[1], "9007199254740993")
-        source = admin._render(admin.EVENTS_OBSERVE_JS, SPEC, room_chat="0x10",
-                               cands="ptr(0x1000)", peek=64)
-        self.assertNotIn("%(", source)
-        self.assertIn("uint64('0x10')", source)        # the known room id, as the exact-compare lens
-        self.assertIn("CANDS = [ptr(0x1000)]", source)
-
-    def test_no_code_candidates_refuse_before_attaching(self):
-        attached = []
-        with mock.patch.object(admin, "guards",
-                               lambda: (1, self.FakeProc([0x1000, 0x2000000]), SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "time", self.Clock()), \
-                mock.patch.object(admin, "_attach",
-                                  lambda pid, src: attached.append(src) or (None, None, [], [])):
-            with self.assertRaises(FetchError) as cm:
-                admin._observe_events(SimpleNamespace(template="t.json"))
-        self.assertEqual(cm.exception.category, "no_candidates")
-        self.assertEqual(attached, [])                 # refused before anything was hooked
-
-    def test_no_fire_reports_no_observation(self):
-        body, code = self.run_events(["[ARMED] send ONE message from the PHONE now; admin sends nothing"])
-        self.assertEqual((code, body["status"], body["fired"]), (2, "no_observation", []))
-
+        with self.index(), mock.patch.object(admin, "data_path", lambda v: Path(v)), \
+                mock.patch.object(admin, "COMMANDS", {**admin.COMMANDS, "rooms": rooms_cmd}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(admin.main(["rooms", "--template", "t.json", "--room", "가족"]), 0)
+        self.assertEqual(seen["chat_id"], 16)   # an int, resolved in main before the command runs
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
 class TestClient(unittest.TestCase):

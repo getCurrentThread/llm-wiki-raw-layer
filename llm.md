@@ -112,7 +112,7 @@ repeating them.
 | `check` | 0 · 1 errors (including `differing_rows>0`) · 2 config refused. It does not test the ACL or Windows Search. |
 | `setup` | 0 ready · 3 placeholders remain, the config refused, or an ACL/Windows Search problem (read every line) · 2 refused (usage, or the config is already there) · 1 error |
 | `schedule` | 0 · 2 refused or not elevated · 1 `schtasks` failed · 3 needs attention (from a non-elevated prompt, possibly only "not readable") |
-| `tools/bootstrap.py` | 0 ok · 3 needs attention (`doctor`: an item under `need attention`; `config`: placeholders left or the config refused; `agents status`: an item not current; `agents sync-repo --check`: the checkout's copies differ; `agents uninstall`: an item kept) · 2 refused, nothing written (usage, kakaotalk, a key or value the app refuses, an edit that would make an accepted config refused) · 1 error |
+| `tools/bootstrap.py` | 0 ok · 3 needs attention (`doctor`: an item under `need attention`; `config`: placeholders left or the config refused; `agents status`: an item not current; `agents uninstall`: an item kept) · 2 refused, nothing written (usage, kakaotalk, a key or value the app refuses, an edit that would make an accepted config refused) · 1 error |
 
 - **`check <app>` lines:**
   - `config: ok`
@@ -217,8 +217,8 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 
 The app cards in section 6 run these steps at the points they name, with their own keys, bounds and commands.
 
-**5.0 The bootstrap tool.** `tools/bootstrap.py` does the config edits and the bookkeeping of these steps; its
-docstring says what each command prints. Run it as `python -s -B tools/bootstrap.py ...` from `<PROJECT>`, or with
+**5.0 The bootstrap tool.** `tools/bootstrap.py` does the config edits and the bookkeeping of these steps; this
+section says what each command prints (`--help` lists the options). Run it as `python -s -B tools/bootstrap.py ...` from `<PROJECT>`, or with
 its full path from anywhere. It prints key names and states, never config values. It refuses kakaotalk.
 - `config get <app>`: each key's state, never its value.
 - `config set <app> <KEY> <VALUE> [<KEY> <VALUE> ...]`: the 5.3 edit (`--string` keeps every value a string). After
@@ -269,7 +269,7 @@ ACL.
 - Values `true`, `false`, `null`, plain integers (`0`, `-5`) and values starting with `[` or `{` are parsed as
   JSON. Anything else, `007` and `3.5` included, is a string.
 - Source paths go under `sources.<source_key>`; app options are top-level keys. Any other key is refused, and
-  `v`, `impl`, `data_root` and `inputs_root` need `--force`, which needs the owner's approval (rule 10).
+  `v`, `impl` and `data_root` need `--force`, which needs the owner's approval (rule 10).
 - Pass a list as one argument: `'["one", "two"]'`.
 - Never end a quoted Windows path with a backslash.
 - Before it writes anything, the tool refuses (exit 2, `<CFG>` unchanged):
@@ -336,10 +336,7 @@ interpreter, data-root precheck (ACL, Windows Search, git work tree) or the app'
 Gates, each on that command's own `rc=` line:
 - install: `rc=0`, with `schedule: registered \llm-wiki\<app>-capture: ... as SYSTEM` and
   `definition read back: as registered`. If install's rc is not 0, the other two results do not count: fix it
-  (section 9) and repeat 5.8. Installing again replaces the task. A task still registered with the previous command name
-  (`manage.py collect <app> --config <CFG>`) is
-  reported by status as `definition: outdated`, and by doctor as such: install it again, elevated. That name is now
-  the wiki export (section 13), which refuses to run as SYSTEM, so such a task exports nothing in the meantime.
+  (section 9) and repeat 5.8. Installing again replaces the task.
 - status: `rc=0`, with `schedule: \llm-wiki\<app>-capture registered (enabled)`, `definition: current (...)` and
   `last result:` `has not run yet` or `0 (ok)`.
 - run: `rc=0`, with `schedule: started \llm-wiki\<app>-capture once`. This SYSTEM smoke run proves that SYSTEM can
@@ -379,8 +376,8 @@ Record the pass, which lets a non-elevated doctor report the app as live (sectio
 3. Poll each app (5.9) with that `<T0>`.
 4. Send one batch with `status` for every app (prompt 2), and finish 5.10 per app.
 
-If one app's install rc is not 0, gate the other apps normally. After the fix, run 5.8–5.10 for the failed app
-alone, with a new `<T0>`.
+If one app's install rc is not 0, gate the other apps normally. After the fix, re-register the failed app alone
+(section 9).
 
 ## 6. App cards
 
@@ -673,7 +670,7 @@ on any refusal. `tools/bootstrap.py` does not cover kakaotalk yet: doctor skips 
 refuse it, so check it with section 8 steps 2-5 directly.
 
 1. **Setup.** `python -s -B manage.py setup kakaotalk`: creates the data root and `config.json`, sets the default
-   sources, decrypts the backup. Exit 0, or exit 3 with `fill in config.json: <keys>`. `bootstrap.py config` refuses
+   sources. Exit 0, or exit 3 with `fill in config.json: <keys>`. `bootstrap.py config` refuses
    kakaotalk, so the owner fills those keys by hand; the agent does not write them.
 2. **Live root (scan).** `python -s -B manage.py setup kakaotalk --provision --scan --restart-client`: scans the
    running `KakaoTalk.exe` memory for the root key, restarting the client first so the key is in memory. It can take
@@ -833,6 +830,11 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 
 ## 9. Troubleshooting
 
+**Re-register** is the recovery sequence the rows below name: for each app it covers, run 5.7 (with a new `<PY>`
+when that is the fix); print `<T0>` (5.8 step 1); send one 7.2 batch with `install` for every one of them, then
+`status` for every one, then `run` for every one, gating each command by 5.8's gates on its own `rc=` line; then
+run 5.9 per app and one 5.10 batch.
+
 | symptom | cause | fix |
 |---|---|---|
 | `setup` exit 2, config already there | existing config | keep it; `--force` only on the owner's request |
@@ -852,8 +854,8 @@ Report per app (section 10): exit codes, `head_seq`, `total`, the last result an
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`capture`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
 | `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires gm_imap_user`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
-| Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Run 5.7 with the new `<PY>` for each of them, print `<T0>` (5.8 step 1), then send one 7.2 batch with `install` for every one of them, then `status` for every one, then `run` for every one. Then run 5.9 per app and one 5.10 batch |
-| elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise run 5.7–5.10 from this checkout for each in-scope app with a task |
+| Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Re-register them with the new `<PY>` |
+| elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise re-register, from this checkout, each in-scope app with a task |
 | `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `capture` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
 | `last result:` `stopped (time limit, or by hand)`, or a block without `step=index` | the one-hour limit was hit | finish genesis manually with bounded fetch runs (5.5); a mattermost run whose capture alone (6.4 step 3) passes the limit: stop and report it |
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
@@ -879,12 +881,12 @@ Never include the items listed in rule 3.
 
 ## 11. Agent integration (Claude Code)
 
-`python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; its docstring is the reference for the states,
-options and backups) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
+`python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; `--help` and its docstring give the states and
+options) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
 be searched and this runbook found from any folder: a marked block in `<HOME>\.claude\CLAUDE.md`, the `raw-search`
 and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`, and the user-scope MCP server
 `llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app; its app `all` covers them all). It needs
-no elevation and touches no data. Its manifest and backups live in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
+no elevation and touches no data. Its manifest lives in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
 never in `<PROJECT>`.
 
 1. `agents status`. Exit 0 when every item is `current`. `project_mismatch` means the integration points at another
@@ -892,17 +894,15 @@ never in `<PROJECT>`.
    by hand.
 2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and
    wait for an explicit yes: it rewrites their global configuration (rule 10).
-3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item unless
-   `--force` names it, and backs up whatever it replaces. `--python <PY>` names the interpreter the MCP server runs
+3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item and replaces
+   nothing: the owner moves it away by hand first. `--python <PY>` names the interpreter the MCP server runs
    with. When a `claude mcp` call fails, the error ends with the CLI's own reason.
    Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for every app.
 4. Re-run `install` after `git pull` or a moved checkout: a template change shows as `stale`, a moved one as
    `project_mismatch`. It keeps the recorded interpreter; pass `--python` again to change it.
 
-`agents uninstall [--restore] [--force] [--dry-run]` undoes install and keeps what was changed by hand unless
-`--force` names it (the docstring says what is backed up and restored). After editing a template, run
-`agents sync-repo` to refresh the checkout's own copies (`.claude/skills`, `.claude/agents`, `.agents/skills`);
-`agents sync-repo --check` exits 3 while they differ, and a test fails.
+`agents uninstall [--dry-run]` undoes install and keeps, and names, what was changed by hand. After editing a
+template, run `install` again.
 
 ## 12. Dense retrieval (optional)
 
@@ -954,9 +954,7 @@ model or the dims, run `embed <app> --model <model> --rebuild`. A sidecar that
 another sqlite-vec version made is refused at search time with that reason. A batch the server fails is retried
 twice (after 2 and 10 seconds) before the run exits 75.
 
-**12.7 Measuring.** `tools/search_eval.py` (its docstring is the manual) scores search on the app's own ledger:
-Hit@k, Recall@k and MRR by mode (`default`, `literal`, `hybrid`), printing aggregates only. Run it before and after
-a change to query normalization, ranking or the embedder, only when the owner asks; it writes under `<DATA_ROOT>\eval`.
+**12.7 Measuring.** No measuring tool ships any more (removed 2026-11-14); judge a ranking change on the owner's own queries.
 
 ## 13. The wiki vault (headless ingest)
 
@@ -973,7 +971,18 @@ when the owner asks for it (AGENTS.md). The sources hold plaintext like the inde
 under `<DATA_PARENT>`. Ingest sends the sources' text to Claude, under the owner's Claude Code sign-in: private
 messages leave the machine. That choice is the owner's. The command prints counts only; run it only when the
 owner asks. It refuses to run as LocalSystem (exit 2, nothing read or written), so it can never be a SYSTEM task, and
-an app exports only when its `apps.py` declares `wiki` (CORE.md, "The app contract").
+an app exports only when its `apps.py` declares `wiki` (CORE.md, "The app contract"):
+
+| app | `wiki` (prefix, layout) | the files under `raw\sources\<app>\` |
+|---|---|---|
+| claudecode | `cc`, chat | per session, `<project › session> (<h8>)\`: its closed months (a session still running this month waits for the month's end) |
+| discord | `dc`, chat | per channel: its closed months |
+| gmail | `gm`, mail | the closed months, a section per mail |
+| kakaotalk | none, chat | per room: its closed months; no config keys, the settings come on the command line (13.4) |
+| mattermost | `mm`, chat | per channel: its closed months |
+| notion | `nt`, page | one file per page, headings kept |
+
+With `<p>_wiki_project` empty (the default) nothing is exported.
 
 **13.1 Ingest tooling (owner).** Claude Code is installed and signed in under the owner's account, and the
 `llm-wiki-ingest` skill sits in `<HOME>\.claude\skills\` with its `scripts\ingest_runner.py` (its docstring and the

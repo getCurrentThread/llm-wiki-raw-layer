@@ -146,7 +146,7 @@ class TestSettings(unittest.TestCase):
 class TestDefinition(unittest.TestCase):
     PY, PROJECT, CONFIG = str(TMP / "Py 3" / "python.exe"), str(TMP / "work dir" / "proj"), \
         str(TMP / "data root" / "config.json")
-    # registered from the earlier layout of one project per folder (<folder>/manage.py collect --config <cfg>)
+    # a foreign action: another folder's manage.py collect
     OLD = f'-s -B "{Path(PROJECT, "toy", "manage.py")}" collect --config "{CONFIG}"'
 
     def xml(self, **kv):
@@ -210,23 +210,11 @@ class TestDefinition(unittest.TestCase):
         # every path quoted (the retired script's spelling)
         quoted = f'-s -B "{Path(p, "manage.py")}" capture toy --config "{d}"'
         self.assertEqual(config_of(schedule.registered_config(p, "toy", quoted)), d)
-        # the command's previous name is not the current form, and is asked for by name
-        previous = quoted.replace(" capture ", " collect ")
-        self.assertIsNone(schedule.registered_config(p, "toy", previous))
-        self.assertEqual(config_of(schedule.registered_config(p, "toy", previous, "collect")), d)
         for foreign in ("", "-s -B other.py", schedule.arguments(str(TMP / "elsewhere"), "toy", self.CONFIG), None,
                         args.replace("-s -B", "-S -B"), args.replace(" capture ", " collect "), args + " --x",
                         schedule.arguments(self.PROJECT, "toy2", self.CONFIG), self.OLD):
             with self.subTest(args=foreign):
                 self.assertIsNone(schedule.registered_config(self.PROJECT, "toy", foreign))
-
-    def test_the_earlier_layout_is_recognised(self):
-        """One project per folder (`<folder>/manage.py collect --config <cfg>`, 6 tokens): install replaces it."""
-        self.assertTrue(schedule.old_layout(self.OLD))
-        for other in (schedule.arguments(self.PROJECT, "toy", self.CONFIG), "", None, "-s -B x.py collect --config c",
-                      self.OLD.replace(" collect ", " capture ")):
-            with self.subTest(args=other):
-                self.assertFalse(schedule.old_layout(other))
 
     @unittest.skipUnless(WINDOWS, "drive-letter case")
     def test_paths_compare_as_windows_does(self):
@@ -402,24 +390,6 @@ class TestStatus(Case):
         self.assertEqual(rc, 3)
         self.assertIn("is not registered, or not readable", out)
         self.assertIn("manage.py schedule install toy", out)
-
-    def test_a_task_of_the_previous_command_name(self):
-        """Registered as `manage.py collect <app> --config <cfg>` (the capture command's previous name): status calls
-        it outdated and says to install again, and install replaces it with the generated definition."""
-        self.install()
-        self.tasks.last_result = "0"
-        current = self.tasks.xml
-        self.tasks.xml = current.replace(" capture toy --config", " collect toy --config")
-        self.assertNotEqual(self.tasks.xml, current)
-        rc, out, _err = self.status()
-        self.assertEqual(rc, 3)
-        self.assertIn("definition: outdated", out)
-        self.assertIn("manage.py schedule install toy", out)
-        self.assertNotIn("not this project's", out)
-        rc, _out, err = self.install()
-        self.assertEqual((rc, err), (0, ""))
-        self.assertEqual(self.tasks.xml, current)
-        self.assertIn("definition: current", self.status()[1])
 
     def test_registered_and_current(self):
         self.install()

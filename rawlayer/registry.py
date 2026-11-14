@@ -7,8 +7,7 @@ its index file, the <app> of every command). Each app has the same modules:
               app reads) or archive (the one source an app's own fetch step keeps), options (top-level config keys the app reads), optionally schedule (the scheduled task,
               rawlayer/schedule.py) and task_checks(cfg) (what makes a config unfit for the scheduled task)
   origins.py  ORIGINS: the app's Origin subclasses (rawlayer.capture.origins) in processing and commit order
-  inputs.py   optional: resolve(cfg, input_set, frozen_root) -> {InputSet attribute: Path} and
-              static_roots(inputs) -> {freeze.json static label: (root, closed)}; without it, AppConfig.archive
+  inputs.py   optional: resolve(cfg) -> {InputSet attribute: Path}; without it, AppConfig.archive
               gives the one archive input (_Inputs) and an app without that either has no input at all
   vocab.py    optional: WORDS and PATTERNS, the strings the app's readers put in manifests and console lines (its
               origin names, kinds and statuses are registered from origins.py); without it, none
@@ -35,7 +34,7 @@ from . import conf
 
 CORE_STATUSES = ("ok", "skipped", "suspect", "unstable", "error", "missing")
 CORE_TABLES = ("meta", "heads")
-CORE_CONFIG_KEYS = ("v", "impl", "data_root", "inputs_root", "sources")
+CORE_CONFIG_KEYS = ("v", "impl", "data_root", "sources")
 _LABEL = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _ORIGIN = re.compile(r"^[a-z_]{1,40}$")      # a ledger path segment (ledger._SEG_PATH) and a public word
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
@@ -126,20 +125,14 @@ def _optional(module):
 
 class _Inputs:
     """The inputs of an app without inputs.py: none, or the archive of AppConfig.archive `prefix` -- attribute
-    `<prefix>_archive`, the config's "sources" path live and <inputs_root>/<set>/<prefix>/archive in a frozen set."""
+    `<prefix>_archive`, the config's "sources" path."""
 
     def __init__(self, prefix):
         self.prefix = prefix
         self.key = f"{prefix}_archive"
 
-    def resolve(self, cfg, input_set, frozen_root):
-        if self.prefix is None:
-            return {}
-        return {self.key: Path(cfg.sources[self.key]) if frozen_root is None
-                else Path(frozen_root, self.prefix, "archive")}
-
-    def static_roots(self, inputs):
-        return {}
+    def resolve(self, cfg):
+        return {} if self.prefix is None else {self.key: Path(cfg.sources[self.key])}
 
 
 def _load(name):

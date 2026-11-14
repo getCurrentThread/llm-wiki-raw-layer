@@ -152,7 +152,7 @@ words(
     # ops
     "put", "absent", "purged", "capture", "purge",
     # core statuses, the day of an undated record, input sets
-    "ok", "skipped", "suspect", "unstable", "error", "missing", "none", "live", "T1", "T2",
+    "ok", "skipped", "suspect", "unstable", "error", "missing", "none", "live", "T1", "T2",  # T1/T2: input sets an old manifest may hold
     # manifest fields
     "v", "type", "seq", "run", "prev_sha256", "started_at", "finished_at", "input_set", "impl", "name",
     "git_head", "dirty", "python", "pycryptodome", "segments", "path", "origin", "sha256", "bytes", "records",

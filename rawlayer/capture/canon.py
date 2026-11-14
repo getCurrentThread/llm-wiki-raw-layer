@@ -102,6 +102,25 @@ def pk_text(v):
     return None
 
 
+def str_key(v):
+    """pk_text() of a str id; None for anything else (an id that came as a number is not one)."""
+    return pk_text(v) if isinstance(v, str) else None
+
+
+def iso_ms(value):
+    """An ISO 8601 timestamp with an offset (or Z) -> epoch milliseconds; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return None
+        # timedelta arithmetic: float timestamp() * 1000 can land 1 ms low
+        return (parsed - _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)) // _dt.timedelta(milliseconds=1)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
 _QUOTED = re.compile(r"^'(.*)'$", re.S)
 _FLOAT = re.compile(r"^-?[0-9]+\.[0-9]+$")
 NO_DEFAULT = object()

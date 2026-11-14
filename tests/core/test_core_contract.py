@@ -102,7 +102,7 @@ class TestProjectApps(unittest.TestCase):
                 app = registry.app_registry(name).apps[0]       # loaded on its own, never installed here
                 self.assertEqual((app.name, app.label), (name, name))
                 self.assertTrue(app.origins)
-                self.assertTrue(callable(app.inputs.resolve) and callable(app.inputs.static_roots))
+                self.assertTrue(callable(app.inputs.resolve))
                 if not (REPO / name / "inputs.py").is_file():
                     self.assertTrue(app.archive, "without an inputs.py the app declares its archive")
                 self.assertTrue((REPO / name / "tests" / "__init__.py").is_file())

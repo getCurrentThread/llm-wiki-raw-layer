@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-"""backup_decrypted: the decrypted room DBs setup's backup step writes (<chatId>.sqlite beside the
-_manifest.json), the room-DB input the app reads as static files (SPEC 7.3, 10.2).
-
-The manifest entries arrive as each room record's derived fields (rows, from, to and, when the backup's own
-chat-list database named the room, title). The sibling TalkUserDB.sqlite (the backup step writes it too)
-labels the rooms' senders (the accounts' display names); a message whose author it does not name carries
-only the authorId, never an error."""
+"""backup_decrypted: decrypted room DBs (<chatId>.sqlite beside a _manifest.json), read as static files (SPEC 7.3,
+10.2). The manifest entries become each room record's derived fields (rows, from, to and a title when there is one);
+the sibling TalkUserDB.sqlite names the senders, and a message whose author it does not name carries only the
+authorId, never an error."""
 import json
 import re
 import sqlite3

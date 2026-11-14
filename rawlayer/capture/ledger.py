@@ -10,9 +10,10 @@ from pathlib import Path
 
 from .. import registry
 from . import fsio, publicout
-from .config import INPUT_SETS
 from .publicout import lit
 
+# the values a manifest may record: capture writes "live"; T1/T2 were the frozen input sets (removed 2026-11-14)
+INPUT_SETS = ("live", "T1", "T2")
 PART_LIMIT = 256 * 1024 * 1024
 SPILL_LIMIT = 192 * 1024 * 1024
 _MAN_RE = re.compile(r"^([0-9]{8})-([0-9]{13}-[0-9a-f]{4})\.json$")
@@ -44,8 +45,8 @@ class Ledger:
 
     # ---- manifests
     def manifests(self):
-        """[(seq, run, path)] in seq order. A gap or a duplicate seq raises LedgerCorrupt (capture, replay and
-        export-state stop with exit 1)."""
+        """[(seq, run, path)] in seq order. A gap or a duplicate seq raises LedgerCorrupt (capture and replay
+        stop with exit 1)."""
         out = []
         if self.man_dir.is_dir():
             for p in self.man_dir.iterdir():
@@ -209,7 +210,7 @@ def _strs(x):
 
 
 def manifest_ok(m):
-    """True when a parsed capture manifest has every field state and export-state index without a guard.
+    """True when a parsed capture manifest has every field the state fold indexes without a guard.
     JSON that parses but fails this (a flipped byte inside a key or a value) is an unreadable manifest."""
     if not isinstance(m, dict) or not _int(m.get("seq")) or not isinstance(m.get("run"), str) \
             or m.get("input_set") not in INPUT_SETS or not isinstance(m.get("finished_at"), str) \

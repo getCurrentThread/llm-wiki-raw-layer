@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from rawlayer import registry
-from rawlayer.capture import run, state, steps
+from rawlayer.capture import run, state
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
 from tests.core import ledgercheck
@@ -44,7 +44,7 @@ def capture(fx, origins=None):
     """One capture run (input set live, precheck skipped as in the capture tests) of `origins`, by default every
     origin of the selected app. Returns its exit code."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()):
-        return run.capture(Config(fx.config_path), "live",
+        return run.capture(Config(fx.config_path),
                            list(registry.origin_order() if origins is None else origins), skip_precheck=True)
 
 
@@ -76,7 +76,14 @@ def manifests(fx):
 
 
 def export(fx):
-    return list(steps.export_lines(Ledger(Config(fx.config_path).raw)))
+    """(origin, key, rev, op, h) of every record, sorted (origin, key, rev): two ledgers compare record by record."""
+    lg = Ledger(Config(fx.config_path).raw)
+    out = []
+    for _seq, _run, path in lg.manifests():
+        for seg in lg.read_manifest(path).get("segments", []):
+            out += [(seg["origin"], r["key"], r["rev"], r["op"], r["h"])
+                    for r in Ledger.iter_segment(Path(lg.raw, *seg["path"].split("/")))]
+    return sorted(out, key=lambda t: (t[0], t[1], t[2]))
 
 
 def invariants(fx):

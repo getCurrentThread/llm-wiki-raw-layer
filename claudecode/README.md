@@ -5,8 +5,7 @@ Claude Code conversations: prompts, Claude's reply text and a one-line summary o
 thinking and attachments are left out. The app includes a stdlib fetch step (`fetch.py`) that copies what it
 keeps from the owner's `.claude` folder into the archive. Claude Code deletes transcripts after about 30 days; the
 archive keeps them. With `cc_sync: true`, live `manage.py capture claudecode` updates the archive before capturing
-it. Frozen inputs never call the fetch step.
-
+it.
 ```
 python -s -B -m claudecode.fetch --max-items 20
 python -s -B -m claudecode.fetch --capture
@@ -133,14 +132,6 @@ publishes the manifest last.
 `manage.py search claudecode [QUERY] --json`: modes `hits`, `count`, `timeline`, `senders` (by role),
 `sessions`, `projects`; filters `--project` (working folder), `--session ID` (a whole session in order),
 `--role`, `--list-sessions`, `--before`, `--after`. `search claudecode --help` is the reference.
-
-## Wiki export
-
-`cc_wiki_project`, `cc_wiki_include`, `cc_wiki_exclude` and `cc_wiki_since` configure `manage.py collect claudecode`
-(llm.md 13), which writes each session's closed months, packed into Markdown files of about 16,000 characters, into
-the wiki vault's `raw/sources/claudecode/<project › session> (<h8>)/`. A session is one container, as a channel
-is (`wiki = ("cc", "chat")` in `apps.py`); a session still running in the current month is held back until the
-month is over. Empty by default: nothing is exported.
 
 ## Privacy
 

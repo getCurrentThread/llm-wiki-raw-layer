@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""tools/agentkit.py: the templates rendered for both targets, the checkout's generated files against them, and
+"""tools/agentkit.py: the templates rendered, and
 install / status / uninstall in a throwaway home whose `claude` CLI is a stand-in that edits that home's
 .claude.json. Every round trip ends byte for byte where it started."""
 import json
@@ -75,24 +75,17 @@ class Home(unittest.TestCase):
 
 class Rendering(unittest.TestCase):
     def test_no_leftovers(self):
-        for target in ("global", "repo"):
-            vals = K.values(target, APPS)
-            texts = [K.artifact(t, kind, vals) for t, kind, _rel in K.REPO_FILES]
-            if target == "global":
-                texts.append(K.block(vals))
-            for text in texts:
-                with self.subTest(target=target, head=text[:40]):
-                    self.assertNotIn("{{", text)
-                    self.assertNotIn("knowledge-base", text)
-                    self.assertNotIn("knowledge-retriever", text)
-                    self.assertIn("kakaotalk", text)
-                    if target == "repo":
-                        self.assertNotIn(K.PROJECT.as_posix(), text)
-                        self.assertIsNone(re.search(r"[A-Za-z]:[\\/]Users", text))
+        vals = K.values(APPS)
+        for text in [K.artifact(t, kind, vals) for t, kind, _rel in K.GLOBAL_FILES] + [K.block(vals)]:
+            with self.subTest(head=text[:40]):
+                self.assertNotIn("{{", text)
+                self.assertNotIn("knowledge-base", text)
+                self.assertNotIn("knowledge-retriever", text)
+                self.assertIn("kakaotalk", text)
 
     def test_frontmatter(self):
-        vals = K.values("global", APPS)
-        for template, kind, rel in K.REPO_FILES:
+        vals = K.values(APPS)
+        for template, kind, rel in K.GLOBAL_FILES:
             with self.subTest(rel=rel):
                 text = K.artifact(template, kind, vals)
                 m = re.match(r"---\n(.*?)\n---\n", text, re.S)
@@ -108,10 +101,6 @@ class Rendering(unittest.TestCase):
                 self.assertIn("description", keys)
                 name = rel.split("/")[-2] if rel.endswith("SKILL.md") else rel.split("/")[-1][:-3]
                 self.assertIn(f"name: {name}\n", text)
-
-    def test_the_checkout_matches_the_templates(self):
-        plan = K.repo_plan()
-        self.assertEqual([(a, r) for a, r, _t in plan], [], "run `python -s -B tools/bootstrap.py agents sync-repo`")
 
 
 class Markers(unittest.TestCase):
@@ -151,25 +140,22 @@ class InstallUninstall(Home):
         self.kit().uninstall()
         self.assertEqual(self.snapshot(), before)
 
-    def test_a_foreign_block_is_replaced_and_restored(self):
+    def test_a_foreign_block_is_refused(self):
         self.put(".claude/CLAUDE.md", FOREIGN)
         before = self.snapshot()
         self.assertEqual(self.kit().status()[0][f"{K.CLAUDE_MD} (block)"], "foreign")
-        with self.assertRaises(K.Refused):
-            self.kit().install()
-        self.assertEqual(self.snapshot(), before)
-        self.assertTrue(self.kit().install(dry_run=True, force=True))
+        for dry in (True, False):
+            with self.subTest(dry_run=dry), self.assertRaises(K.Refused):
+                self.kit().install(dry_run=dry)
         self.assertEqual(self.snapshot(), before)
         self.assertFalse((self.state / "manifest.json").exists())
-        self.kit().install(force=True)
+        self.put(".claude/CLAUDE.md", REST)                 # the owner takes it out by hand
+        self.kit().install()
         text = (self.home / ".claude/CLAUDE.md").read_bytes().decode("utf-8")
-        self.assertNotIn("old rule", text)
-        self.assertTrue(text.endswith("\r\n# Other notes\r\n\r\n- keep me\r\n"))
+        self.assertTrue(text.startswith(REST))
         self.assertTrue(text.split(K.BEGIN)[1].startswith("\r\n"))      # the block takes the file's newlines
-        rows, _m = self.kit().status()
-        self.assertEqual(set(rows.values()), {"current"})
-        self.kit().uninstall(restore=True)
-        self.assertEqual(self.snapshot(), before)
+        self.kit().uninstall()
+        self.assertEqual((self.home / ".claude/CLAUDE.md").read_bytes(), REST.encode("utf-8"))
 
     def test_hand_changes_are_kept(self):
         self.kit().install()
@@ -188,68 +174,19 @@ class InstallUninstall(Home):
         self.assertIn(b"Privacy (mine)", doc.read_bytes())
         self.assertFalse((self.home / ".claude/agents/raw-retriever.md").exists())
 
-    def test_force_backs_up_what_it_replaces(self):
-        self.put(".claude/agents/raw-retriever.md", "someone else's agent\n")
+    def test_foreign_items_are_refused(self):
+        self.put(".claude/agents/raw-retriever.md", "남의 에이전트\r\n".encode("cp949"))    # not even UTF-8
         self.add_foreign_server()
         before, servers = self.snapshot(), self.servers()
         with self.assertRaises(K.Refused):
             self.kit().install()
-        self.kit().install(force=True)
-        self.assertNotEqual(self.snapshot(), before)
-        self.assertEqual(self.servers()[K.MCP_NAME]["command"], self.kit().python)
-        self.kit().uninstall(restore=True)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.servers(), servers)
+        self.kit().uninstall()                              # not ours: left alone
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.servers(), servers)
 
-    def test_backups_in_the_same_instant_never_overwrite(self):
-        agent = ".claude/agents/raw-retriever.md"
-        self.put(agent, "the original\n")
-        with mock.patch.object(K, "_stamp", lambda: "20260101T000000000000Z"):
-            self.kit().install(force=True)
-            self.edit(agent, b"You search", b"You, mine, search")
-            self.kit().install(force=True)       # the edited copy: kept for reference only
-            self.kit().uninstall(restore=True)
-            self.assertEqual((self.home / agent).read_bytes(), b"the original\n")
-            self.kit().install(force=True)       # the same key again, in the same instant
-            self.kit().uninstall(restore=True)
-        self.assertEqual((self.home / agent).read_bytes(), b"the original\n")
-        saved = [p.read_bytes() for p in (self.state / "backups").rglob("*") if p.is_file()]
-        self.assertEqual(len(saved), 3)
-        self.assertEqual(saved.count(b"the original\n"), 2)
-
-    def test_a_failed_add_puts_the_entry_back(self):
-        self.add_foreign_server()
-        servers = self.servers()
-        self.failing = lambda argv: argv[:2] == ["mcp", "add-json"] and "other.exe" not in argv[5]
-        with self.assertRaises(RuntimeError):
-            self.kit().install(force=True)
-        self.assertEqual(self.servers(), servers)               # removed, the add failed, put back
-        self.assertIsNone(self.kit().manifest["mcp"])           # and not recorded as this tool's
-        self.assertNotIn("mcp", self.kit().manifest["backups"])     # nor kept as an original it replaced
-
-    def test_a_failed_restore_is_finished_by_the_next(self):
-        self.add_foreign_server()
-        servers = self.servers()
-        self.kit().install(force=True)
-        self.failing = lambda argv: argv[:2] == ["mcp", "add-json"]
-        with self.assertRaises(RuntimeError):
-            self.kit().uninstall(restore=True)
-        self.assertEqual(self.servers(), {})
-        self.failing = None
-        self.assertEqual(self.kit().status()[0][f"mcp {K.MCP_NAME}"], "absent")
-        self.kit().uninstall(restore=True)
-        self.assertEqual(self.servers(), servers)
-
-    def test_files_that_are_not_utf8(self):
-        agent = ".claude/agents/raw-retriever.md"
-        ansi = "남의 에이전트\r\n".encode("cp949")
-        self.put(agent, ansi)
-        with self.assertRaises(K.Refused):
-            self.kit().install()
-        self.assertTrue(self.kit().install(dry_run=True, force=True))
-        self.kit().install(force=True)
-        self.kit().uninstall(restore=True)
-        self.assertEqual((self.home / agent).read_bytes(), ansi)   # back byte for byte
+    def test_a_claude_md_that_is_not_utf8(self):
         self.put(".claude/CLAUDE.md", "# 내 규칙\r\n".encode("cp949"))
         before = self.snapshot()
         kit = self.kit()
@@ -259,17 +196,30 @@ class InstallUninstall(Home):
             self.kit().install()
         self.assertEqual(self.snapshot(), before)
 
-    def test_a_failed_add_and_put_back_keep_the_original(self):
-        self.add_foreign_server()
-        servers = self.servers()
-        self.failing = lambda argv: argv[:2] == ["mcp", "add-json"]
+    def test_a_failed_add_puts_the_entry_back(self):
+        self.kit().install()
+        servers, recorded = self.servers(), self.kit().manifest["mcp"]
+        other = str(Path(tempfile.gettempdir()) / "python.exe")
+        self.failing = lambda argv: argv[:2] == ["mcp", "add-json"] and json.loads(argv[5])["command"] == other
         with self.assertRaises(RuntimeError):
-            self.kit().install(force=True)
-        self.assertNotIn(K.MCP_NAME, self.servers())
-        self.assertIn("mcp", self.kit().manifest["backups"])     # the only copy of the original
-        self.failing = None
-        self.kit().uninstall(restore=True)
-        self.assertEqual(self.servers(), servers)
+            self.kit(python=other).install()
+        self.assertEqual(self.servers(), servers)               # removed, the add failed, put back
+        self.assertEqual(self.kit().manifest["mcp"], recorded)  # still this tool's entry
+
+    def test_an_older_manifest_still_loads(self):
+        """A manifest from the version with backups (backups, mcp_pending, block.replaces) works as it is."""
+        self.kit().install()
+        m = json.loads((self.state / "manifest.json").read_text(encoding="utf-8"))
+        m["backups"] = {"mcp": {"type": "stdio", "command": "other.exe"}}
+        m["mcp_pending"] = {"type": "stdio", "command": "other.exe"}
+        m["block"]["replaces"] = "a1b2"
+        (self.state / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+        self.assertEqual(set(self.kit().status()[0].values()), {"current"})
+        self.assertEqual(self.kit().install(), [])
+        self.kit().uninstall()
+        self.assertEqual(self.snapshot(), {})
+        self.assertEqual(self.servers(), {})
+        self.assertNotIn("backups", json.loads((self.state / "manifest.json").read_text(encoding="utf-8")))
 
     def test_a_new_interpreter_makes_the_server_stale(self):
         self.kit().install()
@@ -300,7 +250,7 @@ class InstallUninstall(Home):
 
 class Cli(Home):
     def test_exit_codes(self):
-        with mock.patch.object(K, "_out"), mock.patch.object(K, "_err"):
+        with mock.patch.object(K, "_out"), mock.patch("builtins.print"):
             self.assertEqual(K.main(["status"], kit=self.kit()), 3)
             self.assertEqual(K.main(["install", "--dry-run"], kit=self.kit()), 0)
             self.assertEqual(self.snapshot(), {})

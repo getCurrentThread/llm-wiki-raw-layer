@@ -7,6 +7,7 @@ device lookups bypassed). The SQLCipher round-trips need the sqlite3.dll of a Wi
 reserve (kakaotalk/tests/edbfix.py) and skip elsewhere, like the edb tests; everything else runs everywhere.
 Nothing here touches a real Mac, its plists or ioreg.
 """
+import base64
 import contextlib
 import hashlib
 import io
@@ -98,7 +99,38 @@ class TestDerivation(unittest.TestCase):
         self.assertEqual(len(maccrypt.secure_key(UID, UUID)), 256)
         self.assertEqual(maccrypt.hashed_device_uuid(UUID),
                          "tnouDovTnftjDguBiMkP1IqMwcW4lZn/cNHGi1R5V7weaNsTf1NmSUehTkQJqbzAMrEGwQ==")
-        self.assertTrue(maccrypt._selftest())
+
+
+    def test_known_answer_vectors(self):
+        """Shape and stability of the derivation, the helpers, and an SQLCipher page round-trip per cipher that no
+        other cipher's oracle accepts (no KakaoTalk or macOS needed)."""
+        M, uuid = maccrypt, UUID
+        name = M.database_name(1, uuid)
+        self.assertEqual(len(name), 78)
+        self.assertTrue(all(ch in "0123456789abcdef" for ch in name))
+        self.assertNotEqual(name, M.database_name(2, uuid))
+        self.assertNotEqual(name, M.database_name(1, uuid.upper()))
+        d = uuid.encode()
+        self.assertEqual(base64.b64decode(M.hashed_device_uuid(uuid)), hashlib.sha1(d).digest() + hashlib.sha256(d).digest())
+        self.assertEqual(M._longest_common_suffix(["aX12", "bX12", "cX12"]), "X12")
+        self.assertEqual(M._suffix_user_id({"FSChatWindowTransparency12": 1, "FSChatWindowTransparencyX12": 1},
+                                           "FSChatWindowTransparency"), 12)
+        self.assertEqual(M.recover_user_id_from_sha512(hashlib.sha512(b"42").hexdigest(), 100), 42)
+        self.assertIsNone(M.recover_user_id_from_sha512(hashlib.sha512(b"999").hexdigest(), 100))
+        for c in M.CIPHERS:
+            with self.subTest(cipher=c["page"]):
+                psz, r = c["page"], c["reserve"]
+                key = hashlib.pbkdf2_hmac(c["hash"], b"pass", b"S" * 16, c["iters"], 32)
+                body = bytearray(bytes(range(0x20, 0x28)) + bytes(psz - 16 - r - 8))   # page 1 past the salt
+                body[0:2] = psz.to_bytes(2, "big")         # the header's page_size field
+                body[2], body[3], body[4] = 1, 1, r        # encodings, reserved bytes
+                body[5:8] = b"\x40\x20\x20"
+                iv = bytes(range(16))
+                page = b"S" * 16 + AES.new(key, AES.MODE_CBC, iv).encrypt(bytes(body)) + iv + bytes(r - 16)
+                pt = M._decrypt_page(key, page, True, c)
+                self.assertTrue(M._page_ok(pt, c))
+                self.assertEqual(pt[16:24], bytes(body[0:8]))
+                self.assertFalse(any(M._page_ok(pt, other) for other in M.CIPHERS if other is not c))
 
 
 class TestUserId(unittest.TestCase):

@@ -169,7 +169,6 @@ class NextStep(unittest.TestCase):
             ("definition differs", "gmail", probe(task=dict(TASK, definition="differs", differs=["start"])),
              OK_INDEX, "5.7"),
             ("another action", "gmail", probe(task=dict(TASK, definition="foreign")), OK_INDEX, "5.7"),
-            ("previous command name", "gmail", probe(task=dict(TASK, definition="outdated")), OK_INDEX, "5.7"),
             ("no run info", "gmail", probe(task={k: v for k, v in TASK.items() if k not in ("result_ok",
                                                                                           "last_result")}),
              OK_INDEX, "9"),
@@ -222,10 +221,9 @@ class NextStep(unittest.TestCase):
 
 
 class DefinitionState(unittest.TestCase):
-    """A registered task is current, differs, outdated (the capture command's previous name: install replaces it) or
-    foreign, as `schedule status` reads it."""
+    """A registered task is current, differs or foreign, as `schedule status` reads it."""
 
-    def test_the_previous_command_name_is_outdated_not_foreign(self):
+    def test_states(self):
         from rawlayer import schedule  # noqa: PLC0415
         s = schedule.parse({"task": "\\toy-folder\\toy-capture", "start": "01:14", "every_hours": 3, "limit_hours": 2,
                             "description": "toy: capture every 3 h"})
@@ -233,12 +231,7 @@ class DefinitionState(unittest.TestCase):
         xml = schedule.task_xml(s, "python.exe", project, "toy", cfg)
         state = lambda text: B.definition_state(schedule, s, "toy", text)  # noqa: E731
         self.assertEqual(state(xml)["definition"], "current")
-        self.assertEqual(state(xml.replace(" capture toy --config", " collect toy --config"))["definition"], "outdated")
-        self.assertEqual(state(xml.replace(" capture toy --config", " other toy --config"))["definition"], "foreign")
-        # doctor names the elevated re-register step
-        step, why = B.next_step("gmail", probe(task=dict(TASK, definition="outdated")), OK_INDEX)
-        self.assertEqual(step, "5.7")
-        self.assertIn("schedule install gmail", why)
+        self.assertEqual(state(xml.replace(" capture toy --config", " collect toy --config"))["definition"], "foreign")
 
 
 class IndexState(unittest.TestCase):
@@ -379,7 +372,6 @@ class ConfigCommands(Temp):
         keys = json.loads(run("config", "get", "fake", "--json")[1])["keys"]
         self.assertEqual(keys["fk_source"], "missing (the app's default applies)")
         self.assertTrue(keys["fk_token_file"].startswith("null (checked as given"))
-        self.assertEqual(keys["inputs_root"], "missing")
 
 
 class Checkpoints(Temp):

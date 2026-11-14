@@ -23,8 +23,7 @@ admin.py's webhook post.
 
 `apps.py` (source keys, options, schedule and the setup hooks), `origins.py`, `inputs.py`, `readers/`, `keys.py`
 (value rules), `vocab.py`, `search.py`, `state.py` (the `schema_base` and `edb_salt` state tables), `provision.py`
-(setup's defaults and the provisioning of the root key, keystore, backup and macOS database), `backup.py` (the
-EvaSQLite backup decryption), `admin.py` (the write side — scriptable sending) and `config.example.json`.
+(setup's defaults and the provisioning of the root key, keystore and macOS database), `admin.py` (the write side — scriptable sending) and `config.example.json`.
 `wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit ported from
 kakatok (the owner's prior research project; its notes live outside this repository), and `maccrypt.py` is the
 macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the macOS section below). App tests (`tests/`) synthesize
@@ -50,10 +49,10 @@ senders: the account's display name (`nickName`), with the owner's own alias (`f
 the account has none — the join the kakatok research documented as the sender reconstruction. Both are read
 best-effort — a missing key means untitled or unnamed
 rooms, never an error — and only label-bearing columns are read, so records change only when the labels
-themselves change. The backup keeps its names the same way: setup's backup step decrypts the backup's own
-chat-list database and writes each room's title into the `_manifest.json` entry the `backup_decrypted` reader
-passes through as the room record's derived fields, while the decrypted `TalkUserDB.sqlite` beside the rooms
-names its senders.
+themselves change. The backup folder (`backup_decrypted`, decrypted earlier; the EvaSQLite step that wrote it
+was removed on 2026-11-14) keeps its names the same way: each room's title sits in its `_manifest.json` entry,
+which the reader passes through as the room record's derived fields, and the decrypted `TalkUserDB.sqlite`
+beside the rooms names its senders.
 
 | `sources` key | input |
 |---|---|
@@ -67,18 +66,16 @@ an option, not a source, so configs on machines without macOS inputs stay valid 
 set, its parent directory must exist (setup's provisioning writes the file there). The path must lie inside
 the app's data root: `provision.run_macdb` refuses (exit 2) to write the plaintext anywhere else, and a failed
 write leaves no `.tmp` behind.
-For frozen `T1`/`T2` inputs, encrypted rooms come from `<inputs_root>/<set>/kakao_user/chat_data`. Static
-inputs remain at their configured paths and are checked against the freeze's hashes.
 
 ## In-repo key derivation and decryption (the kakatok port)
 
-The app produces the keystore and the decrypted backups itself, with a toolkit ported from kakatok:
+The app produces the keystore itself, with a toolkit ported from kakatok:
 
 | module | what it does |
 |---|---|
 | `kakaotalk/keystore.py` | parses the client's CBOR keystore `appstate.dat` / `keystore.bin` (`info_prefix`, `salt`, `wrapped_dek_map`); the authoritative room inventory |
-| `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek`; the key-source rotation fingerprint |
-| `kakaotalk/wincrypt.py` | EvaSQLite (pre-25.7.2 backups): registry `DeviceInfo` pragma + userId passphrases; SQLCipher-4 decryption; `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
+| `kakaotalk/keychain.py` | the key hierarchy: `KEK = HKDF-SHA256(root, salt, info_prefix + relpath verbatim)`, `DEK = AES-KW-unwrap(KEK, wrapped_dek)` (RFC 5869 / 3394); the page-1 header oracle `verify_dek` |
+| `kakaotalk/wincrypt.py` | `scan_memory_keys` (memory-scan fallback from a running KakaoTalk.exe; the candidate walk steps 8 bytes — open-room DEKs sit 16-aligned but always-open databases' keys, the chat list among them, only 8-aligned) |
 
 The toolkit is self-contained: the rest of the app — readers, capture, search — reaches it only through the
 entry points above, so work outside these four modules never touches key material.
@@ -109,17 +106,8 @@ no command can read anywhere else, the root key:
   scan is best-effort and its failure is an attention line, not an error. With a live root setup also writes
   the keystore at once (`provision.write_keystore_for`: every entry the root unwraps, each key checked against
   its room file's page-1 header oracle; rooms whose entry does not unwrap are left out and read as `no_key` —
-  the honest signal of a rotated root — and `--scan` adds the room-DEK memory fallback for them). The
-  key-source files' fingerprint is diffed against `<DATA_ROOT>/keys/rotation_state.json`, so a rotation is
-  reported the moment it is observed. Keys are credentials: setup prints counts and paths only, never key
+  the honest signal of a rotated root — and `--scan` adds the room-DEK memory fallback for them). Keys are credentials: setup prints counts and paths only, never key
   material.
-- **Backup.** The `*_backup_*` user directory beside the configured `kakao_user_dir` decrypts into the
-  configured `backup_decrypted` source (`kakaotalk/backup.py`, EvaSQLite: the machine's pragma from the HKCU
-  `Software\Kakao\KakaoTalk\DeviceInfo` registry values and the userId from the backup's
-  `ActionLogDB.edb_*.backup`), with the `_manifest.json` the origin reads. A room whose source no longer
-  decrypts loses its stale decrypted file, so capture never mistakes an old copy for current content. The
-  registry read needs the KakaoTalk user's own HKCU — which is why provisioning lives in `setup`, run
-  interactively, never in the SYSTEM task. No backup directory on the machine is a skip, not a problem.
 - **Reruns.** `manage.py setup kakaotalk --provision` reruns exactly this provisioning against the config.json
   that is already there — the recovery path when the root has rotated (logout/re-login/device added): recover a
   new root with `--scan` (the running client's memory) or install one with `--root <hex file>` (verified
@@ -184,8 +172,9 @@ python -s -B -m kakaotalk.admin send      --template <...> (--chat-id 0x... | --
 python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--lifetime 900]
 ```
 
-- The template (captured client bytes identifying the account) and its `state.json` live under the data
-  parent, like the token files; `--template` must be an absolute path there. `check` runs before
+- The template (captured client bytes identifying the account, as JSON: `v`, `captured_at`, `chatId`, `msgId`,
+  `roomVtable`, `sender_id`, `template_hex` (the 0x1d0-byte message object) and `texthdr_hex` (32 bytes of its
+  string header)) and its `state.json` live under the data parent, like the token files; `--template` must be an absolute path there. `check` runs before
   `calibrate` too: with no template yet it reports `"template": "missing"` (exit 0) beside the client
   guards. `calibrate` writes both, seeding the message-id counter `0x200` past the captured id (an offset
   the server accepts; `check` reports the counter and its headroom against the newest known live id). It
@@ -220,7 +209,8 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   refuse `room_not_found`, several `ambiguous_room_title` (the count only — no titles or ids printed), a
   missing or unreadable index `index_missing` / `index_unreadable`, a locked one `index_busy`: all exit 2
   before the client is touched. A stale index resolves stale titles — capture first if a room is missing.
-- `rooms` and `send` answer `no_room` when the running client holds no TalkChatRoom for the id — opening the
+- `rooms` (read-only) lists the TalkChatRoom objects a chat id has, each vtable-annotated against the template;
+  `rooms` and `send` answer `no_room` when the running client holds no TalkChatRoom for the id — opening the
   chat materialises it. A send whose WRITE response never arrives — or only other rooms' responses —
   reports `unconfirmed` (exit 1) with `err_code` null and an `outcome_basis` naming the case; the write
   happened, the result is unknown, judge those by the room. When the client's WRITE response provides
@@ -232,23 +222,6 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   handler's first-level arguments or registers (they sit in second-level objects), so those keys stay
   absent until a deeper read-only capture pins them. With the handler confirmed firing, a response (and
   `err_code`) can be expected on ordinary sends.
-- `observe` is read-only and owner-gated (ask before ever running it: it attaches frida to the running
-  client): it hooks only the WRITE response handler while the owner sends one message by hand — admin.py
-  sends nothing and calls no client function — and prints one JSON line naming the handler's argument
-  offsets, types and candidate values with the owner's chat/user ids masked, then detaches. It waits up to
-  three minutes for that one hand-sent message; if nothing fires it reports what it saw. Its purpose is to
-  pin where `logId`/`sendAt` sit so `send` can report them. `observe --reply` captures instead through the
-  WRITE builder hook (the one proven to fire): the owner replies once by hand in the UI and the capture —
-  the internal gate value, the `+0x17c` extra string, the message bytes — is written beside the template
-  (`reply-capture.json`, like the calibration template, never printed raw). `observe --events` is the
-  discovery step for a future read-only `events` stream: it reads the LocoManager's vtable through the
-  client's memory (no hooks yet), then attaches read-only loggers on a bounded set of its code-range
-  entries (up to 32: arguments of each slot's first two entries, plus call counts and times since arming)
-  for the full window while ONE message arrives **from the phone** — a PC-side send does not exercise
-  incoming handling. Output: candidate code addresses, slot numbers, offsets, types and masked values
-  only; three minutes, then detach. The approved rounds (2026-11-02) found only the generic dispatch pump
-  firing, in bursts unrelated to the incoming messages: typed incoming-message handling does not surface at
-  these vtable entries, so no `events` command exists yet.
 - `listen` reacts only to the owner's own plain-text sends starting with the prefix (the calibrated sender
   id; a non-plain capture is skipped with a `[SKIP] not plain` event), echoes them prefix-stripped 0.3s later
   into the same room — built by the same shared clone builder and readback gates `send` uses — and each
@@ -274,7 +247,8 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   `failed_after_write` (1: the injected script reached the client's send call — its `[CALLED]` marker — and
   no success followed, a builder failure, an exception or a timeout; also any frida error while the script
   loads, since loading runs it up to that call; the message may have arrived, so check the room before
-  resending); `refused` (2: every failure before that call, nothing was sent). A frida session detaching
+  resending); `refused` (2: every failure before that call, nothing was sent; attaching or creating the
+  script refuses `frida_attach_failed`). A frida session detaching, or a script error (`[SCRIPT-ERROR]`),
   mid-wait ends the wait early (send keeps that same split; calibrate reports `no_capture`; listen stops
   with `stopped_by` `detached`). Requires the `frida` Python package (imported lazily; the fetch step never needs it).
 

@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
 """Preconditions, on the toy app: config refusals (SPEC 2, 16) and the apps' options, the data parent allowlist and
-junctions (SPEC 10.1), the frozen input sets (freeze.json, static drift), the work-tree precheck, and provenance
+junctions (SPEC 10.1), the work-tree precheck, and provenance
 that is never clean when git fails or refuses (SYSTEM's git ownership rules)."""
-import contextlib
-import datetime
-import hashlib
-import io
 import os
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -16,10 +11,10 @@ from unittest import mock
 
 from rawlayer import registry
 from rawlayer.capture import paths, precheck, run
-from rawlayer.capture.config import Config, ConfigError, InputSet
+from rawlayer.capture.config import Config, ConfigError
 from rawlayer.search import index
 from tests.core import toyfix as T
-from tests.core.toyfix import capture, cli_main, manifests
+from tests.core.toyfix import capture, cli_main
 
 
 class TestConfig(T.ToyCase):
@@ -46,8 +41,8 @@ class TestConfig(T.ToyCase):
                 self.refused(sources=v)
 
     def test_aux_paths(self):
-        """data_root exists and is absolute; inputs_root may be left out or point nowhere until a frozen set is used;
-        keys nobody reads are accepted and ignored."""
+        """data_root exists and is absolute; keys nobody reads (inputs_root of the removed frozen input sets
+        among them) are accepted and ignored."""
         missing = self.fx.base / "nope"
         for v in (missing, "relative"):
             with self.subTest(key="data_root", value=v):
@@ -56,11 +51,8 @@ class TestConfig(T.ToyCase):
         (self.fx.base / "a_file").write_bytes(b"")
         self.fx.write_config()
         self.refused(data_root=self.fx.base / "a_file")
-        with self.subTest(key="inputs_root", value="relative"):
-            self.fx.write_config()
-            self.refused(inputs_root="relative")
         for k, v in (("old_tool", missing / "tool.py"), ("old_dir", missing), ("old_tool", 5),
-                     ("inputs_root", None), ("inputs_root", missing)):
+                     ("inputs_root", "relative")):
             with self.subTest(key=k, value=v):
                 self.fx.write_config(old_tool="x", old_dir="y")
                 self.fx.set_cfg(**{k: v})
@@ -69,9 +61,6 @@ class TestConfig(T.ToyCase):
         self.assertEqual(capture(self.fx), 0)
         self.fx.set_cfg(old_tool=None, old_dir=None, inputs_root=None)
         self.assertEqual(capture(self.fx), 0)
-        for name in ("T1", "T2"):                    # a frozen set needs inputs_root
-            with self.subTest(input_set=name), self.assertRaises(ConfigError):
-                InputSet(Config(self.fx.config_path), name)
 
     def test_option_types(self):
         self.assertIs(self.fx.cfg().toy_system, False)
@@ -85,11 +74,10 @@ class TestConfig(T.ToyCase):
         elsewhere = self.fx.base / "parent"
         elsewhere.mkdir()
         before = T.names(self.fx.data_root)
-        out = self.fx.data_root / "raw" / ".verify" / "x.tsv"
         with mock.patch.object(paths, "DATA_PARENT", elsewhere):
             with self.assertRaises(ConfigError):
                 Config(self.fx.config_path)
-            for argv in (["capture"], ["replay"], ["export-state", "--out", out]):
+            for argv in (["capture"], ["replay"]):
                 with self.subTest(command=argv[0]):
                     self.assertEqual(cli_main(self.fx, *argv), 2)
         self.assertEqual(T.names(self.fx.data_root), before)
@@ -108,72 +96,6 @@ class TestConfig(T.ToyCase):
             for bad in ("raw/app/raw/token.txt", "raw/app/archive/token.txt", "app/raw/token.txt"):
                 with self.subTest(bad=bad), self.assertRaises(FetchError):
                     credential_path(str(parent / bad))
-
-    def test_frozen_set_without_inputs_root_is_refused_before_anything_is_written(self):
-        """llm-wiki refused a missing inputs_root at Config load: no run lock, no state.sqlite, no raw/."""
-        self.fx.set_cfg(inputs_root=self.fx.base / "no-such-folder")
-        before = T.names(self.fx.data_root)
-        for name in ("T1", "T2"):
-            with self.subTest(input_set=name):
-                self.assertEqual(cli_main(self.fx, "capture", "--input-set", name, "--origins", "toy_a"), 2)
-                with T.preserved_env(), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ConfigError):
-                    run.capture(Config(self.fx.config_path), name, ["toy_a"], skip_precheck=True)
-        self.assertEqual(T.names(self.fx.data_root), before)
-        self.assertFalse((self.fx.data_root / "raw").exists())
-        self.assertEqual(capture(self.fx), 0)                  # live never reads inputs_root
-
-
-class TestFrozenSet(T.ToyCase):
-    """T1 / T2 read copies under <inputs_root>/<name> that freeze.json describes; the static files must still be
-    there with their hashes, and a closed static root holds no file the freeze did not list."""
-
-    def freeze(self, name="T1", static=None, finished="2026-10-01T00:00:00Z"):
-        root = self.fx.frozen / name
-        shutil.copytree(self.fx.toy, root / "toy")
-        if static is None:
-            static = {"toy_a": {n: {"sha256": self.sha(root / "toy" / "a" / n)} for n in T.names(root / "toy" / "a")}}
-        T.write_json(root / "freeze.json", {"finished_at": finished, "static": static})
-        return root / "toy"
-
-    @staticmethod
-    def sha(path):
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-    def test_capture_from_a_frozen_set(self):
-        root = self.freeze()
-        inputs = InputSet(self.fx.cfg(), "T1")
-        finished = int(datetime.datetime(2026, 10, 1, tzinfo=datetime.timezone.utc).timestamp())
-        self.assertEqual((inputs.toy_a, inputs.live_frozen, inputs.snapshot_s), (root / "a", True, finished))
-        shutil.rmtree(self.fx.toy)                          # live inputs are not read
-        self.fx.toy.mkdir(parents=True)
-        self.assertEqual(capture(self.fx, input_set="T1"), 0)
-        m = manifests(self.fx)[0]
-        self.assertEqual((m["input_set"], m["origins"]["toy_a"]["counts"]["put"]), ("T1", 3))
-
-    def test_drift_and_unfrozen_sets_are_refused(self):
-        def edit(root):
-            with (root / "a" / "c1.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write("{}\n")
-
-        def add(root):                                     # a closed static root holds no file the freeze did not list
-            T.ToyFixture.write(root / "a", "c9", [T.item(9, "x")])
-        for name, change in (("edited file", edit), ("new file", add)):
-            with self.subTest(change=name):
-                shutil.rmtree(self.fx.frozen / "T1", ignore_errors=True)
-                change(self.freeze())
-                with self.assertRaises(ConfigError):
-                    InputSet(self.fx.cfg(), "T1")
-                with self.assertRaises(ConfigError):
-                    capture(self.fx, input_set="T1")
-        self.assertEqual(manifests(self.fx), [])
-        shutil.rmtree(self.fx.frozen / "T1")
-        self.freeze(static={"toy_q": {}})                  # a static label the app does not have
-        with self.assertRaises(ConfigError):
-            InputSet(self.fx.cfg(), "T1")
-        (self.fx.frozen / "T2").mkdir(parents=True)        # no freeze.json
-        with self.assertRaises(ConfigError):
-            InputSet(self.fx.cfg(), "T2")
-
 
 @unittest.skipUnless(os.name == "nt", "junctions (mklink /J) are Windows'")
 class TestJunctions(T.ToyCase):
