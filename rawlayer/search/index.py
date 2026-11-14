@@ -801,7 +801,7 @@ def cells(text):
     return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
 
 
-def pad(text, width, *, right=False):
+def pad(text, width):
     """Pad or cut to exactly `width` cells, so columns line up with Korean labels."""
     out, used = [], 0
     for ch in text:
@@ -810,9 +810,7 @@ def pad(text, width, *, right=False):
             break
         out.append(ch)
         used += step
-    fill = " " * (width - used)
-    s = "".join(out)
-    return fill + s if right else s + fill
+    return "".join(out) + " " * (width - used)
 
 
 def flat(text):

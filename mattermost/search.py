@@ -45,7 +45,6 @@ pseudonymisation.
 """
 import json
 import re
-import sys
 from collections import Counter
 
 from rawlayer.capture.canon import as_int
@@ -460,11 +459,6 @@ def _hide_sql(a):
     return ("" if a.include_deleted else " AND deleted = 0") + ("" if a.include_system else " AND system = 0")
 
 
-def _place(h):
-    return h.get("channel") or h.get("channel_id") or "?"
-
-
-
 class _Filters(drv.Filters):
     range_col = "ts_ms"
     range_scale = 1000
@@ -595,18 +589,6 @@ class MatterSearch(drv.SearchDriver):
     def placeholder(self, r):
         return "(" + (r["type"] + ", " if r["type"] else "") + "no text)"
 
-    def who(self, row):
-        return row.get("sender") or row.get("user_id") or "?"
-
-    def flags(self, h):
-        out = "".join(f" [{k}]" for k in ("deleted", "system", "gone", "edited") if h.get(k))
-        if h.get("root_id"):
-            out = " [reply]" + out
-        files = h.get("files") or []
-        if files and h.get("body_from") != "files":
-            out += f" [+{len(files)} file{'s' if len(files) > 1 else ''}]"
-        return out
-
     def group_label(self, r, mode):
         if mode == "senders":
             extra = " / ".join(x for x in (r["name"], r["nickname"]) if x)
@@ -683,64 +665,6 @@ class MatterSearch(drv.SearchDriver):
         return {"mode": "thread", "root_id": root, "root_found": root_found, "channel_id": seed["channel_id"],
                 "channel": seed["channel"], "total": len(out), "hidden_deleted": hid_d, "hidden_system": hid_s,
                 "rows": out}
-
-    def render_rest(self, res, a, tz):
-        mode, rows, total = res["mode"], res["rows"], res["total"]
-        out = sys.stdout.write
-        if mode == "list":
-            out(f"=== {NAME}: {total} channel(s) by post count ===\n")
-            for r in rows:
-                span = f"{r['first']}..{r['last']}" if r["first"] else ""
-                team = f"[{r['team']}]" if r["team"] else ""
-                out(f"  {r['n']:7,}  {index.pad(r['label'], 32)} {index.pad(team, 14)} {span:22} "
-                    f"id={r['channel_id']}\n")
-            return
-        if mode == "thread":
-            where = res["channel"] or res["channel_id"] or "?"
-            out(f"=== {NAME}: thread {res['root_id']} in {where} ({total} post(s)) ===\n")
-            if not rows:
-                out("  (no posts)\n")
-            for h in rows:
-                mark = "" if h["root"] else "  ↳ reply"
-                out(f"{h['date']:16}  @{self.who(h)}{mark}  #{h['post_id']}"
-                    f"{''.join(f' [{k}]' for k in ('deleted', 'system', 'gone', 'edited') if h.get(k))}\n")
-                for line in (h["text"].splitlines() or [self.placeholder(h)]):
-                    out(f"    {line}\n")
-                if h["files"] and h["body_from"] != "files":
-                    out(f"    [files: {', '.join(h['files'])}]\n")
-                out("\n")
-            return
-        if mode == "browse":
-            page = res["page"]
-            multi = res["channels_in_page"] > 1
-            out(f"=== {NAME}: {total} post(s); this page {len(rows)} ===\n")
-            if rows:
-                out(f"  older: --before {page['before']}    newer: --after {page['after']}\n")
-            else:
-                out("  (no posts)\n")
-            for h in rows:
-                where = f" | {index.pad(_place(h), 20)}" if multi else ""
-                text = index.flat(h["text"]) if h["text"] else h["snippet"]
-                out(f"{h['date']:16} | {index.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['post_id']}\n")
-            return
-        shown = len(rows)
-        head = f"=== {NAME}: {total} match(es)"
-        if total > shown:
-            head += f" (showing {shown} best)"
-        out(head + " ===\n")
-        if not rows:
-            out("  (no matches)\n")
-        prefix = f"[{NAME}] "
-        for h in rows:
-            out(f"{prefix}{h['date']:16} | {index.pad(self.who(h), 18)} | {index.pad(_place(h), 26)} "
-                f":: {h['snippet']}{self.flags(h)}\n")
-            out(f"{' ' * len(prefix)}post={h['post_id']} root={h['root_id'] or '-'} channel={h['channel_id'] or '-'}"
-                f"{' team=' + h['team'] if h['team'] else ''} cursor={h['cursor']}\n")
-            for c in h.get("context", []):
-                arrow = ">>" if c["hit"] else "  "
-                out(f"     {arrow} {c['date'][5:]:11} {index.pad(self.who(c), 14)} {c['text']}"
-                    f"{''.join(f' [{k}]' for k in ('deleted', 'system', 'gone') if c.get(k))}\n")
-
 
 DRIVER = MatterSearch(SPEC)
 

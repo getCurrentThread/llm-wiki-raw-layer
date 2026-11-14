@@ -54,7 +54,6 @@ Names and room titles are printed as they are -- this tool does no masking or ps
 """
 import hashlib
 import re
-import sys
 from collections import Counter
 
 from rawlayer.capture.canon import as_int, as_str
@@ -592,12 +591,6 @@ class KakaoSearch(drv.SearchDriver):
     def placeholder(self, r):
         return "(" + (type_name(r["type"]) or "no type") + ", no text)"
 
-    def who(self, row):
-        return row.get("sender") or row.get("author_id") or "?"
-
-    def flags(self, h):
-        return "".join(f" [{k}]" for k in ("deleted", "gone", "edited") if h.get(k))
-
     def list_all(self, con, a, tz):
         where, params = [], []
         for r in a.room:
@@ -615,48 +608,6 @@ class KakaoSearch(drv.SearchDriver):
             {"chat_id": r["chat_id"], "label": r["title"] or "(untitled)", "title": r["title"], "n": r["n"],
              "senders": r["senders"], "n_deleted": r["n_deleted"], "n_gone": r["n_gone"],
              **index.day_span(r["first_ts"], r["last_ts"], tz)} for r in rows]}
-
-    def render_rest(self, res, a, tz):
-        mode, rows, total = res["mode"], res["rows"], res["total"]
-        out = sys.stdout.write
-        if mode == "list":
-            out(f"=== {NAME}: {total} room(s) by message count ===\n")
-            for r in rows:
-                span = f"{r['first']}..{r['last']}" if r["first"] else ""
-                out(f"  {r['n']:7,}  {index.pad(r['label'], 40)} {span:22} id={r['chat_id']}\n")
-            return
-        if mode == "browse":
-            page = res["page"]
-            multi = res["rooms_in_page"] > 1
-            out(f"=== {NAME}: {total} message(s); this page {len(rows)} ===\n")
-            if rows:
-                out(f"  older: --before {page['before']}    newer: --after {page['after']}\n")
-            else:
-                out("  (no messages)\n")
-            for h in rows:
-                where = f" | {index.pad(h['room'] or h['chat_id'], 20)}" if multi else ""
-                text = index.flat(h["text"]) if h["text"] else h["snippet"]
-                out(f"{h['date']:16} | {index.pad(self.who(h), 14)}{where} :: {text}{self.flags(h)}  #{h['log_id']}\n")
-            return
-        shown = len(rows)
-        head = f"=== {NAME}: {total} match(es)"
-        if total > shown:
-            head += f" (showing {shown} best)"
-        out(head + " ===\n")
-        if not rows:
-            out("  (no matches)\n")
-        prefix = f"[{NAME}] "
-        for h in rows:
-            out(f"{prefix}{h['date']:16} | {index.pad(self.who(h), 18)} | {index.pad(h['room'] or '(untitled)', 26)} "
-                f":: {h['snippet']}{self.flags(h)}\n")
-            out(f"{' ' * len(prefix)}chat={h['chat_id']} log={h['log_id']} cursor={h['cursor']} "
-                f"origins={','.join(h['origins']) or '-'}\n")
-            for c in h.get("context", []):
-                arrow = ">>" if c["hit"] else "  "
-                out(f"     {arrow} {c['date'][5:]:11} {index.pad(self.who(c), 14)} {c['text']}{self.flags(c)}\n")
-            if h.get("context"):
-                out("\n")
-
 
 DRIVER = KakaoSearch(SPEC)
 
