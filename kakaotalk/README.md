@@ -2,8 +2,9 @@
 
 This app captures private KakaoTalk conversations into an append-only, crash-safe raw ledger and builds an
 SQLite FTS5 search index at `<DATA_ROOT>/index/kakaotalk.sqlite`. It shares the root project's **rawlayer**
-framework (see `../README.md` and `../CORE.md`). Its app label and package are its folder name, `kakaotalk`.
-Message data and machine config remain outside the repository.
+framework: the root README holds what every app shares (commands, machine config and data root, the search
+index and query language, scheduled tasks, tests) and `../CORE.md` the contract. Message data and machine config
+remain outside the repository.
 The implementation uses the standard library plus pycryptodome for `.edb` decryption.
 
 ## Scope and authorization
@@ -20,34 +21,25 @@ admin.py's webhook post.
 
 ## Layout
 
-Run commands from `<PROJECT>`, the root containing `manage.py`, `config/settings.py`, and `rawlayer/`.
-This app's folder contains `apps.py` (source keys, options, schedule and the setup hooks), `origins.py`,
-`inputs.py`, `readers/`, `keys.py` (value rules), `vocab.py`, `search.py`, `provision.py` (setup's defaults and
-the provisioning of the root key, keystore, backup and macOS database), `backup.py` (the EvaSQLite backup
-decryption), `admin.py` (the write side — scriptable sending), `tests/`, and `config.example.json`. `state.py`
-declares the `schema_base` and `edb_salt` state
-tables.
-`wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit
-ported from kakatok (the owner's prior research project; its notes live outside this repository), and
-`maccrypt.py` is the macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the
-macOS section below). Core tests are at `<PROJECT>/tests/core/`;
-app tests are at `<PROJECT>/kakaotalk/tests/`. The slash command is
-`<PROJECT>/.claude/commands/raw-search.md` (shared with mattermost).
+`apps.py` (source keys, options, schedule and the setup hooks), `origins.py`, `inputs.py`, `readers/`, `keys.py`
+(value rules), `vocab.py`, `search.py`, `state.py` (the `schema_base` and `edb_salt` state tables), `provision.py`
+(setup's defaults and the provisioning of the root key, keystore, backup and macOS database), `backup.py` (the
+EvaSQLite backup decryption), `admin.py` (the write side — scriptable sending) and `config.example.json`.
+`wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit ported from
+kakatok (the owner's prior research project; its notes live outside this repository), and `maccrypt.py` is the
+macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the macOS section below). App tests (`tests/`) synthesize
+inputs in code under temporary directories; the search tests capture made-up inputs through `tests/ledgerfix.py`
+and compare incremental indexing with rebuilds over the search modes and filters.
 
 ## Config, origins and records
 
-`kakaotalk/config.example.json` shows the machine config shape. The default config is
-`<DATA_PARENT>/kakaotalk/config.json`. Common keys are `v` (1), `impl` (matching settings.IMPL_NAME), `data_root`,
-`inputs_root`, and `sources`. Source paths must be absolute and exist; replace the example's placeholders with
-machine-specific paths. `<DATA_ROOT>` conventionally means `<DATA_PARENT>/kakaotalk`. It must be inside
-`DATA_PARENT`, outside git work trees, with the parent's required ACL and Search exclusion. Frozen input sets
-need an existing `inputs_root`; live input resolution does not require it to exist.
+`kakaotalk/config.example.json` shows the machine config shape; the config is
+`<DATA_PARENT>/raw/kakaotalk/config.json` and `<DATA_ROOT>` is its folder (the root README has the common keys and
+the data root's layout).
 
 Capture reads the decrypted backup room databases and the client's encrypted `.edb` room files read-only.
 Origins, in ledger order, are `backup_decrypted`, `edb`, and `macdb` (the macOS client's decrypted database;
-see the macOS section). The kakatok-era export origins (`merged_out`, `live_out`, `decrypted_live`) are gone:
-the app reads the client itself now, and the labels those exports carried come from the client's own
-databases. The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
+see the macOS section). The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
 `msg`, `room`, `hist`, `meta`, and `attachment`. The `edb` origin
 uses guarded pending-to-absent detection when a key disappears from a completely read room, and titles its
 rooms from the client's own chat-list database (`chat_data/chatListInfo.edb`, decrypted with the room keys —
@@ -78,16 +70,9 @@ write leaves no `.tmp` behind.
 For frozen `T1`/`T2` inputs, encrypted rooms come from `<inputs_root>/<set>/kakao_user/chat_data`. Static
 inputs remain at their configured paths and are checked against the freeze's hashes.
 
-The record format, canonical hashes and commit protocol follow `SPEC.md` and `SPEC-CLARIFICATIONS.md` of the
-`llm-wiki` checkout. Committed records are kept in `<DATA_ROOT>/raw/ledger/<origin>/<YYYY>/` as gzipped JSONL
-segments. Each capture commit has a manifest in `<DATA_ROOT>/raw/manifests/`; capture's fold is
-`<DATA_ROOT>/raw/.state/state.sqlite`, and its run log is `<DATA_ROOT>/raw/log.md`.
-
 ## In-repo key derivation and decryption (the kakatok port)
 
-The app is self-sufficient: it no longer needs kakatok's research pipeline to produce the keystore or the
-decrypted backups. The ported toolkit (originally `sample/kakatok`, removed after the port) lives in the app
-package:
+The app produces the keystore and the decrypted backups itself, with a toolkit ported from kakatok:
 
 | module | what it does |
 |---|---|
@@ -98,9 +83,7 @@ package:
 The toolkit is self-contained: the rest of the app — readers, capture, search — reaches it only through the
 entry points above, so work outside these four modules never touches key material.
 
-Setup turns that into capture inputs (see "First-run setup" below); after it, `capture` reads the `.edb` rooms
-and the decrypted backups exactly as before — the ledger contract is unchanged; only the producers of the
-keystore and `backup_decrypted` moved into this repo.
+Setup turns that into capture inputs (see "First-run setup" below).
 
 ## First-run setup: config defaults and provisioning
 
@@ -180,103 +163,125 @@ Two pieces put a Mac into the ledger:
   are the ones every origin uses, so a message seen on both a PC and a Mac is one row across origins; search
   takes macdb text after `edb` and before `backup_decrypted`, its titles after `edb`, and its sender names
   (from `NTUser`) at the live client's rank. A database without `NTChatMessage` (a placeholder) is noted `not_mac`
-  and captures nothing. The search index stamps moved to `kakao-4` when the retired kakatok export origins left
-  and the client's own user database began naming senders: the first index step after upgrading rebuilds once.
+  and captures nothing.
 
 A minimal macOS deployment: the same config with the PC-only sources pointing at placeholder files
 (an empty file is a valid empty SQLite database for the origins you do not capture), `"mac_db"` set to the
 decrypted database path, then `manage.py setup kakaotalk` and `manage.py capture kakaotalk --origins macdb`.
 
-## Commands
-
-All examples run from `<PROJECT>`. `--config <cfg>` is optional and overrides the default above.
-
-```
-python -s -B manage.py setup kakaotalk [--from <cfg>|-] [--force] [--provision] [--scan] [--root <hex file>] [--restart-client]
-python -s -B manage.py capture kakaotalk [--config <cfg>] [--input-set live|T1|T2] [--origins a,b,...] [--rebuild-index]
-python -s -B manage.py search kakaotalk [QUERY] [--config <cfg>] [options]
-python -s -B manage.py check kakaotalk [--config <cfg>] [--export-state <DATA_ROOT>/raw/.verify/<file>] [--rebuild-state]
-python -s -B manage.py test kakaotalk
-python -s -B manage.py schedule install|status|run|remove kakaotalk [--config <cfg>] [--python <exe>] [--run-now|--dry-run]
-```
-
-Brackets show optional arguments, not literal shell text. Capture returns 0 ok, 3 suspect, 75 busy, below the
-disk floor or skipped, 2 refused, and 1 error. A suspect origin commits nothing; other origins may commit.
-`setup --provision` reruns the provisioning above against the config.json that is already there. `check`
-verifies the folded state against the ledger, and its `--export-state` / `--rebuild-state` dump or rebuild that
-state (the old export-state and replay). The root README's command table describes the whole shared surface.
-
 ## Administration (admin.py)
 
 `admin.py` is the write side: scriptable message sending through the running Windows client's own Loco WRITE
 path, driven with frida (the client keeps its session, TLS and sync; no credential is read — the app's key
-material is never touched). It ports the kakaosend It ports the owner's kakaosend research, reverse-engineered against client
+material is never touched). It ports the owner's kakaosend research, reverse-engineered against client
 26.9.1.5339; the working notes live outside the repository.
 
 ```
 python -s -B -m kakaotalk.admin check     --template <DATA_PARENT>\kakaotalk\admin\template.json
 python -s -B -m kakaotalk.admin calibrate --template <...>                       # send ONE message in any plain-text room
-python -s -B -m kakaotalk.admin rooms     --template <...> --chat-id 0x...
-python -s -B -m kakaotalk.admin send      --template <...> --chat-id 0x... --message-file <file> [--dry-run]
+python -s -B -m kakaotalk.admin rooms     --template <...> (--chat-id 0x... | --room "<title fragment>")
+python -s -B -m kakaotalk.admin send      --template <...> (--chat-id 0x... | --room "<...>") --message-file <file> [--dry-run]
 python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--lifetime 900]
 ```
 
 - The template (captured client bytes identifying the account) and its `state.json` live under the data
-  parent, like the token files; `--template` must be an absolute path there. `calibrate` writes both, seeding
-  the message-id counter `0x200` past the captured id (an offset the server accepts; `check` shows headroom).
-  It waits up to three minutes for the calibration send.
+  parent, like the token files; `--template` must be an absolute path there. `check` runs before
+  `calibrate` too: with no template yet it reports `"template": "missing"` (exit 0) beside the client
+  guards. `calibrate` writes both, seeding the message-id counter `0x200` past the captured id (an offset
+  the server accepts; `check` reports the counter and its headroom against the newest known live id). It
+  waits up to three minutes for the calibration send, which must be a
+  plain-text send — a capture of any other kind (`+0x180 != 10`) refuses `not_plain_room` (exit 2, nothing
+  written). `send` and `listen` take every message id from that one counter, read and persisted under a lock
+  on the state folder that spans the client call (a concurrent taker refuses `state_busy`, exit 2), and
+  `send` refuses `bad_state` (exit 2) when the state file is missing or invalid instead of falling back to
+  the calibrated id. The counter also stays ahead of the client's own: the listener's builder hook sees the
+  owner's live msgIds and folds their maximum into the state (`live_msg_id_max`, under the same lock), and a
+  taken id is `max(counter, live max + 1)` — the client's counter cannot catch up and collide.
 - `send` needs no message of yours: a minimal clone of the calibrated send whose every pointer the builder
   could dereference is replaced (supplement sentinel, no-extra `+0x180 = 10` path, its own text block).
   At most once: the counter is persisted before the client is called. Text comes from a file, at most
-  200 UTF-8 bytes, and is never printed. Delivery is judged by the client's WRITE response handler
-  (`err_code 0`) and ultimately the room — the client renders received messages up to a minute late; a
-  "server unstable" dialog right after a send is a stale long-lived session, not a crash: restart and retry.
+  200 UTF-8 bytes, and is never printed. Chat ids are exact 64-bit values end to end (decimal strings across
+  the frida bridge — a JS double would round ids above 2^53), and only the target room's WRITE response
+  counts: another room's response inside the window reads as no response. Delivery is judged by the client's
+  WRITE response handler (`err_code 0`) and ultimately the room — the client renders received messages up to
+  a minute late; a "server unstable" dialog after a send is a stale long-lived session, not a crash: restart
+  and retry.
 - `send` and `listen` cover the rooms whose own messages carry no `extra` field (the self-chat room and the
-  plain rooms); rooms that need `extra` are not covered yet.
+  plain rooms); rooms that need `extra` are not covered yet, and neither are replies: the one approved
+  reply observation (2026-11-02) showed the PC client's reply carries its source reference in sub-objects
+  of the message object (and an *empty* string at `+0x17c`), not in a patchable extra string — beyond the
+  clone-and-patch approach until that structure is reverse-engineered.
+- `rooms` and `send` name the chat by `--chat-id` or `--room <title fragment>` — exactly one of the two
+  (`chat_id_exclusive` / `chat_id_required`, exit 2). The fragment is resolved read-only from the search
+  index (`<data_root>/index/kakaotalk.sqlite`, located and opened exactly as `search` does; only `data_root`
+  is read from the config) before anything touches the client, with the same title semantics `search
+  --room` uses: a case-insensitive substring, wildcards escaped, untitled rooms never matching (a purely
+  numeric fragment matches titles, not ids — use `--chat-id` for ids). Exactly one match resolves; zero
+  refuse `room_not_found`, several `ambiguous_room_title` (the count only — no titles or ids printed), a
+  missing or unreadable index `index_missing` / `index_unreadable`, a locked one `index_busy`: all exit 2
+  before the client is touched. A stale index resolves stale titles — capture first if a room is missing.
 - `rooms` and `send` answer `no_room` when the running client holds no TalkChatRoom for the id — opening the
-  chat materialises it. A send whose WRITE response never arrives still reports `sent` with `err_code` null;
-  judge those by the room.
-- `listen` reacts only to the owner's own sends starting with the prefix (the calibrated sender id), echoes
-  them prefix-stripped 0.3s later into the same room, and tears down cleanly on Ctrl+C or `--lifetime`.
-  While resident it prints one JSON line per event (`event`), command text included.
-- Addresses are locked to client 26.9.1.5339: a version or builder-prologue mismatch refuses before anything
-  is touched. Exit codes: 0 ok, 1 a write happened but was rejected or failed after it, 2 refused before any
-  write. `send` statuses: `sent` (0); `server_rejected` (1, the server's errCode is non-zero);
+  chat materialises it. A send whose WRITE response never arrives — or only other rooms' responses —
+  reports `unconfirmed` (exit 1) with `err_code` null and an `outcome_basis` naming the case; the write
+  happened, the result is unknown, judge those by the room. When the client's WRITE response provides
+  them, the send result also carries `log_id` — an exact 64-bit decimal string (never through a JS number),
+  the msg id of the ledger key `kakao:<chatId>:msg:<logId>` — and `sent_at` (a unix timestamp, decimal
+  string); fields the response does not carry are absent keys, never guesses. Neither is extracted yet: a
+  PC-side re-observation (2026-11-02) saw the WRITE response handler fire — the earlier empty captures had
+  watched phone-app sends the PC hook can never see — but neither logId nor sendAt appeared in the
+  handler's first-level arguments or registers (they sit in second-level objects), so those keys stay
+  absent until a deeper read-only capture pins them. With the handler confirmed firing, a response (and
+  `err_code`) can be expected on ordinary sends.
+- `observe` is read-only and owner-gated (ask before ever running it: it attaches frida to the running
+  client): it hooks only the WRITE response handler while the owner sends one message by hand — admin.py
+  sends nothing and calls no client function — and prints one JSON line naming the handler's argument
+  offsets, types and candidate values with the owner's chat/user ids masked, then detaches. It waits up to
+  three minutes for that one hand-sent message; if nothing fires it reports what it saw. Its purpose is to
+  pin where `logId`/`sendAt` sit so `send` can report them. `observe --reply` captures instead through the
+  WRITE builder hook (the one proven to fire): the owner replies once by hand in the UI and the capture —
+  the internal gate value, the `+0x17c` extra string, the message bytes — is written beside the template
+  (`reply-capture.json`, like the calibration template, never printed raw). `observe --events` is the
+  discovery step for a future read-only `events` stream: it reads the LocoManager's vtable through the
+  client's memory (no hooks yet), then attaches read-only loggers on a bounded set of its code-range
+  entries (up to 32: arguments of each slot's first two entries, plus call counts and times since arming)
+  for the full window while ONE message arrives **from the phone** — a PC-side send does not exercise
+  incoming handling. Output: candidate code addresses, slot numbers, offsets, types and masked values
+  only; three minutes, then detach. The approved rounds (2026-11-02) found only the generic dispatch pump
+  firing, in bursts unrelated to the incoming messages: typed incoming-message handling does not surface at
+  these vtable entries, so no `events` command exists yet.
+- `listen` reacts only to the owner's own plain-text sends starting with the prefix (the calibrated sender
+  id; a non-plain capture is skipped with a `[SKIP] not plain` event), echoes them prefix-stripped 0.3s later
+  into the same room — built by the same shared clone builder and readback gates `send` uses — and each
+  reply's message id is taken from the same state counter `send` uses, persisted under the state lock before
+  the builder call (a lock a concurrent send holds fails that one command, never sends it, and the listener
+  stays up). It tears down cleanly on Ctrl+C (`stopped_by` `interrupt`), `--lifetime` (`lifetime`) or a
+  detached frida session (`detached`). While resident it prints one JSON line per event (`event`), command
+  text included.
+- Every address, byte pattern and struct offset the tooling uses lives in one per-version table keyed by the
+  client's FileVersion (today: 26.9.1.5339 — `check` names the supported versions) and is spliced into the
+  injected JS, which carries no such literal of its own: an unknown version or a builder-prologue mismatch
+  refuses before anything is touched (the WRITE response handler's own prologue bytes are not recorded yet,
+  so theirs is the one check still unfilled — the slot is in the table), and two running KakaoTalk clients
+  refuse `ambiguous_client`. Exit codes: 0 ok, 1 a write happened but was rejected, failed or stayed
+  unknown after it, 2 refused before any write. `send` statuses: `sent` (0: the target room's own WRITE
+  response carries `err_code` 0 — the only proof of delivery); `server_rejected` (1: that response carries
+  a non-zero errCode); `unconfirmed` (1: the builder was called and returned OK, but no response
+  attributable to the target chat arrived in the window — none at all (`outcome_basis` `no_response`),
+  only other rooms' (`other_room_response`), or an unreadable one (`unreadable_response`). The write
+  happened; the result is unknown: check the room before resending. With the response handler now observed
+  firing on PC sends, `unconfirmed` should be rare — and when it appears, the honest answer is "check the
+  room", not a failure);
   `failed_after_write` (1: the injected script reached the client's send call — its `[CALLED]` marker — and
   no success followed, a builder failure, an exception or a timeout; also any frida error while the script
   loads, since loading runs it up to that call; the message may have arrived, so check the room before
-  resending); `refused` (2: every failure before that call, nothing was sent). Requires the `frida` Python package (imported lazily; the fetch step never needs it).
+  resending); `refused` (2: every failure before that call, nothing was sent). A frida session detaching
+  mid-wait ends the wait early (send keeps that same split; calibrate reports `no_capture`; listen stops
+  with `stopped_by` `detached`). Requires the `frida` Python package (imported lazily; the fetch step never needs it).
 
 ## Search
 
-### index (capture's index step)
-
-`capture`'s index step brings `<DATA_ROOT>\index\kakaotalk.sqlite` up to the committed ledger (the search reads only
-`data_root` from the config):
-
-- **Incremental.** Manifests are applied in seq order, one transaction per manifest together with the
-  index's watermark (head seq, plus the sha256 and run id of that manifest).
-- **Full rebuild.** It runs on `capture --rebuild-index`, when the index is missing, unreadable or stamped with another
-  schema/tokenizer/extractor version, when the watermark no longer matches the ledger (the ledger was reset),
-  when a manifest is not a capture manifest, or when the catch-up is very large.
-- **Rebuild and catch-up give the same index.** Both run the same record handling in ledger order.
-- **Only committed manifests are read.** If a manifest's segments are still `*.part`, capture is
-  mid-commit: the index stops before it and reports `behind` (exit 0). An unreadable committed file is
-  a ledger defect (exit 1).
-- **Crash safety.** A rebuild is written to `<name>.sqlite.new`, checked with FTS5 `integrity-check`
-  and `quick_check`, then swapped in. A crash never loses the live index.
-- **One writer.** The index has a writer lock (exit 75 when busy). Searches open the index read-only and are
-  never blocked by it.
-
-### search kakaotalk
-
-```
-python -s -B manage.py search kakaotalk "<query>" --json
-python -s -B manage.py search kakaotalk "<query>" --room "<title fragment>" --since <date> --context 3
-python -s -B manage.py search kakaotalk "<query>" --mode timeline
-python -s -B manage.py search kakaotalk --room "<title fragment>" --before <cursor>
-python -s -B manage.py search kakaotalk --list-rooms
-```
+`search kakaotalk --help` lists the modes, filters and cursors; the index, the query language and the output are
+the root README's ("Search").
 
 - **One row per message key.** Each key `kakao:<chatId>:msg:<logId>` has one row across the three Kakao
   origins.
@@ -291,108 +296,12 @@ python -s -B manage.py search kakaotalk --list-rooms
   client's winning a tie) — and the macOS database's NTUser; room titles from the newest capture (the
   client's chat-list database for `edb` rooms, the manifest titles for the backup's).
   Renames relabel old rows.
-- **Filters.** `--room` (title substring or chat id, repeatable), `--sender` (name substring or author id),
-  `--since` / `--until`.
-- **Browsing.** Filters without a query browse: the command shows the newest page (in time order), and you
-  walk through the pages with `--before` / `--after` cursors `<ts>.<logId>.<row>`. The row id breaks ties
-  between messages that share a time and logId (the same logId in two rooms), so no page boundary skips one.
-  A two-part cursor `<ts>.<logId>` from an older page still works.
-- `--mode hits|count|timeline|senders|rooms`; `--context N` shows N messages before and after each hit in the
-  same room, by time keyset; `--limit`, `--width`, and `--tz` (default `+09:00`; dates, month buckets and display
-  use this fixed offset). `--until` is inclusive of the whole period given (`--until 2024-10` ends with the last
-  second of October).
-- `--json` prints an envelope: `source, mode, query, fts, verify, weak, exclude, exclude_fts, filters, tz,
-  total, rows, built_at, updated_at, index{seq, ledger_seq, stale}`, plus `page` when browsing. Large ids are
-  strings. `--explain` prints the FTS5 expression; the separator token is shown as `<S>`.
-- A stderr note appears when the index is behind the ledger, and when a query falls back to a full scan.
-- Exit codes: 0 ok (0 hits included) · 2 usage, bad query, missing or outdated index · 75 index lock busy
-  · 1 unexpected.
+- **Cursors.** `--before` / `--after` take `<ts>.<logId>.<row>`. The row id breaks ties between messages that
+  share a time and logId (the same logId in two rooms), so no page boundary skips one. A two-part cursor
+  `<ts>.<logId>` from an older page still works.
 
-There is no masking, pseudonymisation or redaction. Names, nicknames, room titles and texts are shown as they
-are. Whoever uses the output applies their own privacy rules.
+## Wiki export
 
-### Query language and tokenizer
-
-| Query | Meaning |
-|---|---|
-| `송금 계좌` | both terms (AND) |
-| `"정기 회의"` | the exact phrase |
-| `회의 OR 미팅` | either term |
-| `제출 -취소` | the first term, excluding the second |
-| `api*` | prefix |
-
-Text is normalised as NFC + casefold. Each message gets an n-gram shadow column: Korean/CJK runs become
-overlapping bigrams and Latin/digit runs become one token. A query term is issued as an FTS5 phrase over the
-same tokens. As a result:
-
-- Korean matches as a substring: `송금` finds `송금을` and `입금송금`.
-- A lone space between Korean words may be left out: `회의실예약` finds `회의실 예약`.
-- A Latin/digit run at a term's edge must match a whole run: `api` finds `API 키` but not `rapid`, and
-  `api*` finds `apis`.
-- Quoted phrases and terms with punctuation (`C++`, `AES-256`) match literally after normalisation.
-
-Tokenizer `ngram-2` fixed two bugs of the knowledge-base engine (`ngram-1`) it was ported from:
-
-1. **Missed matches.** `10월` did not find `10월에`, nor `3시` find `3시에` or `SQL문` find `SQL문을`. The
-   query's lone `월` token never appeared in a document that held only `월에`. A Korean run that touches a
-   Latin/digit run now also emits a one-character head or tail token, so the phrase lines up.
-2. **False positives.** `가나다` matched `가나 나다`: the bigrams of two separate words lined up as one
-   phrase. A separator token now stands between runs that whitespace or punctuation kept apart.
-
-Tokenizer `ngram-3` bridges a lone space between two Korean/CJK runs with the bigram across it, so a term
-typed without that space still matches (`회의실예약` finds `회의실 예약`); two spaces, a line break or
-punctuation still separate, and `가나다` still does not match `가나 나다`.
-
-In addition, excluded terms use the same match rule as positive ones (`-api` no longer drops messages
-containing `rapid`), and `OR` next to an excluded term is refused instead of being silently ignored. A
-property test in `tests/core/test_fts.py` checks the index against an independent model of these rules on
-thousands of random queries.
-
-An unquoted term with a Latin/digit run longer than 32,000 characters is refused: SQLite FTS5 cuts tokens at
-32,768 bytes, so such a run would also match longer runs that start with it. Snippets mark matches with
-the same case folding the search uses, so `straße` marks `STRASSE`.
-
-## LLM Wiki export
-
-`kakaotalk/apps.py` declares `wiki = (None, "chat")`: `manage.py collect kakaotalk` (llm.md 13) can write each room's
-closed months as Markdown sources of an LLM Wiki project, but there are no `*_wiki_*` config keys, so `--project`,
+`kakaotalk/apps.py` declares `wiki = (None, "chat")`: `manage.py collect kakaotalk` (llm.md 13) writes each room's
+closed months as Markdown sources of the wiki vault, but there are no `*_wiki_*` config keys, so `--project`,
 `--include`, `--exclude` and `--since` on the command line give its settings. Only when the owner asks for it.
-
-## Scheduled task
-
-`AppConfig.schedule` in `kakaotalk/apps.py` defines `\llm-wiki\kakaotalk-capture`, run as SYSTEM
-(times and limit: [../README.md](../README.md#scheduled-tasks)). The generated Arguments are
-`-s -B <PROJECT>\manage.py capture kakaotalk --config <cfg>`, with `<PROJECT>` as WorkingDirectory.
-
-```
-python -s -B manage.py schedule install kakaotalk [--config <cfg>] [--python <interpreter>] [--run-now|--dry-run]
-python -s -B manage.py schedule status kakaotalk [--config <cfg>] [--python <interpreter>]
-python -s -B manage.py schedule run kakaotalk
-python -s -B manage.py schedule remove kakaotalk
-```
-
-Install, run and remove need elevation. Install validates the config, data root, interpreter and task checks
-before registration, replaces a task of the same name and compares the definition read back. Dry-run prints
-the definition without registering it. Status shows definition differences, last result and the newest run's
-finished step lines; it returns 3 when attention is needed. A new start is ignored while one runs, and a missed
-start runs when the machine returns.
-
-`capture kakaotalk` runs the capture step (the live input set) and then the index step after every capture exit
-code. Only committed manifests enter the index, so the index step is a no-op when nothing new was committed.
-Steps are logged in `<DATA_ROOT>/reports/task.log`, and the command returns the capture step's exit code.
-
-## Slash command and tests
-
-`.claude/commands/raw-search.md` provides `/raw-search` from the root project — one command for both apps; it
-picks the app from the request. It uses one to three JSON searches, widens empty results and cites dates,
-rooms and senders. Config is optional, with the same default as the CLI; an override uses `--config <cfg>`.
-
-```
-python -s -B manage.py test kakaotalk
-python -s -B manage.py test
-```
-
-App tests synthesize inputs in code under temporary directories. Search tests capture made-up inputs through
-`kakaotalk/tests/ledgerfix.py` and compare incremental indexing with rebuilds over the search modes and
-filters. Resets, mid-commit, crashes, version checks and locks are core tests, which use toy apps without
-importing the real apps. See the root README for the full command table and core maintenance.
