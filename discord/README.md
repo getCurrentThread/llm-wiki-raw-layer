@@ -3,7 +3,7 @@
 `dc_archive` keeps a protected data root, append-only ledger and `index/discord.sqlite`.
 The app includes a stdlib fetch step (`fetch.py`) with API and token-free desktop-cache sources.
 Archive-only configs remain read-only; `dc_sync: true` makes live `manage.py capture discord` update the
-archive before capturing it. Frozen inputs never call a fetch step. Core files are unchanged.
+archive before capturing it. Frozen inputs never call a fetch step.
 
 ## Collection and authentication
 
@@ -102,12 +102,9 @@ Executable vectors live in `tests/test_capture.py::test_projection_vector` and
 Repeated identical signatures in immutable refresh partitions keep the first source of that signature;
 the last observation still chooses the head. This avoids source-only refresh churn while retaining A→B→A.
 
-## Use
+## Search
 
 ```
-python -s -B manage.py setup discord
-# Fill sources.dc_archive with the absolute existing archive path in the external config.
-python -s -B manage.py capture discord
 python -s -B manage.py search discord deployment --guild Server --channel general --json
 python -s -B manage.py search discord --thread 1300000000000000000 --json
 python -s -B manage.py search discord --list-channels --json
@@ -121,22 +118,21 @@ in the same channel. `--before` / `--after` use `ts_ms.snowflake.channel_id` cur
 prevents skipping duplicate parent/thread starters. Threads include the named/root message, its matching
 thread channel and reference replies. Query/selection filters do not cut a thread down. Parent renames update
 `parent › thread` labels. Text fallback is content → embed text → filenames/forwarded text; tombstones keep
-previous text when their content is empty. Search JSON contains freshness and watermark information.
-Labels and text are private plaintext; follow the session's privacy rules when reporting search results.
+previous text when their content is empty. The index, the query language and the output are the root README's
+("Search").
 
 Frozen input sets read `<inputs_root>/<set>/dc/archive`. Scheduled capture runs as SYSTEM (times and limit:
 [../README.md](../README.md#scheduled-tasks)). Run genesis manually (or plan a 2-hour task limit) for a large archive.
 With `dc_sync` disabled, an external fetch step must finish before capture starts. With it enabled, collection
-runs inside the app's live read hook. Task registration is a separate operation.
-To preview the task definition, supply a configured external config:
-`python -s -B manage.py schedule install discord --config <CFG> --dry-run`.
+runs inside the app's live read hook.
 
 ## API implementation references
 
 The API client pins v10, pages backward from the newest message in batches of 100, then publishes messages in
 ascending snowflake order. Backward pagination covers bursts larger than 100 without relying on undocumented
 `after` ordering. It handles rate-limit headers/429 backoff and binds an API archive to the authenticated
-account digest. See [third-party references](../THIRD_PARTY.md) for the DCE mapping and cache-parser research.
+account digest. The archive format follows DiscordChatExporter (DCE) JSON, and the desktop-cache scan follows
+discrawl's MIT-licensed discorddesktop scanner (`desktop.py`).
 
 ## Wiki export
 

@@ -1,7 +1,7 @@
 """Token-free, read-only recovery of message JSON from Discord Desktop cache.
 
 The scan strategy (embedded JSON plus bounded gzip streams) follows discrawl's
-MIT-licensed discorddesktop scanner. See THIRD_PARTY.md for pinned provenance.
+MIT-licensed discorddesktop scanner.
 Cache eviction is never evidence of message deletion.
 """
 import datetime as dt
