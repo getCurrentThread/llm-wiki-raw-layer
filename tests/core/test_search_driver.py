@@ -3,17 +3,21 @@
 reports, incremental catch-up == full rebuild, ledger reset / genesis redone / a non-capture manifest (rebuilds),
 mid-commit (stops, then resumes), defects (stop with exit 1, roll back), crashes and a killed catch-up (hot journal),
 the version gate, the stale envelope, the writer lock, several indexes in one project (index --source all, one
-failing does not stop the other), and the edges of a missing index and a data root outside the data parent."""
+failing does not stop the other), and the edges of a missing index and a data root outside the data parent; then
+the query half every app shares (driver.SearchDriver): group rows and their labels, and the --context window."""
 import json
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import types
+import unittest
 from pathlib import Path
 from unittest import mock
 
 from rawlayer.capture import fsio
+from rawlayer.search import driver as drv, index
 from tests.core import toyfix as T
 from tests.core.toyapp import search as toy
 from tests.core.toyapp2 import search as toy2
@@ -401,3 +405,95 @@ class TestEdges(T.ToyCase):
         self.assertEqual(run_search("index", "--config", self.bare_config("relative"))[0], 2)
         self.assertEqual(run_search("index", "--config", self.fx.base / "none.json")[0], 2)
 
+
+# ---- the query half every app shares (driver.SearchDriver), on a driver with no app behind it
+
+GROUP_SCHEMA = """
+CREATE TABLE msgs(id INTEGER PRIMARY KEY, room TEXT NOT NULL, ts_ms INTEGER NOT NULL, sid INTEGER NOT NULL,
+  deleted INTEGER NOT NULL, message TEXT NOT NULL);
+CREATE TABLE users(user_id TEXT PRIMARY KEY, name TEXT NOT NULL, nick TEXT NOT NULL);
+CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL);
+CREATE TABLE labels(label_id TEXT PRIMARY KEY, name TEXT NOT NULL);
+"""
+
+
+class Fake(drv.SearchDriver):
+    name, table, fts_table = "fake", "msgs", "msgs_fts"
+    sort_cols = ("ts_ms", "sid")
+    context_col = "room"
+    group_modes = {
+        "senders": drv.Group("t.user", "user_id", "users", "name", extra=(("nickname", "nick"),),
+                             fallback=(None, "?"), tag="user"),
+        "rooms": drv.Group("t.room", "chat_id", "rooms", "title", fallback=("(untitled)",), tag="chat"),
+        "kinds": drv.Group("t.kind", "kind"),
+        "labels": drv.Group("m.label", "id", "labels", "name", "label_id", keep_empty=True),
+    }
+
+    def hit(self, r, tz, marks, width):
+        return {"id": r["id"]}
+
+
+class GroupRows(unittest.TestCase):
+    """The group rows of --mode senders/rooms/...: labels from a Group table and every fallback rule."""
+    def setUp(self):
+        self.con = sqlite3.connect(":memory:")
+        self.con.row_factory = sqlite3.Row
+        self.addCleanup(self.con.close)
+        self.con.executescript(GROUP_SCHEMA)
+        self.con.executemany("INSERT INTO users VALUES(?,?,?)", [("u1", "Ann", "annie"), ("u2", "", "x")])
+        self.con.executemany("INSERT INTO rooms VALUES(?,?)", [("r1", "Dev"), ("r2", "")])
+        self.con.executemany("INSERT INTO labels VALUES(?,?)", [("L1", ""), ("L3", "Work")])
+        self.d, self.tz = Fake(None), index.parse_tz("+09:00")
+
+    def row(self, mode, gid, f=1727758980, l=1727845380):
+        return self.d.group_row(self.con, {"gid": gid, "n": 4, "f": f, "l": l}, mode, self.tz)
+
+    def test_label_from_the_table_then_the_fallbacks(self):
+        span = {"first": "2024-10-01", "last": "2024-10-02"}
+        self.assertEqual(self.row("senders", "u1"), {"user_id": "u1", "label": "Ann", "nickname": "annie", "n": 4, **span})
+        self.assertEqual(self.row("senders", "u2")["label"], "u2")           # an empty name: the id
+        self.assertEqual(self.row("senders", "u9"), {"user_id": "u9", "label": "u9", "nickname": "", "n": 4, **span})
+        self.assertEqual(self.row("senders", "")["label"], "?")              # no name, no id: the last fallback
+        row = self.row("senders", None)
+        self.assertEqual((row["user_id"], row["label"], row["nickname"]), (None, "?", ""))
+        self.assertEqual([self.row("rooms", g)["label"] for g in ("r1", "r2", "r9", None)],
+                         ["Dev", "(untitled)", "(untitled)", "(untitled)"])
+        self.assertEqual(self.row("rooms", "r1"), {"chat_id": "r1", "label": "Dev", "n": 4, **span})
+        self.assertEqual(self.row("kinds", "k"), {"kind": "k", "label": "k", "n": 4, **span})   # no table: the id
+        self.assertEqual(self.row("kinds", "")["label"], "")
+        self.assertEqual(list(self.row("senders", "u1")), ["user_id", "label", "nickname", "n", "first", "last"])
+        t = 1727758980                                                      # 2024-10-01 05:23 UTC: the zone's days
+        self.assertEqual(index.day_span(t, None, index.parse_tz("-10:00")), {"first": "2024-09-30", "last": ""})
+        self.assertEqual(index.day_span(0, None, self.tz), {"first": "", "last": ""})
+
+    def test_keep_empty_is_for_an_existing_row_only(self):
+        self.assertEqual(self.row("labels", "L1")["label"], "")              # the row exists with an empty name
+        self.assertEqual(self.row("labels", "L2")["label"], "L2")            # no row: the id
+        self.assertEqual(self.row("labels", "L3")["label"], "Work")
+        self.assertEqual(self.row("labels", "L3")["id"], "L3")                # id_col is label_id, the JSON key id
+
+
+class Context(unittest.TestCase):
+    def setUp(self):
+        self.con = sqlite3.connect(":memory:")
+        self.con.row_factory = sqlite3.Row
+        self.addCleanup(self.con.close)
+        self.con.executescript(GROUP_SCHEMA)
+        #            id room  ts  sid deleted
+        rows = [(1, "A", 10, 1, 0), (2, "A", 10, 2, 0), (3, "A", 20, 1, 0), (4, "A", 30, 1, 1), (5, "A", 40, 1, 0),
+                (6, "B", 25, 1, 0), (7, "A", 50, 9, 0)]
+        self.con.executemany("INSERT INTO msgs VALUES(?,?,?,?,?,'')", rows)
+        self.d, self.tz = Fake(None), index.parse_tz("+09:00")
+
+    def around(self, hit, n, deleted=False):
+        r = self.con.execute("SELECT * FROM msgs WHERE id=?", (hit,)).fetchone()
+        a = types.SimpleNamespace(include_deleted=deleted, width=40)
+        return [(c["id"], c["hit"]) for c in self.d.context(self.con, r, n, a, self.tz)]
+
+    def test_window_of_the_sort_key_inside_the_context_column(self):
+        self.assertEqual(self.around(3, 1), [(2, False), (3, True), (5, False)])      # id 4 is deleted, B is another room
+        self.assertEqual(self.around(3, 1, deleted=True), [(2, False), (3, True), (4, False)])
+        self.assertEqual(self.around(3, 9), [(1, False), (2, False), (3, True), (5, False), (7, False)])
+        self.assertEqual(self.around(2, 1), [(1, False), (2, True), (3, False)])      # same ts_ms: the sid orders them
+        self.assertEqual(self.around(7, 2), [(3, False), (5, False), (7, True)])      # nothing after the last row
+        self.assertEqual(self.around(6, 3), [(6, True)])                              # the only row of room B

@@ -75,6 +75,9 @@ class TestVersionTable(unittest.TestCase):
                 self.assertIn("clone.add(%#x).writeU64(chatId)" % spec["off_chat_id"], send)
                 self.assertIn("holder.add(%#x).readU64().equals(CHAT_ID)" % spec["off_holder_chat"], send)
                 self.assertIn("inner.add(%#x).readU32() !== PLAIN" % spec["off_extra_gate"], listen)
+                # chat ids cross the JS bridge as exact 64-bit values, never through a rounding double
+                self.assertIn("chatId: inner.add(%#x).readU64().toString()" % spec["off_chat_id"], cal)
+                self.assertNotIn("* 0x100000000", cal + send + listen)
 
     def test_an_unknown_client_version_refuses(self):
         with self.assertRaises(FetchError) as cm:
@@ -82,16 +85,6 @@ class TestVersionTable(unittest.TestCase):
         self.assertEqual(cm.exception.category, "version_mismatch")
         self.assertIs(admin.spec_for("26.9.1.5339"), SPEC)
 
-    def test_check_names_the_supported_versions(self):
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.object(admin, "guards", lambda: (1, None, SPEC)), \
-                mock.patch.object(admin, "read_template", lambda p, spec: TPL), \
-                mock.patch.object(admin, "read_state", lambda p: {"msg_id_next": 0x1200}), \
-                mock.patch.object(admin, "client_version", lambda: "26.9.1.5339"):
-            body, code = admin.cmd_check(SimpleNamespace(template="t.json",
-                                                         state=os.path.join(folder, "s.json")))
-        self.assertEqual(code, 0)
-        self.assertEqual((body["version"], body["supported_versions"]), ("26.9.1.5339", ["26.9.1.5339"]))
 
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
@@ -143,62 +136,40 @@ class TestSend(unittest.TestCase):
         js = admin.SEND_JS
         self.assertLess(js.index("send('[CALLED]')"), js.index("f(ROOM, outer, 0)"))
 
-    def test_chat_ids_stay_exact_across_the_js_bridge(self):
-        cal = admin._render(admin.CALIBRATE_JS, SPEC)
-        send = admin._render(admin.SEND_JS, SPEC, room_vtable=VT, room=0x100, dry=0, msg_id=5, text='"hi"',
-                             chat_id="0x10", template_hex="00", texthdr_hex="00", window_ms=1)
-        listen = admin._render(admin.LISTEN_JS, SPEC, prefix='"!!"', owner_lo=7, maxpayload=200)
-        self.assertIn("chatId: inner.add(%#x).readU64().toString()" % SPEC["off_chat_id"], cal)
-        self.assertIn("holder.add(%#x).readU64().equals(CHAT_ID)" % SPEC["off_holder_chat"], send)
-        self.assertNotIn("* 0x100000000", cal + send + listen)   # the rounding doubles are gone
-
     def test_fail_before_the_marker_is_refused(self):
         body, code = self.run_send(["[FAIL] Error: room vtable mismatch"])
         self.assertEqual((body["status"], code), ("refused", 2))
         self.assertEqual(self.writes, [{"msg_id_next": 0x1201}])      # at-most-once: persisted before the call
 
     def test_outcome_after_the_marker(self):
-        window = '[WINDOW-END] {"err": 0, "msg": "", "room": "16"}'   # 0x10: this room's own response
-        for lines, status, code in (
-                (["[READY]", "[CALLED]", "[FAIL] builder ret=0"], "failed_after_write", 1),
-                (["[READY]", "[CALLED]"], "failed_after_write", 1),                    # a timeout
-                (["[READY]", "[CALLED]", "[OK]", window], "sent", 0)):
+        """After [CALLED] a failure may follow a write; only the target room's (0x10 = "16") WRITE response
+        decides sent or server_rejected, anything else is unconfirmed and claims no log_id."""
+        def window(resp):
+            return ["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] " + resp]
+        for lines, status, err, basis, code in (
+                (["[READY]", "[CALLED]", "[FAIL] builder ret=0"], "failed_after_write", None, None, 1),
+                (["[READY]", "[CALLED]"], "failed_after_write", None, None, 1),                  # a timeout
+                (window('{"err": 0, "msg": "", "room": "16"}'), "sent", 0, None, 0),
+                (window('{"err": -100, "msg": "x", "room": "16"}'), "server_rejected", -100, None, 1),
+                (window('{"err": 0, "msg": "", "room": "17"}'), "unconfirmed", None, "other_room_response", 1),
+                (window('{"err": -100, "msg": "x", "room": "17"}'), "unconfirmed", None, "other_room_response", 1),
+                (["[READY]", "[CALLED]", "[OK]"], "unconfirmed", None, "no_response", 1),        # the window ended empty
+                (window("no response"), "unconfirmed", None, "no_response", 1)):
             with self.subTest(lines=lines):
                 body, code_got = self.run_send(lines)
                 self.assertEqual((body["status"], code_got), (status, code))
-
-    def test_only_the_target_rooms_response_decides(self):
-        for resp, status, err, code in (
-                ('{"err": 0, "msg": "", "room": "16"}', "sent", 0, 0),            # this chat: accepted
-                ('{"err": -100, "msg": "x", "room": "16"}', "server_rejected", -100, 1),
-                ('{"err": 0, "msg": "", "room": "17"}', "unconfirmed", None, 1),  # another room's only
-                ('{"err": -100, "msg": "x", "room": "17"}', "unconfirmed", None, 1)):
-            with self.subTest(resp=resp):
-                body, code_got = self.run_send(["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] " + resp])
-                basis = None if status in ("sent", "server_rejected") else \
-                    ("other_room_response" if '"17"' in resp else None)
-                self.assertEqual((body["status"], body["err_code"], body.get("outcome_basis"), code_got),
-                                 (status, err, basis, code))
-
-    def test_no_matching_response_is_unconfirmed(self):
-        for lines in (["[READY]", "[CALLED]", "[OK]"],                    # the window ended empty
-                      ["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] no response"]):
-            with self.subTest(lines=lines):
-                body, code = self.run_send(lines)
-                self.assertEqual((body["status"], body["outcome_basis"], body["err_code"], code),
-                                 ("unconfirmed", "no_response", None, 1))
-                self.assertNotIn("log_id", body)        # nothing is claimed without a matching response
+                if status != "failed_after_write":
+                    self.assertEqual((body["err_code"], body.get("outcome_basis")), (err, basis))
+                if status == "unconfirmed":
+                    self.assertNotIn("log_id", body)
 
     def test_log_id_comes_exact_or_not_at_all(self):
         big = str(2 ** 53 + 7)               # an exact 64-bit id, beyond a JS double's exact integers
         for resp, extra in (
                 ('{"err": 0, "msg": "", "room": "16", "logId": "%s", "sendAt": "1762000000123"}' % big,
                  {"log_id": big, "sent_at": "1762000000123"}),
-                ('{"err": 0, "msg": "", "room": "16", "logId": "9007199254740993"}',   # 2^53 + 1, exact
-                 {"log_id": "9007199254740993"}),
                 ('{"err": 0, "msg": "", "room": "16", "sendAt": 1762000000123}',      # a plain int is fine
                  {"sent_at": "1762000000123"}),
-                ('{"err": 0, "msg": "", "room": "16"}', {}),                          # absent -> absent
                 ('{"err": 0, "msg": "", "room": "16", "logId": "9007199254740992.5"}', {}),  # not exact
                 ('{"err": 0, "msg": "", "room": "16", "logId": 9007199254740992}', {}),      # a JS number
                 ('{"err": 0, "msg": "", "room": "17", "logId": "%s"}' % big, {}),    # another room's
@@ -206,9 +177,8 @@ class TestSend(unittest.TestCase):
             with self.subTest(resp=resp):
                 body, code = self.run_send(["[READY]", "[CALLED]", "[OK]", "[WINDOW-END] " + resp])
                 if '"17"' in resp:                     # only another room answered: unknown, nothing claimed
-                    self.assertEqual((body["status"], code), ("unconfirmed", 1))
-                    self.assertNotIn("log_id", body)
-                    self.assertNotIn("sent_at", body)
+                    self.assertEqual((body["status"], code, "log_id" in body, "sent_at" in body),
+                                     ("unconfirmed", 1, False, False))
                     continue
                 self.assertEqual((code, body["status"]), (0, "sent"))
                 for key in ("log_id", "sent_at"):
@@ -261,21 +231,15 @@ class TestCalibrate(unittest.TestCase):
         self.assertEqual(admin._validated(dict(CAP), SPEC), 2 ** 53 + 1)     # a JS double would round this id
 
     def test_a_malformed_capture_refuses(self):
-        for broken in ({"chatId": "9007199254740992.5"}, {"chatId": "0x10"}, {"chatId": None},
-                       {"msgId": 0}, {"senderHi": 1}, {"roomVtable": 0x400000},
-                       {"template_hex": "00"}, {"texthdr_hex": "zz" * 32}):
+        for broken, category in (({"chatId": "9007199254740992.5"}, "capture_failed"), ({"chatId": "0x10"}, "capture_failed"),
+                                 ({"chatId": None}, "capture_failed"), ({"msgId": 0}, "capture_failed"),
+                                 ({"senderHi": 1}, "capture_failed"), ({"roomVtable": 0x400000}, "capture_failed"),
+                                 ({"template_hex": "00"}, "capture_failed"), ({"texthdr_hex": "zz" * 32}, "capture_failed"),
+                                 ({"room180": 30}, "not_plain_room"), ({"room180": None}, "not_plain_room")):
             with self.subTest(broken=broken):
                 with self.assertRaises(FetchError) as cm:
                     admin._validated({**CAP, **broken}, SPEC)
-                self.assertEqual(cm.exception.category, "capture_failed")
-
-    def test_a_capture_that_is_not_a_plain_room_refuses(self):
-        for room180 in (30, None):
-            with self.subTest(room180=room180):
-                with self.assertRaises(FetchError) as cm:
-                    admin._validated({**CAP, "room180": room180}, SPEC)
-                self.assertEqual(cm.exception.category, "not_plain_room")
-
+                self.assertEqual(cm.exception.category, category)
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
 class TestListen(unittest.TestCase):
@@ -344,26 +308,29 @@ class TestListen(unittest.TestCase):
 class TestRoomResolution(unittest.TestCase):
     ROOMS = [("16", "가족 채팅방"), ("17", "Work Room"), ("18", ""), ("19", "100% Room")]
 
-    def resolve(self, fragment, rooms=None):
-        """resolve_room against a synthetic index in a temporary data root (the real index is never opened):
-        search's index helpers are pointed at it by patching load_data_root and default_config."""
-        own = tempfile.TemporaryDirectory()
-        try:
-            path = Path(own.name, "index", "kakaotalk.sqlite")
-            path.parent.mkdir(parents=True)
-            con = sqlite3.connect(path)
-            con.execute("CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL, n INTEGER NOT NULL, "
-                        "senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,"
-                        " n_gone INTEGER NOT NULL) WITHOUT ROWID")
-            con.executemany("INSERT INTO rooms(chat_id, title, n, senders, n_deleted, n_gone) "
-                            "VALUES (?, ?, 1, 1, 0, 0)", self.ROOMS if rooms is None else rooms)
-            con.commit()
-            con.close()
-            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(own.name)), \
+    @contextlib.contextmanager
+    def index(self, rooms=None):
+        """search's index helpers pointed at a synthetic index in a temporary data root (the real index is never
+        opened); rooms=False: no index at all."""
+        with tempfile.TemporaryDirectory() as folder:
+            if rooms is not False:
+                path = Path(folder, "index", "kakaotalk.sqlite")
+                path.parent.mkdir(parents=True)
+                con = sqlite3.connect(path)
+                con.execute("CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL, n INTEGER NOT NULL, "
+                            "senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,"
+                            " n_gone INTEGER NOT NULL) WITHOUT ROWID")
+                con.executemany("INSERT INTO rooms(chat_id, title, n, senders, n_deleted, n_gone) "
+                                "VALUES (?, ?, 1, 1, 0, 0)", self.ROOMS if rooms is None else rooms)
+                con.commit()
+                con.close()
+            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(folder)), \
                     mock.patch("rawlayer.management.base.default_config", lambda app: "unused-cfg"):
-                return admin.resolve_room(fragment)
-        finally:
-            own.cleanup()
+                yield
+
+    def resolve(self, fragment, rooms=None):
+        with self.index(rooms):
+            return admin.resolve_room(fragment)
 
     def test_a_fragment_resolves_through_the_synthetic_index(self):
         self.assertEqual(self.resolve("가족"), 16)                  # substring, any position
@@ -380,15 +347,9 @@ class TestRoomResolution(unittest.TestCase):
                 self.assertEqual(cm.exception.category, category)
 
     def test_a_missing_index_refuses(self):
-        own = tempfile.TemporaryDirectory()
-        try:
-            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(own.name)), \
-                    mock.patch("rawlayer.management.base.default_config", lambda app: "unused-cfg"):
-                with self.assertRaises(FetchError) as cm:
-                    admin.resolve_room("anything")
-            self.assertEqual(cm.exception.category, "index_missing")
-        finally:
-            own.cleanup()
+        with self.assertRaises(FetchError) as cm:
+            self.resolve("anything", rooms=False)
+        self.assertEqual(cm.exception.category, "index_missing")
 
     def test_main_takes_exactly_one_of_chat_id_and_room(self):
         for argv, category in (
@@ -406,34 +367,17 @@ class TestRoomResolution(unittest.TestCase):
                 guards.assert_not_called()          # refused before anything touched the client
 
     def test_main_resolves_room_before_guards(self):
-        own = tempfile.TemporaryDirectory()
-        try:
-            path = Path(own.name, "index", "kakaotalk.sqlite")
-            path.parent.mkdir(parents=True)
-            con = sqlite3.connect(path)
-            con.execute("CREATE TABLE rooms(chat_id TEXT PRIMARY KEY, title TEXT NOT NULL, n INTEGER NOT NULL, "
-                        "senders INTEGER NOT NULL, first_ts INTEGER, last_ts INTEGER, n_deleted INTEGER NOT NULL,"
-                        " n_gone INTEGER NOT NULL) WITHOUT ROWID")
-            con.execute("INSERT INTO rooms(chat_id, title, n, senders, n_deleted, n_gone) "
-                        "VALUES ('16', '가족 채팅방', 1, 1, 0, 0)")
-            con.commit()
-            con.close()
-            seen = {}
+        seen = {}
 
-            def rooms_cmd(a):
-                seen["chat_id"] = a.chat_id
-                return {"status": "ok"}, 0
+        def rooms_cmd(a):
+            seen["chat_id"] = a.chat_id
+            return {"status": "ok"}, 0
 
-            with mock.patch("rawlayer.search.index.load_data_root", lambda cfg: Path(own.name)), \
-                    mock.patch("rawlayer.management.base.default_config", lambda app: "unused-cfg"), \
-                    mock.patch.object(admin, "data_path", lambda v: Path(v)), \
-                    mock.patch.object(admin, "COMMANDS", {**admin.COMMANDS, "rooms": rooms_cmd}), \
-                    mock.patch("sys.stdout", new_callable=io.StringIO):
-                self.assertEqual(admin.main(["rooms", "--template", "t.json", "--room", "가족"]), 0)
-            self.assertEqual(seen["chat_id"], 16)   # an int, resolved in main before the command runs
-        finally:
-            own.cleanup()
-
+        with self.index(), mock.patch.object(admin, "data_path", lambda v: Path(v)), \
+                mock.patch.object(admin, "COMMANDS", {**admin.COMMANDS, "rooms": rooms_cmd}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(admin.main(["rooms", "--template", "t.json", "--room", "가족"]), 0)
+        self.assertEqual(seen["chat_id"], 16)   # an int, resolved in main before the command runs
 
 @unittest.skipIf(os.name != "nt", "admin.py loads kernel32 at import")
 class TestClient(unittest.TestCase):

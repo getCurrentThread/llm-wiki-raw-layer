@@ -1,3 +1,5 @@
+"""The gmail archive reader on defective inputs (a dup_key across partitions is the core's: tests/core/test_engine.py
+TestPlainOrigin.test_dup_key_across_containers_of_one_run)."""
 import json
 import unittest
 from unittest.mock import patch
@@ -86,16 +88,6 @@ class HardeningTests(unittest.TestCase):
         value["messages"][0]["internal_date_ms"] = 2 ** 63 - 1
         self.fx.save(self.manifest()["files"][0], value)
         self.assertEqual(h.capture(self.fx), 75)
-
-    def test_duplicate_message_partition_rejected(self):
-        man = self.manifest()
-        value = load(self.fx.root / man["files"][0])
-        rel = "exports/20991001T000000000000Z.json"
-        self.fx.save(rel, value)
-        man["files"].append(rel)
-        self.fx.save("manifest.json", man)
-        self.assertEqual(h.capture(self.fx), 75)
-        self.assertEqual(len(h.by_key(h.records(self.fx))["gm:msg:" + MID]), 1)
 
     def test_publicout_rejects_private_values_and_core_manifests_clean(self):
         self.assertEqual(h.capture(self.fx), 0)

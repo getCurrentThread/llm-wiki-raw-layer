@@ -129,39 +129,44 @@ class TestDerived(unittest.TestCase):
 class TestRefusals(Base):
     """The app contract, checked when the registry loads (Django's system checks)."""
 
-    def test_app_config_count(self):
-        self.refused(self.apps.fake("none", configs=0))
-        self.refused(self.apps.fake("two", configs=2))
-
-    def test_labels(self):
-        self.refused(self.apps.fake("dup1", label="same"), self.apps.fake("dup2", label="same"))
-        self.refused(self.apps.fake("badlabel", label="Bad-Label"))
-
-    def test_origin_names(self):
-        o = _origin("toy_x")
-        self.refused(self.apps.fake("o1", origins=[o]), self.apps.fake("o2", origins=[o]))
-        for bad in ("Toy", "toy-x", "toy1", "", "x" * 41):
-            with self.subTest(name=bad):
-                self.refused(self.apps.fake("bad_" + str(len(bad)) + bad.replace("-", "_"), origins=[_origin(bad)]))
+    def test_refused(self):
+        f, o, op = self.apps.fake, _origin("toy_x"), Option("same", 0, int)
         notorigin = type("NotOrigin", (), {"name": "toy_y", "__init__": lambda self, app: None})
-        self.refused(self.apps.fake("notorigin", origins=[notorigin]))
-
-    def test_kind_sets(self):
-        self.refused(self.apps.fake("days", origins=[_origin("toy_d", day_kinds=frozenset({"other"}))]))
-        self.refused(self.apps.fake("complete", origins=[_origin("toy_c", complete_status="clean")]))
-
-    def test_run_is_the_cores(self):
-        o = _origin("toy_r", run=lambda self, ctx: None)
-        self.refused(self.apps.fake("run", origins=[o]))
-
-    def test_source_keys(self):
-        self.refused(self.apps.fake("sk", source_keys=["toy dir"]))
-        self.refused(self.apps.fake("sk1", source_keys=["k"]), self.apps.fake("sk2", source_keys=["k"]))
-
-    def test_option_keys(self):
-        op = Option("same", 0, int)
-        self.refused(self.apps.fake("op1", options=[op]), self.apps.fake("op2", options=[op]))
-        self.refused(self.apps.fake("opcore", options=[Option("data_root", None, str)]))
+        state = (("t", "CREATE TABLE IF NOT EXISTS t(a);"),), (("t", "CREATE TABLE IF NOT EXISTS t(b);"),)
+        cases = {
+            "no AppConfig": lambda: [f("none", configs=0)],
+            "two AppConfigs": lambda: [f("two", configs=2)],
+            "a label twice": lambda: [f("dup1", label="same"), f("dup2", label="same")],
+            "a label's shape": lambda: [f("badlabel", label="Bad-Label")],
+            "an origin twice": lambda: [f("o1", origins=[o]), f("o2", origins=[o])],
+            "not an Origin": lambda: [f("notorigin", origins=[notorigin])],
+            "day_kinds outside kinds": lambda: [f("days", origins=[_origin("toy_d", day_kinds=frozenset({"other"}))])],
+            "a core complete_status": lambda: [f("complete", origins=[_origin("toy_c", complete_status="clean")])],
+            "an own run()": lambda: [f("run", origins=[_origin("toy_r", run=lambda self, ctx: None)])],
+            "a source key's shape": lambda: [f("sk", source_keys=["toy dir"])],
+            "a source key twice": lambda: [f("sk1", source_keys=["k"]), f("sk2", source_keys=["k"])],
+            "an option twice": lambda: [f("op1", options=[op]), f("op2", options=[op])],
+            "a core key as option": lambda: [f("opcore", options=[Option("data_root", None, str)])],
+            "a wiki key taken": lambda: [f("wka", options=[Option("w_wiki_since", "", str)], wiki=("w", "chat"))],
+            "a wiki prefix twice": lambda: [f("wkb", wiki=("w", "chat")), f("wkc", wiki=("w", "mail"))],
+            "an archive key taken": lambda: [f("arc1", archive="ar", inputs=False), f("arc2", archive="ar", inputs=False)],
+            "an archive prefix's shape": lambda: [f("arc3", archive="Bad-Prefix")],
+            "a search SPEC named otherwise": lambda: [f("srch", search=types.SimpleNamespace(
+                SPEC=types.SimpleNamespace(name="other")))],
+            "a vocabulary word's shape": lambda: [f("words", words=["two words"])],
+            "one state table, two DDLs": lambda: [f("tab", origins=[_origin("toy_t", state_tables=state[0]),
+                                                                    _origin("toy_u", state_tables=state[1])])],
+            "a core state table": lambda: [f("core", origins=[_origin("toy_v", state_tables=(("heads", "x"),))])],
+        }
+        for bad in ("Toy", "toy-x", "toy1", "", "x" * 41):
+            cases[f"origin name {bad!r}"] = lambda bad=bad: [f("bad_" + str(len(bad)) + bad.replace("-", "_"),
+                                                              origins=[_origin(bad)])]
+        for i, bad in enumerate(("w", ("w",), ("w", "chat", 1), ("w", "web"), ("W", "chat"), ("1w", "chat"),
+                                 (3, "chat"), ("toolongprefix", "chat"), ["w", "chat"], ("", "chat"))):
+            cases[f"wiki {bad!r}"] = lambda i=i, bad=bad: [f(f"wk{i}", wiki=bad)]
+        for why, names in cases.items():
+            with self.subTest(why):
+                self.refused(*names())
 
     def test_wiki_declaration(self):
         """AppConfig.wiki = (prefix, layout) adds the four export keys to the app's options; a None prefix adds none."""
@@ -182,16 +187,6 @@ class TestRefusals(Base):
             with self.assertRaises(ValueError):
                 op.check(bad)
 
-    def test_wiki_declaration_shapes(self):
-        shapes = ("w", ("w",), ("w", "chat", 1), ("w", "web"), ("W", "chat"), ("1w", "chat"), (3, "chat"),
-                  ("toolongprefix", "chat"), ["w", "chat"], ("", "chat"))
-        for i, bad in enumerate(shapes):
-            with self.subTest(wiki=bad):
-                self.refused(self.apps.fake(f"wk{i}", wiki=bad))
-        taken = Option("w_wiki_since", "", str)             # a key the declaration would add, claimed by an option
-        self.refused(self.apps.fake("wka", options=[taken], wiki=("w", "chat")))
-        self.refused(self.apps.fake("wkb", wiki=("w", "chat")), self.apps.fake("wkc", wiki=("w", "mail")))
-
     def test_inputs_and_vocab_are_optional(self):
         app = registry.Registry([self.apps.fake("bare", inputs=False, vocab=False)]).apps[0]
         self.assertEqual(app.inputs.resolve(None), {})
@@ -206,23 +201,8 @@ class TestRefusals(Base):
         inputs = reg.apps[0].inputs
         cfg = types.SimpleNamespace(sources={"ar_archive": os.path.join(os.sep, "x", "y")})
         self.assertEqual(inputs.resolve(cfg), {"ar_archive": Path(os.sep, "x", "y")})
-        self.refused(pkg, self.apps.fake("arc2", archive="ar", inputs=False))        # the key is taken
-        self.refused(self.apps.fake("arc3", archive="Bad-Prefix"))
         own = registry.Registry([self.apps.fake("arc4", archive="aq", resolve=lambda cfg: {"aq_dir": 1})])
         self.assertEqual(own.apps[0].inputs.resolve(None), {"aq_dir": 1})
-
-    def test_search_name_is_the_label(self):
-        search = types.SimpleNamespace(SPEC=types.SimpleNamespace(name="other"))
-        self.refused(self.apps.fake("srch", search=search))
-
-    def test_vocabulary_words(self):
-        self.refused(self.apps.fake("words", words=["two words"]))
-
-    def test_state_tables(self):
-        t1 = _origin("toy_t", state_tables=(("t", "CREATE TABLE IF NOT EXISTS t(a);"),))
-        t2 = _origin("toy_u", state_tables=(("t", "CREATE TABLE IF NOT EXISTS t(b);"),))
-        self.refused(self.apps.fake("tab", origins=[t1, t2]))
-        self.refused(self.apps.fake("core", origins=[_origin("toy_v", state_tables=(("heads", "x"),))]))
 
     def test_input_attribute_claimed_twice(self):
         a = self.apps.fake("in1", resolve=lambda cfg: {"toy_root": "x"})

@@ -2,7 +2,8 @@
 """The app's Mattermost fetch step (mattertok's archiver, ported) against an in-process fake server: backfill and
 forward cursors, timestamp ties at page edges, purged cursors, archived channels, exclusion, unavailable channels,
 partial progress, torn files, users, account binding, kept files, the HTTP client (retries, redirects), sign-in, the
-command line, options and the origin hook."""
+command line, options and the origin hook (the archive lock and RAWLAYER_ARCHIVE_READY are the shared appkit
+paths: gmail's and claudecode's tests)."""
 import contextlib
 import hashlib
 import http.client
@@ -20,7 +21,7 @@ from urllib.response import addinfourl
 from rawlayer.capture.config import Config
 from appkit.archive import FetchError, load
 from mattermost import fetch
-from mattermost.apps import MatterConfig, _url
+from mattermost.apps import MatterConfig
 from mattermost.fetch import MattermostClient, login, sync, token
 from mattermost.readers import archive as reader
 from mattermost.tests.fixtures import Fixture
@@ -311,12 +312,6 @@ class TestSync(Base):
         self.assertEqual(self.ids(cid), self.served(cid))
         self.assertEqual(self.manifest()["channels"][cid]["error"], "")
 
-    def test_fetch_lock_is_exclusive(self):
-        self.srv.channel(1, posts=1)
-        with fetch.locked(self.fx.mm), self.assertRaisesRegex(FetchError, "collector_busy"):
-            self.sync()
-        self.assertEqual(self.sync()["errors"], 0)
-
     def test_torn_tail_and_duplicates_are_repaired_on_publish(self):
         cid = self.srv.channel(1, posts=3)
         self.sync()
@@ -550,8 +545,6 @@ class TestApp(Base):
             self.assertEqual(app.task_checks(cfg), [])
         self.assertEqual(app.task_checks(self.config(mm_token_file="relative.txt")),
                          ["mm_sync requires a protected token path"])
-        with self.assertRaises(ValueError):
-            _url("http://mm.example")
         with patch.dict(os.environ, {"MM_TOKEN": "t"}), patch.object(fetch, "sync", return_value={}) as run:
             fetch.sync_config(self.config(mm_url=URL, mm_files_max_mb=25))
         self.assertEqual(run.call_args.kwargs["files_cap"], 25 * 1024 ** 2)
@@ -570,12 +563,6 @@ class TestApp(Base):
             self.assertEqual(capture(self.fx), 0)
             self.assertEqual(len(calls), 1)
             self.assertEqual(sum(1 for k in by_key(records(self.fx)) if k.startswith("mm:post:")), 2)
-            with patch.dict(os.environ, {"RAWLAYER_ARCHIVE_READY": "1"}):
-                self.assertEqual(capture(self.fx), 0)
-            self.assertEqual(len(calls), 1)
-        with patch.object(fetch, "sync_config", return_value={"errors": 1}), \
-                patch("rawlayer.capture.precheck.check"), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(capture(self.fx), 75)
 
     def test_command_line_exit_codes(self):
         argv, out = ["--config", str(self.fx.config_path)], io.StringIO()

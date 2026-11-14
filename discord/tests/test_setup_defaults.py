@@ -1,6 +1,5 @@
-"""DiscordConfig.setup_defaults (the archive; the desktop cache in the owner's profile, or the api token file) and
-task_checks (what the SYSTEM task needs named in the config)."""
-import json
+"""DiscordConfig.task_checks: what the SYSTEM task needs named in the config (setup_defaults:
+tests/tools/test_setup_defaults.py)."""
 import shutil
 import tempfile
 import unittest
@@ -8,44 +7,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from rawlayer import conf, registry
+from rawlayer import registry
 from .fixtures import TEST_PARENT
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "config.example.json"
 
-
-class Base(unittest.TestCase):
+class TaskChecks(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="dc-setup-"))
-        self.home = Path(tempfile.mkdtemp(prefix="dc-home-"))
-        for d in (self.root, self.home):
-            self.addCleanup(shutil.rmtree, d, True)
-        patcher = mock.patch.object(conf, "settings", lambda: SimpleNamespace(HOME_DIR=self.home))
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.app = registry.get().apps[0]
 
-
-class SetupDefaults(Base):
-    def setUp(self):
-        super().setUp()
-        self.cfg = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-        self.cfg["data_root"] = str(self.root)
-        self.notes = []
-
-    def test_desktop_cache_when_it_is_there(self):
-        self.app.setup_defaults(self.cfg, self.notes.append)
-        self.assertEqual(self.cfg["sources"]["dc_archive"], str(self.root / "archive"))
-        self.assertEqual(self.cfg["dc_desktop_path"], "")           # no Discord desktop in this profile
-        self.assertEqual(self.cfg["dc_token_file"], "")
-        cache = self.home / "AppData" / "Roaming" / "discord"
-        cache.mkdir(parents=True)
-        self.app.setup_defaults(self.cfg, self.notes.append)
-        self.assertEqual(self.cfg["dc_desktop_path"], str(cache))
-        self.assertFalse(any(str(self.root) in n or str(self.home) in n for n in self.notes))
-
-
-class TaskChecks(Base):
     def cfg(self, **kv):
         base = {"dc_sync": True, "dc_source": "desktop", "dc_desktop_path": "", "dc_token_file": ""}
         base.update(kv)

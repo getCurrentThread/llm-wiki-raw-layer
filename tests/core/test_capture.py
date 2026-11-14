@@ -48,16 +48,13 @@ class TestCaptureSteps(unittest.TestCase):
             rc = capture.main(["toy", "--config", str(self.cfg)])
         return rc, calls, self.log.read_text(encoding="utf-8")
 
-    def test_the_capture_step_argv(self):
-        _rc, calls, _log = self.run_task(0)
-        self.assertEqual(calls[0], ("capture", ["--config", str(self.cfg)]))
-
     def test_index_follows_every_capture(self):
         """75 also follows a commit (an origin or container skipped), so the index step never depends on rc."""
         for capture_rc in (0, 3, 75, 2, 1):
             with self.subTest(capture_rc=capture_rc):
                 rc, calls, log = self.run_task(capture_rc, index_rc=5)
                 self.assertEqual(rc, capture_rc)                       # the task's result is capture's
+                self.assertEqual(calls[0], ("capture", ["--config", str(self.cfg)]))
                 self.assertEqual(calls[1], ("index", ["--config", str(self.cfg)]))
                 self.assertIn(f"step=capture rc={capture_rc} ", log)
                 self.assertIn("step=index rc=5 ", log)

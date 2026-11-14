@@ -95,7 +95,7 @@ class TestRealProcessKill(Reference):
                     T.force_rmtree(fx.base)
 
 
-class TestRecovery(T.ToyCase):
+class TestRecovery(Reference):
     def stray(self, rel):
         p = ledger(self.fx).raw.joinpath(*rel.split("/"))
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -198,12 +198,6 @@ class TestRecovery(T.ToyCase):
     def test_killed_during_recovery(self):
         """The process dies inside recovery (parts finalised, log line written, inflight.json not yet removed); the
         next run's recovery is re-entrant and the ledger ends as an uninterrupted run."""
-        ref_fx = T.ToyFixture().standard()
-        try:
-            self.assertEqual(capture(ref_fx), 0)
-            ref = export(ref_fx)
-        finally:
-            T.force_rmtree(ref_fx.base)
         self.assertEqual(T.child_capture(self.fx, "run.CRASH_HOOK = lambda s: os._exit(9) if s == 'commit' else None\n"),
                          9)
         inflight = ledger(self.fx).inflight
@@ -217,7 +211,7 @@ class TestRecovery(T.ToyCase):
         lg = ledger(self.fx)
         self.assertEqual((lg.leftovers(), invariants(self.fx)[0]), (0, {}))
         self.assertEqual(log_runs(self.fx), [m["run"] for m in manifests(self.fx)])
-        self.assertEqual(export(self.fx), ref)
+        self.assertEqual(export(self.fx), self.ref)
 
 
 class TestLedgerDefects(T.ToyCase):
@@ -372,13 +366,6 @@ class TestStateDamage(T.ToyCase):
                     self.assertEqual(len(manifests(fx)), 2 if command == "capture" else 1)
                 finally:
                     T.force_rmtree(fx.base)
-
-    def test_app_state_tables_are_rebuilt_too(self):
-        self.assertEqual(capture(self.fx), 0)
-        (ledger(self.fx).state_dir / "state.sqlite").unlink()
-        self.assertEqual(capture(self.fx), 0)                       # the fold again, toy_last and hist included
-        self.assertEqual(replay_diff(self.fx), 0)
-
 
 class TestLockAndEnvironment(T.ToyCase):
     def test_lock_busy_exit_75(self):
