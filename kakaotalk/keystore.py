@@ -1,25 +1,12 @@
 # -*- coding: utf-8 -*-
-"""keystore.py — 카카오톡 v2/v1 키저장소(CBOR) 파서 + 방 전체 인벤토리.
+"""The KakaoTalk v2/v1 keystore (CBOR) parser and the inventory of every room the client knows (the denominator of
+key coverage).
 
-kakatok(sample/kakatok/keystore_v2.py)에서 kakaotalk app으로 옮겼다(독립화, 2026-10).
+  users/<hash>/appstate.dat (v2, live) and keystore.bin (v1, older): CBOR {info_prefix, salt, wrapped_dek_map}
+  wrapped_dek_map = [[relpath, wrapped_dek (40 bytes)], ...], one per room
 
-  users/<hash>/appstate.dat   (v2, 라이브)  — CBOR {info_prefix, salt, wrapped_dek_map}
-  users/<hash>/keystore.bin   (v1, 구버전)  — 같은 스키마
-  wrapped_dek_map = [ [relpath, wrapped_dek(40B)] , ... ]   방마다 1개
-
-여태 수집기는 디스크의 chatLogs_*.edb 를 glob 하고, "지금 열린" 방만 키를 회수했다. 그래서
-카톡이 아는 방 전체(=appstate.dat 의 wrapped_dek_map) 대비 **커버리지를 알 수 없었다**. 이
-모듈이 카톡의 권위 있는 방 목록(chatId ↔ relpath ↔ wrapped_dek)을 뽑아 그 분모를 준다.
-
-의존성 없음(표준 라이브러리만). 카톡의 직렬화기는 바이트열을 CBOR **uint8 배열**로 쓰므로
-(byte string 이 아님) 아래 미니 CBOR 디코더가 배열·바이트열 둘 다 바이트로 환원한다.
-
-프라이버시: wrapped_dek 는 래핑된 키다. 해시/요약만 로그로 남기고, 원문은 로컬 파일에만.
-KEK 가 없으면 wrapped_dek 로는 방을 못 연다(오프라인 언랩 불가 — Themida VM 차단). 인벤토리는
-"어떤 방이 존재하고, 어떤 방을 아직 못 땄는지"를 아는 용도다.
-Scope: the owner's own keystore on this machine (offline personal archival); wrapped keys are logged as
-hashes only.
-"""
+The client writes byte strings as CBOR arrays of uint8, so the small decoder below turns both into bytes. The
+owner's own keystore on this machine: wrapped keys are logged as hashes only."""
 from __future__ import annotations
 
 import os

@@ -1,18 +1,9 @@
 # -*- coding: utf-8 -*-
-"""The query half of an app's search.py. An app's search module subclasses SearchDriver for its row model and
-delegates the module-level run()/add_arguments() the search step calls (rawlayer/search/steps.py) to the subclass
-instance; the fold/index half stays where it was, in the module's SourceIndex subclass (index.py):
-
-  class KakaoSearch(SearchDriver):
-      name, table, fts_table, sort_cols, ...   # the source's facts
-      Filters, hit(), context(), ...           # the source's row shape
-  DRIVER = KakaoSearch(SPEC)                   # SPEC: the module's SourceIndex
-
-What the base owns is what the apps had as copies: the shared arguments (--mode from group_modes, --before and
---after), the run() skeleton (argument checks, query build, keyset cursor, dispatch, the JSON envelope), the
-hits/browse/aggregate queries, the time-window and --include-deleted filters, the group rows of the aggregate
-modes (group_modes: one Group per mode) and the count/timeline/group text output. An app overrides the hooks its
-row model needs and adds its own dispatch (mattermost's --thread) through check_args/extra_result."""
+"""The query half of an app's search.py: an app subclasses SearchDriver for its row model (its facts as class
+attributes, its row shape as the hit/context/... hooks) and delegates its module-level run()/add_arguments() to an
+instance (DRIVER = <App>Search(SPEC)). The base owns the shared arguments, the run() skeleton and the JSON envelope,
+the hits/browse/aggregate queries and filters, and the group rows of the aggregate modes; an app adds its own
+dispatch (mattermost's --thread) through check_args/extra_result."""
 import json
 import sqlite3
 import sys

@@ -3,18 +3,13 @@
 registered with Windows' own schtasks.exe from a Task Scheduler XML definition built here: no script files, standard
 library only.
 
-  install [<app>] [--config CFG] [--python EXE] [--run-now | --dry-run]
-          check the app's schedule, the config, the data root and the interpreter, then register the task (replacing
-          one of the same name) and read it back; --run-now starts it once (the SYSTEM smoke run); --dry-run prints
-          the definition and registers nothing. Without <app>: every app that has a schedule, one after the other,
-          each with its default config (<DATA_PARENT>\\raw\\<app>\\config.json)
-  status  [<app>] [--config CFG] [--python EXE]
-          registered?, the definition against the app's schedule (and against CFG / EXE when given), state, last run
-          and result, and the step lines of the newest run that finished a step in <data_root>\\reports\\task.log.
-          Without <app>: every app that has a schedule
-  run     [<app>]  start the task once now
-  remove  [<app>]  unregister the task
-  (<app> may be left out of run and remove in a project with a single app)
+  install [<app>] [--config CFG] [--python EXE] [--run-now | --dry-run]   check, register (replacing), read back;
+          --run-now starts it once (the SYSTEM smoke run), --dry-run prints the definition and registers nothing
+  status  [<app>] [--config CFG] [--python EXE]   the definition against the app's schedule, state, last result
+          and the step lines of the newest run in <data_root>\\reports\\task.log
+  run | remove [<app>]   start the task once now | unregister it
+Without <app>, install and status take every app that has a schedule, each with its default config
+(<DATA_PARENT>\\raw\\<app>\\config.json); run and remove need <app> unless the project has a single app.
 
 An app's task runs `<python> -s -B <project>\\manage.py capture <app> --config <CFG>` in the project folder as SYSTEM
 at the highest run level: daily from `start` (local time) and every `every_hours` hours after it that day, at most

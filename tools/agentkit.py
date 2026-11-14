@@ -1,24 +1,16 @@
 # -*- coding: utf-8 -*-
-"""python -s -B <PROJECT>/tools/bootstrap.py agents <command> ... -- this checkout's agent integration, from one
-source (tools/agent_templates/) rendered into Claude Code's global configuration. Standard library only.
+"""python -s -B <PROJECT>/tools/bootstrap.py agents <command> ... -- this checkout's agent integration (llm.md 11):
+tools/agent_templates/ rendered into Claude Code's global configuration, i.e. a marked block in .claude/CLAUDE.md (the
+rest of the file kept byte for byte), the raw-search and llm-wiki-setup skills, the raw-retriever subagent and the
+user-scope MCP server llm_wiki_raw. Standard library only.
 
-  status [--json]
-      Each item and its state: absent, current, stale (an older version this tool wrote), modified (changed by hand
-      since this tool wrote it), foreign (there, but not written by this tool), unreadable (a global CLAUDE.md that is
-      not UTF-8 or whose markers are broken); and project_mismatch when the integration was installed from another
-      checkout. Exit 0 only when every item is current.
-  install [--dry-run] [--python EXE]
-      For Claude Code (the owner's profile):
-        .claude/CLAUDE.md                     a marked block; the rest of the file is kept byte for byte
-        .claude/skills/raw-search/SKILL.md, .claude/skills/llm-wiki-setup/SKILL.md, .claude/agents/raw-retriever.md
-        the user-scope MCP server llm_wiki_raw (tools/mcp_rawsearch.py, through `claude mcp add-json`)
-      A modified or foreign item is refused, never replaced. --dry-run prints the diff (paths masked) and changes
-      nothing. The MCP server runs with --python, else the interpreter it was installed with (while that is still
-      there), else the one running this command.
-  uninstall [--dry-run]
-      Removes what install wrote and nobody changed since; an item changed by hand is kept and named.
+  status [--json]                     each item absent, current, stale (an older version this tool wrote), modified
+                                      (changed by hand since), foreign (not written by this tool) or unreadable,
+                                      and project_mismatch; exit 0 only when every item is current
+  install [--dry-run] [--python EXE]  writes what is absent or stale, refusing a modified or foreign item
+  uninstall [--dry-run]               removes what install wrote and nobody changed since; the rest is kept, named
 
-The manifest lives in %LOCALAPPDATA%\\llm-wiki-raw-layer\\agentkit, never in the checkout.
+--dry-run prints the diff (paths masked). The manifest lives in %LOCALAPPDATA%\\llm-wiki-raw-layer\\agentkit.
 
 Exit codes: 0 ok / current | 3 needs attention | 2 refused or usage | 1 error or interrupted."""
 import argparse

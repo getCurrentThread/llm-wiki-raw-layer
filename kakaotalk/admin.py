@@ -1,74 +1,12 @@
 # -*- coding: utf-8 -*-
-"""KakaoTalk administration: scriptable message sending through the running Windows client's own Loco WRITE
-path — the write-side counterpart of the read-only fetch step, mattermost admin.py's counterpart here. The
-client is driven with frida, so session, TLS and sync handling stay entirely the client's own; no credential
-is read, stored or printed (the app's key material is never touched).
+"""KakaoTalk administration: message sending through the running Windows client's own Loco WRITE path, driven with
+frida (the client keeps its session, TLS and sync; no credential or key material is read, stored or printed). Every
+command posts only as the owner's own signed-in account on this machine, one message at a time.
 
-Scope: every command posts only as the owner's own, signed-in account on this machine — owner-invoked, one
-message at a time, never bulk or third-party sending.
+  check | calibrate | rooms | send | listen      (kakaotalk/README.md, "Administration", documents each one)
 
-A calibration template (JSON: captured client bytes that identify the owner's account, so it lives under the
-data parent like a token file) is produced once by `calibrate` from ONE real send, in any plain-text room —
-a capture that is not a plain-text send (+0x180 != 10) refuses `not_plain_room`:
-
-  {"v": 1, "captured_at": "...", "chatId": <int>, "msgId": <int>, "roomVtable": <int>, "sender_id": <int>,
-   "template_hex": "<0x1d0 bytes of the message object>", "texthdr_hex": "<32 bytes of its string header>"}
-
-  check      read-only: client version guard, login state, WRITE-builder prologue, template and id headroom
-             (against the newest known live msgId); before calibrate it reports template: missing
-  calibrate  capture the owner's next send (one message, any plain-text room) into the template + state files
-  rooms      read-only: list the TalkChatRoom objects a chatId has, vtable-annotated against the template
-  send       send one message with no message of yours: a minimal clone whose every pointer the builder could
-             dereference is replaced — supplement sentinel, no-extra (+0x180 = 10) path, its own text block
-  listen     stay resident and, 0.3s after the owner sends a plain-text message starting with the prefix,
-             send the same message prefix-stripped into the same room, each reply's msgId taken from the
-             same state counter `send` uses (a non-plain capture is skipped)
-
-`rooms` and `send` name the chat by `--chat-id` or `--room <title fragment>` (exactly one of the two): the
-fragment resolves read-only from the search index before anything touches the client, with search's own
-title semantics (a case-insensitive substring) — zero matches refuse `room_not_found`, several
-`ambiguous_room_title` with the count only.
-
-`send` writes at most once: the message-id counter in the state file (seeded 0x200 past the calibrated id,
-which the server accepts as an offset, and held ahead of the newest live msgId the listener has seen — state
-key `live_msg_id_max`, folded in under the same lock; a taken id is max(counter, live max + 1), so the
-client's own counter cannot catch up and collide) is persisted before the client is called — `send` and
-`listen` take ids from that one counter under a lock on the state folder, held from the read through the
-persist to the client call (a second concurrent taker refuses `state_busy`), and `send` refuses `bad_state`
-when the state file is missing or invalid instead of falling back to the calibrated id. Text comes from a
-file (as mattermost `post`), is at most 200 UTF-8 bytes, and is never printed; neither are template bytes.
-Chat ids are exact 64-bit values end to end — decimal strings across the JS bridge, since a JS double rounds
-ids above 2^53 — and only the target room's WRITE response counts: another room's (or an unreadable one) is
-tallied and never recorded, and the target's own response ends the wait immediately, the window remaining
-the maximum. Every address, byte pattern and struct offset lives in
-one per-version table keyed by the client's FileVersion (today: 26.9.1.5339, x86, image base 0x400000,
-Themida — `check` names the supported versions) and is spliced into the injected JS: an unknown version or a
-prologue mismatch refuses before anything is touched, and two running
-KakaoTalk processes refuse `ambiguous_client`. `send` and `listen` reach the rooms whose own messages carry
-no "extra" field (+0x180 == 10 — the self-chat room and the plain rooms; listen skips a non-plain capture
-with a `[SKIP] not plain` event); rooms that need "extra" are not covered yet. Delivery is judged by the
-client's WRITE response handler: `sent` only for the target room's own response with errCode 0,
-`server_rejected` for its non-zero errCode, `unconfirmed` when nothing attributable arrived in the window
-(the write happened; the result is unknown — check the room before resending). Because the pinned response
-handler is observed firing on PC sends (so a no-response window should be rare), `unconfirmed` is the
-honest outcome when none arrives; the room remains the final judge — the client renders received
-messages up to a minute late. The send result carries `log_id` (an exact 64-bit decimal string — the msg id
-of the ledger key `kakao:<chatId>:msg:<logId>`) and `sent_at` when the client's WRITE response provides
-them; the response hook does not extract them yet — the WRITE response handler does fire on a PC-side send
-(observed 2026-11-02; the earlier empty captures had watched phone-app sends), but logId/sendAt were not
-among its first-level arguments or registers, so those keys are absent until a deeper capture pins them.
-A "server unstable" dialog
-right after a send means a long-lived client
-session went stale, not a crash: restart the client and send again. `listen` stops on Ctrl+C (`interrupt`),
-at `--lifetime` (`lifetime`) or when the frida session detaches (`detached`); a detached session — or a
-script error (`[SCRIPT-ERROR]`) — also ends `send`'s and `calibrate`'s waits early, keeping send's refused /
-failed_after_write split.
-Exit codes: 0 ok; 1 a write happened but its outcome is not success — server_rejected (the target room's
-response carries a non-zero errCode), unconfirmed (no response attributable to the target chat arrived in
-the window: the result is unknown, check the room before resending), or failed_after_write (the client's
-send was called, or frida failed while loading the script, and no success followed — the message may have
-arrived; a failure one stage earlier, attaching or creating the script, refuses `frida_attach_failed`,
-nothing having run); 2 refused before any write."""
+Exit codes: 0 ok | 1 a write happened but did not succeed (server_rejected, unconfirmed, failed_after_write) |
+2 refused before any write."""
 import argparse
 import contextlib
 import ctypes

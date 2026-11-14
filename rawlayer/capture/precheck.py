@@ -2,9 +2,6 @@
 """capture refuses to start unless the data root is safe (SPEC 10.1): outside every git work tree, an ACL whose
 entries all inherit (OI)(CI), and excluded from Windows Search while the indexer runs.
 
-The ACL and Search-rule readers are the ones the old repo's tools/baseline_check.py used (acl_info,
-_search_rules), carried here so the pipeline has no runtime dependency on that checkout.
-
 Paths are taken as str or os.PathLike and handed to git, PowerShell and the comparison with the Search rules as
 their text (os.fspath). The ACL and Search checks are Windows-only: off Windows check() refuses."""
 import json

@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 """edb (SPEC 10.3, 10.4): KakaoTalk chatLogs_<chatId>.edb, decrypted clean-room.
 
-Pages are AES-256-CBC with a raw 32-byte key, one IV per page in the reserved area; page 1 keeps its
-first 16 bytes (the salt) in clear. The WAL is applied up to its last valid commit frame, checking the
-cumulative frame checksums over the stored (encrypted) bytes. The plaintext image only ever exists in
-raw/.work/<run>/ and is removed as soon as the room is dumped.
+Pages are AES-256-CBC with a raw 32-byte key, one IV per page in the reserved area; page 1 keeps its first 16
+bytes (the salt) in clear. The WAL is applied up to its last valid commit frame, checking the cumulative frame
+checksums over the stored (encrypted) bytes. The plaintext image only exists in raw/.work/<run>/ and is removed
+as soon as the room is dumped.
 
-Room titles come from the client's own chat-list database beside the rooms (chatListInfo.edb, the same page
-format and key store; the title chain is roomlist's). It is read best-effort — no key for it, or a file that
-does not read, means untitled rooms, never an error — and only the title-bearing columns are looked at, so a
-room record changes only when its title itself changes.
-
-kakatok's edb_reader is a test oracle only; nothing here imports it."""
+Room titles come from the client's chat-list database (chatListInfo.edb), read best-effort and only its
+title-bearing columns, so a room record changes only when its title does."""
 import hashlib
 import json
 import re

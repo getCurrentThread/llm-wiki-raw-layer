@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 """Shared machinery of the raw-search indexes: config, ledger reading, the index driver (full rebuild and
-incremental catch-up), version gate, locking, time and rendering helpers.
-
-Each app with a search.py (<label>/search.py) owns one index file <data_root>/index/<name>.sqlite and plugs
-into this module with a SourceIndex subclass (module attribute SPEC) plus `add_arguments(parser)` and
-`run(args) -> exit code` for its search subcommand (steps.py wires them up).
+incremental catch-up), version gate, locking, time and rendering helpers. Each app's search.py owns one index file
+<data_root>/index/<name>.sqlite through a SourceIndex subclass (CORE.md, "search.py").
 
 THE INDEX IS A PURE FUNCTION OF THE LEDGER
 ------------------------------------------
@@ -49,13 +46,9 @@ SOURCE PLUG-IN CONTRACT (see SourceIndex)
                            persist counters here
                            finish: full mode derives every row (called once, after the last manifest)
   stats(con)              -> {name: int} for reports
-The driver owns transactions, the meta and counts tables, the watermark and the swap.
-
-A source of the simple shape -- one content table folded from one origin's records, an FTS5 table <table>_fts
-over it, rows derived once per manifest -- subclasses SimpleIndex and SimpleApplier below instead of writing the
-plumbing: the record header check, end_manifest, create_tables / create_triggers and the rows / deleted stats are
-theirs, the app supplies the fold (record), the derivation (finish, and derive for a catch-up that is narrower
-than finish) and its schema.
+The driver owns transactions, the meta and counts tables, the watermark and the swap. SimpleIndex and
+SimpleApplier below are the plumbing of the usual shape (one content table folded from one origin, an FTS5 table
+<table>_fts over it): the app supplies the fold (record), the derivation (finish, derive) and its schema.
 """
 import argparse
 import datetime as _dt

@@ -172,8 +172,9 @@ python -s -B -m kakaotalk.admin send      --template <...> (--chat-id 0x... | --
 python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--lifetime 900]
 ```
 
-- The template (captured client bytes identifying the account) and its `state.json` live under the data
-  parent, like the token files; `--template` must be an absolute path there. `check` runs before
+- The template (captured client bytes identifying the account, as JSON: `v`, `captured_at`, `chatId`, `msgId`,
+  `roomVtable`, `sender_id`, `template_hex` (the 0x1d0-byte message object) and `texthdr_hex` (32 bytes of its
+  string header)) and its `state.json` live under the data parent, like the token files; `--template` must be an absolute path there. `check` runs before
   `calibrate` too: with no template yet it reports `"template": "missing"` (exit 0) beside the client
   guards. `calibrate` writes both, seeding the message-id counter `0x200` past the captured id (an offset
   the server accepts; `check` reports the counter and its headroom against the newest known live id). It
@@ -208,7 +209,8 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   refuse `room_not_found`, several `ambiguous_room_title` (the count only — no titles or ids printed), a
   missing or unreadable index `index_missing` / `index_unreadable`, a locked one `index_busy`: all exit 2
   before the client is touched. A stale index resolves stale titles — capture first if a room is missing.
-- `rooms` and `send` answer `no_room` when the running client holds no TalkChatRoom for the id — opening the
+- `rooms` (read-only) lists the TalkChatRoom objects a chat id has, each vtable-annotated against the template;
+  `rooms` and `send` answer `no_room` when the running client holds no TalkChatRoom for the id — opening the
   chat materialises it. A send whose WRITE response never arrives — or only other rooms' responses —
   reports `unconfirmed` (exit 1) with `err_code` null and an `outcome_basis` naming the case; the write
   happened, the result is unknown, judge those by the room. When the client's WRITE response provides
@@ -245,7 +247,8 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
   `failed_after_write` (1: the injected script reached the client's send call — its `[CALLED]` marker — and
   no success followed, a builder failure, an exception or a timeout; also any frida error while the script
   loads, since loading runs it up to that call; the message may have arrived, so check the room before
-  resending); `refused` (2: every failure before that call, nothing was sent). A frida session detaching
+  resending); `refused` (2: every failure before that call, nothing was sent; attaching or creating the
+  script refuses `frida_attach_failed`). A frida session detaching, or a script error (`[SCRIPT-ERROR]`),
   mid-wait ends the wait early (send keeps that same split; calibrate reports `no_capture`; listen stops
   with `stopped_by` `detached`). Requires the `frida` Python package (imported lazily; the fetch step never needs it).
 

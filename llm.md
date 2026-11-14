@@ -217,8 +217,8 @@ Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the 
 
 The app cards in section 6 run these steps at the points they name, with their own keys, bounds and commands.
 
-**5.0 The bootstrap tool.** `tools/bootstrap.py` does the config edits and the bookkeeping of these steps; its
-docstring says what each command prints. Run it as `python -s -B tools/bootstrap.py ...` from `<PROJECT>`, or with
+**5.0 The bootstrap tool.** `tools/bootstrap.py` does the config edits and the bookkeeping of these steps; this
+section says what each command prints (`--help` lists the options). Run it as `python -s -B tools/bootstrap.py ...` from `<PROJECT>`, or with
 its full path from anywhere. It prints key names and states, never config values. It refuses kakaotalk.
 - `config get <app>`: each key's state, never its value.
 - `config set <app> <KEY> <VALUE> [<KEY> <VALUE> ...]`: the 5.3 edit (`--string` keeps every value a string). After

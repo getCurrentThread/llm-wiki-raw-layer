@@ -1,37 +1,14 @@
 # -*- coding: utf-8 -*-
-"""kakaotalk's side of `manage.py setup` (the AppConfig.setup_defaults / setup_provision hooks): the config's
-default source paths, and the provisioning of every capture input the app derives itself — the root key, the
-keystore, the macOS database. setup runs all of it on a first run; `setup --provision`
-reruns it against the config.json that is already there (the recovery path when a credential rotated), with
-`--scan` (the client's memory fallback), `--root` (a root file to install, verified first) and
-`--restart-client` (restart KakaoTalk.exe to rescan a freshly started client).
+"""kakaotalk's side of `manage.py setup` (setup_defaults / setup_provision): the config's default source paths,
+and the inputs the app derives itself (the root key, the keystore, the macOS database). `setup --provision` reruns
+it on an existing config.json (the recovery path when a credential rotated), with `--scan` (the client's memory
+fallback), `--root` (a root file to install, verified first) and `--restart-client`.
 
-Defaults (setup_defaults -> fill_defaults): the client's user directory is detected under
-%LOCALAPPDATA%\\Kakao\\KakaoTalk\\users (the non-backup folder holding appstate.dat), and the app's own
-outputs — keystore, backup_decrypted — default to their place under the data root. Nothing is printed but the
-key names.
-
-The root (setup_provision -> provision): the one input capture cannot read anywhere else. Every room's DEK is
-wrapped under it (KEK = HKDF-SHA256(root, appstate.salt, info_prefix + relpath), keychain.py), and on-disk
-artifacts do not hold it (profile.dat's plaintext is a stray value; the session material behind the live root
-never leaves the client's VM transform — the kakatok research, PAPER.md §6). Setup therefore installs it in
-three steps, each verified against the client's own store, unwrap success being the root's only honest oracle
-(keychain.root_status):
-
-  1. a root already under <DATA_ROOT>/keys/root_v2.hex stays while it unwraps the store;
-  2. a copy on this machine is adopted — the research tree's root_v2.hex files, verified before installing;
-  3. the running client's memory is scanned for a 32-byte value that unwraps the store (the same candidate walk
-     the DEK scan uses; the rooms recover best right after they were opened, and --restart-client restarts
-     KakaoTalk.exe so its auto-opened rooms re-derive — clients that leave the root in memory a while can be
-     caught that way; residency is version-dependent, so this is best-effort).
-
-With a root the keystore follows (write_keystore_for, the derivation the old keys command ran: every entry the
-root unwraps, each key checked against its room file's page-1 header oracle — the client's own chat-list
-database's entry among them, which is what names the edb origin's rooms; --scan adds the room-DEK memory
-fallback for rooms the root does not key, the chat-list file riding along as one more target). On a Mac the client database decrypts (kakaocli port) when the
-config sets mac_db. Keys are credentials: every line this module prints is counts, paths and statuses — never
-key material.
-"""
+The root is the one input capture cannot read anywhere else: every room's DEK is wrapped under it, and no on-disk
+artifact holds it. It is kept, adopted from a copy on this machine, or scanned from the running client's memory, in
+that order, each verified by unwrapping the client's own store (keychain.root_status, the only honest oracle). The
+keystore follows from it (write_keystore_for). Keys are credentials: this module prints counts, paths and statuses,
+never key material."""
 from __future__ import annotations
 
 import hmac

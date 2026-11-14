@@ -1,32 +1,12 @@
 # -*- coding: utf-8 -*-
 """python -s -B <PROJECT>/tools/bootstrap.py <command> ... -- the setup steps of llm.md as commands, for the agent
-that brings this project's apps into live operation. A developer and operator tool, not a manage.py command (the
-core stays as it is); standard library only; it runs from any folder.
+that brings this project's apps into live operation. Standard library only; it runs from any folder.
 
-  doctor [--app APP ...] [--json] [--verify]
-      The machine (Python, git on the machine PATH, pwsh, the checkout, the data parent) and every
-      in-scope app: its config (placeholders left, refused or not, the sync option, what `schedule install` would
-      refuse), its credential and source files (whether they are there; nothing is opened), its index (total,
-      stale), its scheduled task (registered, last result; "unknown" from a prompt that is not elevated), the
-      newest task.log run and its checkpoints. Each app gets `next`: the llm.md step to do next. --verify also
-      runs `manage.py check <app>`, which takes the app's ledger lock: never while a capture may run.
-  config get <app> [--json]
-  config set <app> KEY VALUE [KEY VALUE ...] [--string] [--force]      config set <app> -   (a JSON object on stdin)
-  config defaults <app>
-      Read or change <DATA_PARENT>\\raw\\<app>\\config.json with a JSON-safe edit (llm.md 5.3): KEY is sources.<key> or
-      one of the app's options (v, impl and data_root need --force). A VALUE of true, false, null, a
-      plain integer, or one starting with [ or { is JSON, anything else a string (--string: always a string). The
-      file is rewritten as setup writes it, the one before kept as config.json.prev. `defaults` fills what the
-      app's setup defaults would (only keys still unset). `get` prints each key's state, never its value.
-  checkpoint show <app> | mark <app> GATE [--field NAME=VALUE ...] | clear <app> [GATE]
-      The llm.md gates an app has passed, kept in <DATA_ROOT>\\reports\\bootstrap.json (gate ids and integer or
-      boolean fields only), so a later session resumes where the last one stopped.
-  agents status | install | uninstall ...
-      The agent integration (tools/agentkit.py; `agents -h` for its options): the global CLAUDE.md block, the
-      skills, the raw-retriever subagent and the MCP server for Claude Code.
+  doctor | config get|set|defaults <app> | checkpoint show|mark|clear <app> | agents status|install|uninstall
 
-Every path printed is masked (<DATA_PARENT>, <PROJECT>, <HOME>, <user>), and no config value, token or archive
-content is printed. It does not cover kakaotalk yet (llm.md 6.5): doctor leaves it out, the others refuse it.
+llm.md says what each command does and prints (doctor: section 4; config and checkpoint: 5.0 and 5.3; agents: 11);
+`--help` lists the options. Every path printed is masked (<DATA_PARENT>, <PROJECT>, <HOME>, <user>), and no config
+value, token or archive content is printed. It does not cover kakaotalk yet (llm.md 6.5).
 
 Exit codes: 0 ok / ready | 3 needs attention | 2 refused or usage | 1 error."""
 import argparse
