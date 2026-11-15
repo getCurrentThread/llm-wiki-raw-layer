@@ -43,7 +43,7 @@ GLOBAL_FILES = (("raw-search.md", "skill", ".claude/skills/raw-search/SKILL.md")
                 ("llm-wiki-setup.md", "skill", ".claude/skills/llm-wiki-setup/SKILL.md"),
                 ("raw-retriever.md", "agent", ".claude/agents/raw-retriever.md"))
 FRONT = {"skill": ("name", "description", "argument-hint", "allowed-tools"),
-         "agent": ("name", "description", "tools", "model")}
+         "agent": ("name", "description", "tools", "model", "effort")}
 _VAR = re.compile(r"\{\{(include:)?([A-Za-z0-9_.-]+)\}\}")
 
 
