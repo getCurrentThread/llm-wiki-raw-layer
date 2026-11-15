@@ -43,10 +43,10 @@ def _lines(name, out, err):
 
 
 def one(name, argv):
-    """A single step of the pipeline, in this process: capture (rawlayer.capture.steps) or index (rawlayer.search.steps)."""
+    """A single step of the pipeline, in this process: capture (rawlayer.capture.run) or index (rawlayer.search.steps)."""
     if name == "capture":
-        from ...capture import steps  # noqa: PLC0415
-        return steps.main(["capture"] + argv)
+        from ...capture import run  # noqa: PLC0415
+        return run.main(["capture"] + argv)
     from ...search import steps  # noqa: PLC0415
     return steps.main(["index"] + argv)
 

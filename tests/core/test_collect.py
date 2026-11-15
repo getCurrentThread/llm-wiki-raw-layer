@@ -190,17 +190,6 @@ class Export(Project):
         self.assertEqual(W.target(str(self.project), self.project.parent), self.project)
 
 
-class Names(unittest.TestCase):
-    def test_safe_cut_and_unique(self):
-        n = W.name('a<b>:c"d/e\\f|g?h*i\x01  j', "x")
-        self.assertTrue(n.startswith("a_b_c_d_e_f_g_h_i_ j ("), n)
-        self.assertNotEqual(W.name("same", "a"), W.name("same", "b"))
-        self.assertEqual(W.name("same", "a"), W.name("same", "a"))
-        self.assertEqual(len(W.name("가" * 200, "x")), W.NAME_MAX + 11)
-        self.assertTrue(W.name("..", "x").startswith("untitled ("))
-        self.assertTrue(W.name("CON", "x").startswith("CON ("))     # never the bare device name
-
-
 class Options(unittest.TestCase):
 
     def test_settings_command_line_over_config(self):

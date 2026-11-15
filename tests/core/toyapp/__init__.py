@@ -6,4 +6,4 @@
   toy_b  PendingAbsentMixin: two-phase absent behind a (small) shrink guard; containers 'clean' or 'partial'
   toy_m  MultiVersionMixin: one stable pass, versions judged together
 
-Sources live under config "sources" -> "toy_dir" (see readers.py for the file shapes)."""
+Sources live under config "sources" -> "toy_dir" (see origins.py for the file shapes)."""

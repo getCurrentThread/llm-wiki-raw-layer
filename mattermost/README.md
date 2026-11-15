@@ -1,24 +1,9 @@
 # mattermost: the Mattermost raw layer
 
 This app captures private Mattermost conversations into an append-only, crash-safe raw ledger and builds an
-SQLite FTS5 search index at `<DATA_ROOT>/index/mattermost.sqlite`. It shares the root project's **rawlayer**
-framework: the root README holds what every app shares (commands, machine config and data root, the search
-index and query language, scheduled tasks, tests) and `../CORE.md` the contract. Message data and machine config
-remain outside the repository.
-The implementation uses the Python standard library.
-
-## Layout
-
-`apps.py` (source keys, options and schedule), `origins.py`, `readers/`, `fetch.py`, `admin.py`, `keys.py`,
-`vocab.py`, `search.py` and `config.example.json`. App tests (`tests/`) synthesize inputs in code under temporary
-directories; the search tests capture made-up inputs through `tests/ledgerfix.py` and compare incremental indexing
-with rebuilds over threads, the search modes and filters.
+SQLite FTS5 search index at `<DATA_ROOT>/index/mattermost.sqlite`.
 
 ## Config, origins and records
-
-`mattermost/config.example.json` shows the machine config shape; the config is
-`<DATA_PARENT>/raw/mattermost/config.json` and `<DATA_ROOT>` is its folder (the root README has the common keys
-and the data root's layout).
 
 Capture reads the archive directory read-only. Its one origin is `mm_archive`, with record kinds
 `ch`, `post`, `file`, `user` and `blob`. The archive contains `manifest.json` channel records, `posts/**.jsonl`
@@ -82,13 +67,6 @@ refuse a config without `mm_url` or an existing protected token file.
   `--max-items N` bounds channels; a run also stops after 40 minutes with `"limited": true`. Edits and deletions
   of posts already archived are not fetched again, as in mattertok.
 
-```
-python -s -B -m mattermost.fetch --login
-python -s -B -m mattermost.fetch --auth-check
-python -s -B -m mattermost.fetch --max-items 20 --capture
-python -s -B manage.py capture mattermost
-```
-
 The fetch step prints one JSON line of counts and categories only (`channels`, `posts_written`,
 `files_written`, `excluded`, `unavailable`, `errors`, `limited`, `users`, `files_stored`, `files_failed`,
 `requests`); `posts_written` counts posts new to the archive or changed, `files_written` the channel files that
@@ -137,9 +115,6 @@ python -s -B -m mattermost.admin post   (--spec <spec.json> --key <key> | --chan
   before any write.
 
 ## Search
-
-`search mattermost --help` lists the modes, filters and cursors; the index, the query language and the output are
-the root README's ("Search").
 
 - **One row per post key.** Each key `mm:post:<id>` has one row, and its latest version wins (an edit, a new
   reply count, a move to another channel file).

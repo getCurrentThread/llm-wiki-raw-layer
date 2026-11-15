@@ -1,16 +1,19 @@
-"""Read-only Discord API v10 fetch step; immutable DCE-shaped JSON partitions."""
+"""The fetch step: token-free, read-only recovery of message JSON from Discord Desktop cache.
+
+The scan strategy (embedded JSON plus bounded gzip streams) follows discrawl's
+MIT-licensed discorddesktop scanner.
+Cache eviction is never evidence of message deletion.
+"""
 import copy
 import datetime as dt
 import json
 import os
 from pathlib import Path
 import re
-import time
-from urllib import error, parse, request
-import uuid
-from appkit.archive import FetchError, atomic, bind, inside, load, locked, now, read_token
-from .keys import snowflake_ms
-from .readers.archive import _safe_rel, msg_native
+import zlib
+from appkit.archive import FetchError, atomic, inside, load, locked, now
+from .origins import snowflake_ms
+from .origins import _safe_rel, msg_native
 
 CHANNEL_TYPES = {0: "GuildTextChat", 1: "DirectTextChat", 2: "GuildVoiceChat", 3: "DirectGroupTextChat",
                  4: "GuildCategory", 5: "GuildNewsChat", 10: "GuildNewsThread", 11: "GuildPublicThread",
@@ -23,153 +26,6 @@ def _id(value):
     if snowflake_ms(value) is None:
         raise FetchError("bad_response")
     return value
-
-
-TOKEN_VARS = ("DISCORD_BOT_TOKEN", "DISCORD_TOKEN")
-
-
-def machine_token_vars():
-    """The TOKEN_VARS set machine-wide (what SYSTEM sees, and what token() prefers to the file); [] off Windows."""
-    if os.name != "nt":
-        return []
-    import winreg
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as k:
-            found = []
-            for name in TOKEN_VARS:
-                try:
-                    if winreg.QueryValueEx(k, name)[0]:
-                        found.append(name)
-                except OSError:
-                    pass
-            return found
-    except OSError:
-        return []
-
-
-def token(configured=""):
-    return read_token(TOKEN_VARS, configured, r"[\r\n\x00]")
-
-
-class DiscordClient:
-    def __init__(self, credential, token_type="auto", opener=request.urlopen, sleep=time.sleep):
-        if token_type not in ("auto", "bot", "user"):
-            raise FetchError("bad_token_type")
-        self.credential = credential.removeprefix("Bot ")
-        self.token_type, self.opener, self.sleep = token_type, opener, sleep
-        self.requests, self.wait_until, self.is_bot = 0, 0.0, None
-
-    def request(self, path, query=None, bot=None):
-        if not re.fullmatch(r"/[A-Za-z0-9_/@-]+", path):
-            raise FetchError("bad_endpoint")
-        if bot is None:
-            bot = self.is_bot if self.is_bot is not None else self.token_type != "user"
-        auth = ("Bot " if bot else "") + self.credential
-        url = "https://discord.com/api/v10" + path
-        if query:
-            url += "?" + parse.urlencode(query)
-        req = request.Request(url, headers={"Authorization": auth, "User-Agent": "DiscordBot (https://github.com/Tyrrrz/DiscordChatExporter, 1.0)"})
-        for attempt in range(6):
-            self.sleep(max(0, self.wait_until - time.monotonic()))
-            try:
-                self.requests += 1
-                with self.opener(req, timeout=60) as response:
-                    value = json.loads(response.read())
-                    if response.headers.get("X-RateLimit-Remaining") == "0":
-                        self.wait_until = time.monotonic() + float(response.headers.get("X-RateLimit-Reset-After", "1"))
-                    return value
-            except error.HTTPError as e:
-                status = e.code
-                retry = e.headers.get("Retry-After")
-                try:
-                    body = json.loads(e.read())
-                    retry = body.get("retry_after", retry) if isinstance(body, dict) else retry
-                except (ValueError, OSError):
-                    pass
-                finally:
-                    e.close()
-                if status in (429, 500, 502, 503, 504) and attempt < 5:
-                    self.sleep(min(120, float(retry or 2 ** attempt)))
-                    continue
-                raise FetchError("auth_failed" if status == 401 else "api_error", status) from None
-            except (error.URLError, OSError, ValueError):
-                raise FetchError("transport_error") from None
-        raise FetchError("retry_exhausted")
-
-    def authenticate(self):
-        try:
-            me = self.request("/users/@me", bot=self.token_type != "user")
-        except FetchError as e:
-            if self.token_type != "auto" or e.status != 401:
-                raise
-            me = self.request("/users/@me", bot=False)
-        if not isinstance(me, dict):
-            raise FetchError("bad_response")
-        _id(me.get("id"))
-        self.is_bot = bool(me.get("bot"))
-        return me
-
-    def guilds(self):
-        cursor = None
-        while True:
-            q = {"limit": 200}
-            if cursor:
-                q["after"] = cursor
-            rows = self.request("/users/@me/guilds", q)
-            if not isinstance(rows, list):
-                raise FetchError("bad_response")
-            yield from rows
-            if len(rows) < 200:
-                return
-            next_cursor = max((_id(v.get("id")) for v in rows), key=int)
-            if cursor is not None and int(next_cursor) <= int(cursor):
-                raise FetchError("pagination_stalled")
-            cursor = next_cursor
-
-    def archived(self, cid, kind, joined=False):
-        cursor, seen = None, set()
-        route = f"/channels/{cid}/" + ("users/@me/" if joined else "") + f"threads/archived/{kind}"
-        while True:
-            q = {"limit": 100}
-            if cursor:
-                q["before"] = cursor
-            obj = self.request(route, q)
-            if not isinstance(obj, dict) or not isinstance(obj.get("threads"), list):
-                raise FetchError("bad_response")
-            yield from obj["threads"]
-            if not obj.get("has_more"):
-                return
-            if not obj["threads"]:
-                raise FetchError("pagination_stalled")
-            last = obj["threads"][-1]
-            cursor = last.get("id") if joined else last.get("thread_metadata", {}).get("archive_timestamp")
-            if not isinstance(cursor, str) or cursor in seen:
-                raise FetchError("pagination_stalled")
-            seen.add(cursor)
-
-    def messages(self, cid, lower=0):
-        # The API returns newest first. Backward paging avoids skipping a burst of
-        # >100 new messages regardless of the undocumented ordering of `after`.
-        before = None
-        while True:
-            q = {"limit": 100}
-            if before:
-                q["before"] = before
-            rows = self.request(f"/channels/{cid}/messages", q)
-            if not isinstance(rows, list):
-                raise FetchError("bad_response")
-            if not rows:
-                return
-            ids = [int(_id(v.get("id"))) for v in rows]
-            if before and max(ids) >= int(before):
-                raise FetchError("pagination_stalled")
-            for obj, ident in zip(rows, ids):
-                if ident > lower:
-                    yield obj
-            if min(ids) <= lower or len(rows) < 100:
-                return
-            before = str(min(ids))
 
 
 def dce_message(obj):
@@ -217,163 +73,183 @@ def _heads(root, ch):
     return heads
 
 
-def discover(client, selected=()):
-    guilds, channels, errors = {}, {}, 0
-    if selected:
-        for cid in selected:
-            _id(cid)
-            ch = client.request(f"/channels/{cid}")
-            channels[cid] = ch
-            gid = ch.get("guild_id", "0")
-            if gid != "0" and gid not in guilds:
-                guilds[gid] = client.request(f"/guilds/{gid}")
-        return guilds, channels, errors
-    for guild in client.guilds():
-        gid = _id(guild.get("id"))
-        guilds[gid] = guild
+MAX_BYTES = 32 * 1024 * 1024
+
+
+def default_path():
+    return Path(os.environ.get("APPDATA", Path.home())) / "discord"
+
+
+def json_values(data):
+    text = data.decode("utf-8", "replace")
+    decoder, pos = json.JSONDecoder(), 0
+    # Starting only at JSON object/array prefixes avoids treating arbitrary
+    # media bytes and cache headers as structured records.
+    starts = re.compile(r'\{\s*"|\[\s*\{')
+    while True:
+        match = starts.search(text, pos)
+        if not match:
+            return
         try:
-            base = client.request(f"/guilds/{gid}/channels")
-            if not isinstance(base, list):
-                raise FetchError("bad_response")
-            for ch in base:
-                ch = dict(ch, guild_id=gid)
-                channels[_id(ch.get("id"))] = ch
-            active = client.request(f"/guilds/{gid}/threads/active")
-            for ch in active.get("threads", []):
-                channels[_id(ch.get("id"))] = dict(ch, guild_id=gid)
-            for ch in base:
-                if ch.get("type") not in (0, 5, 15, 16):
-                    continue
-                for kind, joined in (("public", False), ("private", True)):
-                    try:
-                        for thread in client.archived(ch["id"], kind, joined):
-                            channels[_id(thread.get("id"))] = dict(thread, guild_id=gid)
-                    except FetchError as e:
-                        if e.status not in (403, 404):
-                            errors += 1
-        except FetchError:
-            errors += 1
-    if not client.is_bot:
-        for ch in client.request("/users/@me/channels"):
-            channels[_id(ch.get("id"))] = ch
-    return guilds, channels, errors
+            obj, end = decoder.raw_decode(text, match.start())
+            yield obj
+            pos = end
+        except (ValueError, RecursionError):
+            pos = match.start() + 1
 
 
-def sync(root, client, channel_ids=(), refresh_days=7, patterns=(), max_items=0):
-    root, stamp = Path(root), now()
-    stats = {"status": "ok", "channels": 0, "messages_written": 0, "tombstones": 0,
-             "partitions_written": 0, "errors": 0, "limited": False}
-    with locked(root):
-        me = client.authenticate()
-        bind(root, me["id"])
-        man = load(root / "manifest.json", {"version": 1, "guilds": {}, "channels": {}})
-        if man.get("version") != 1 or not isinstance(man.get("channels"), dict) or not isinstance(man.get("guilds"), dict):
-            raise FetchError("bad_archive")
-        users = load(root / "users.json", {})
-        guilds, discovered, errors = discover(client, channel_ids)
-        stats["errors"] += errors
-        for gid, g in guilds.items():
-            man["guilds"][gid] = {"id": gid, "name": g.get("name", "")}
-        man["guilds"].setdefault("0", {"id": "0", "name": "Direct Messages"})
-        cutoff_ms = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000) - refresh_days * 86400000
-        cutoff_id = max(0, (cutoff_ms - 1420070400000) << 22)
-        for cid, raw in sorted(discovered.items(), key=lambda p: int(p[0])):
-            if raw.get("type") == 4:
+def payloads(data):
+    yield data
+    for match in re.finditer(b"\x1f\x8b\x08", data):
+        try:
+            decoder = zlib.decompressobj(31)
+            value = decoder.decompress(data[match.start():], MAX_BYTES + 1)
+            if decoder.eof and len(value) <= MAX_BYTES:
+                yield value
+        except zlib.error:
+            continue
+
+
+def scan(source):
+    source = Path(source)
+    if not source.is_dir():
+        raise FetchError("desktop_missing")
+    # Deliberately exclude Local Storage, cookies, keychains and session files.
+    roots = [source / "Cache/Cache_Data", source / "Service Worker/CacheStorage"]
+    messages, channels, routes = {}, {}, {}
+    stats = {"files_scanned": 0, "files_skipped": 0, "json_values": 0, "messages_found": 0,
+             "unclassified_channels": 0, "source": "desktop", "coverage": "cached_only"}
+
+    def visit(obj, mtime):
+        if isinstance(obj, list):
+            for child in obj:
+                visit(child, mtime)
+        elif isinstance(obj, dict):
+            ident, cid, author = obj.get("id"), obj.get("channel_id"), obj.get("author")
+            if snowflake_ms(ident) is not None and snowflake_ms(cid) is not None and isinstance(author, dict) \
+                    and snowflake_ms(author.get("id")) is not None and isinstance(obj.get("content", ""), str):
+                key = (cid, ident)
+                rank = (obj.get("edited_timestamp") or obj.get("timestamp") or "", mtime)
+                if key not in messages or rank > messages[key][0]:
+                    messages[key] = (rank, obj)
+            elif snowflake_ms(ident) is not None and "channel_id" not in obj and isinstance(obj.get("type"), int) and obj.get("type") in CHANNEL_TYPES \
+                    and (obj.get("guild_id") or obj.get("type") in (1, 3) or "recipients" in obj):
+                channels[ident] = obj
+            for child in obj.values():
+                if isinstance(child, (dict, list)):
+                    visit(child, mtime)
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
                 continue
-            gid = raw.get("guild_id", "0")
-            parent_raw = discovered.get(raw.get("parent_id"), {})
-            if raw.get("type") in (10, 11, 12) and not parent_raw and raw.get("parent_id"):
-                try:
-                    parent_raw = client.request(f"/channels/{_id(raw['parent_id'])}")
-                except FetchError:
-                    parent_raw = {}
-            category_id = parent_raw.get("parent_id") if raw.get("type") in (10, 11, 12) else raw.get("parent_id")
-            category = discovered.get(category_id, {}).get("name")
-            label = "\n".join(str(v or "") for v in (man["guilds"].get(gid, {}).get("name"), category, raw.get("name"))).casefold()
-            if any(p.casefold() in label for p in patterns):
+            try:
+                if not path.resolve().is_relative_to(source.resolve()):
+                    raise FetchError("unsafe_path")
+                before = path.stat()
+                if not 0 < before.st_size <= MAX_BYTES:
+                    stats["files_skipped"] += 1
+                    continue
+                data = path.read_bytes()
+                after = path.stat()
+                if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    stats["files_skipped"] += 1
+                    continue
+                stats["files_scanned"] += 1
+                for payload in payloads(data):
+                    for match in re.finditer(rb"/channels/(@me|[0-9]{1,19})/([0-9]{1,19})", payload):
+                        gid, cid = (v.decode("ascii") for v in match.groups())
+                        routes[cid] = "0" if gid == "@me" else gid
+                    if b'"author"' not in payload and b'"recipients"' not in payload and b'"guild_id"' not in payload:
+                        continue
+                    for obj in json_values(payload):
+                        stats["json_values"] += 1
+                        visit(obj, before.st_mtime_ns)
+            except OSError:
+                stats["files_skipped"] += 1
+    grouped = {}
+    for (cid, mid), (_, msg) in messages.items():
+        grouped.setdefault(cid, []).append(msg)
+        ch = channels.setdefault(cid, {"id": cid, "name": "", "type": 0})
+        gid = msg.get("guild_id") or ch.get("guild_id") or routes.get(cid)
+        if gid:
+            ch["guild_id"] = gid
+    stats["messages_found"] = len(messages)
+    stats["unclassified_channels"] = sum(not c.get("guild_id") and c.get("type") not in (1, 3) for c in channels.values())
+    return channels, grouped, stats
+
+
+def sync(root, source, patterns=(), selected=(), max_items=0):
+    channels, grouped, stats = scan(source)
+    root = Path(root)
+    stamp = now()
+    stats.update(status="ok", channels=0, messages_written=0, partitions_written=0, errors=0, limited=False)
+    with locked(root):
+        man = load(root / "manifest.json", {"version": 1, "guilds": {}, "channels": {}})
+        users = load(root / "users.json", {})
+        for cid, values in sorted(grouped.items(), key=lambda p: int(p[0])):
+            if selected and cid not in selected:
                 continue
             if max_items and stats["channels"] >= max_items:
                 stats["limited"] = True
                 break
-            old = man["channels"].get(cid, {"id": cid, "files": [], "last_message_id": "0"})
-            try:
-                heads = _heads(root, old)
-                high = max((int(k) for k in heads), default=0)
-                lower = min(high, cutoff_id) if refresh_days and high else high
-                messages = [] if raw.get("type") in (15, 16) else list(client.messages(cid, lower))
-                fresh = {_id(m.get("id")): dce_message(m) for m in messages}
-                if refresh_days and not fresh and any(lower < int(mid) <= high and not msg.get("_removedAt")
-                                                     for mid, msg in heads.items()):
-                    # READ_MESSAGE_HISTORY loss returns [] rather than an error.
-                    # An entirely empty refresh cannot establish mass deletion.
-                    raise FetchError("empty_refresh")
-                if messages and all(m.get("type", 0) == 0 and not any(m.get(field) for field in
-                                   ("content", "attachments", "embeds", "sticker_items", "message_snapshots")) for m in messages):
-                    raise FetchError("message_content_unavailable")
-                delta = [m for mid, m in sorted(fresh.items(), key=lambda p: int(p[0]))
-                         if mid not in heads or msg_native(m) != msg_native(heads[mid])]
-                if refresh_days and high:
-                    for mid, msg in heads.items():
-                        if lower < int(mid) <= high and mid not in fresh and not msg.get("_removedAt"):
-                            delta.append(dict(msg, _removedAt=stamp))
-                            stats["tombstones"] += 1
-                ch = {"id": cid, "type": CHANNEL_TYPES.get(raw.get("type"), str(raw.get("type"))), "guild_id": gid,
-                      "parent_id": raw.get("parent_id") if raw.get("type") in (10, 11, 12) else None,
-                      "category_id": category_id, "category": category, "name": raw.get("name", ""), "topic": raw.get("topic"),
-                      "files": list(old["files"]), "last_message_id": str(max(high, max((int(k) for k in fresh), default=0))), "error": ""}
-                for obj in messages:
-                    author = obj["author"]
-                    uid = _id(author.get("id"))
-                    user = dict(users.get(uid, {}), id=uid, name=author.get("global_name") or author.get("username", ""), isBot=bool(author.get("bot")))
-                    user.setdefault("nicks", {})
-                    if obj.get("member", {}).get("nick"):
-                        user["nicks"][gid] = obj["member"]["nick"]
-                    users[uid] = user
-                for start in range(0, len(delta), 10000):
-                    chunk = delta[start:start + 10000]
-                    name = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-                    # Clock regression must not reorder immutable versions.
-                    if ch["files"] and name <= Path(ch["files"][-1]).name:
-                        last = dt.datetime.strptime(Path(ch["files"][-1]).stem, "%Y%m%dT%H%M%S%fZ")
-                        name = (last + dt.timedelta(microseconds=1)).strftime("%Y%m%dT%H%M%S%fZ")
-                    bucket = old["files"][0].split("/")[1] if old["files"] else gid
-                    rel = f"exports/{bucket}/{cid}/{name}.json"
-                    partition = {"guild": man["guilds"].get(gid, {"id": gid, "name": ""}), "channel": {"id": cid, "name": ch["name"], "type": ch["type"]},
-                                 "exportedAt": stamp, "messageCount": len(chunk), "messages": chunk}
-                    atomic(root, root / rel, partition, immutable=True)
-                    ch["files"].append(rel)
-                    stats["partitions_written"] += 1
-                man["channels"][cid] = ch
-                stats["channels"] += 1
-                stats["messages_written"] += len(delta)
-            except (FetchError, ValueError, TypeError, KeyError):
-                stats["errors"] += 1
-                # Preserve known partitions/cursor; a failed or incomplete fetch
-                # must never infer deletion or advance the channel watermark.
-                if cid in man["channels"]:
-                    man["channels"][cid]["error"] = "collection_failed"
+            raw = channels[cid]
+            old = man["channels"].get(cid, {"id": cid, "files": []})
+            gid = raw.get("guild_id") or ("0" if raw.get("type") in (1, 3) else old.get("guild_id", "cache_unknown"))
+            guild = man["guilds"].setdefault(gid, {"id": gid, "name": "Direct Messages" if gid == "0" else "Cached guild"})
+            name = raw.get("name") or old.get("name", "Cached channel")
+            if any(p.casefold() in (guild["name"] + "\n" + name).casefold() for p in patterns):
+                continue
+            heads = _heads(root, old)
+            delta = []
+            for obj in sorted(values, key=lambda m: int(m["id"])):
+                msg = dce_message(obj)
+                previous = heads.get(msg["id"])
+                if previous and (previous.get("_removedAt") or (previous.get("timestampEdited") or "") > (msg.get("timestampEdited") or "")):
+                    continue
+                if previous is None or msg_native(previous) != msg_native(msg):
+                    delta.append(msg)
+                author = obj["author"]
+                uid = author["id"]
+                user = dict(users.get(uid, {}), id=uid, name=author.get("global_name") or author.get("username", ""), isBot=bool(author.get("bot")))
+                user.setdefault("nicks", {})
+                users[uid] = user
+            ch = {"id": cid, "type": CHANNEL_TYPES.get(raw.get("type", 0), "GuildTextChat"), "guild_id": gid,
+                  "parent_id": raw.get("parent_id") if raw.get("type") in (10, 11, 12) else old.get("parent_id"),
+                  "name": name, "topic": raw.get("topic", old.get("topic")), "category": old.get("category"),
+                  "category_id": old.get("category_id"), "files": list(old["files"]),
+                  "last_message_id": str(max([int(m["id"]) for m in values] + [int(old.get("last_message_id") or "0")])), "error": ""}
+            for start in range(0, len(delta), 10000):
+                chunk = delta[start:start + 10000]
+                clock = dt.datetime.now(dt.timezone.utc)
+                if ch["files"]:
+                    last = dt.datetime.strptime(Path(ch["files"][-1]).stem, "%Y%m%dT%H%M%S%fZ").replace(tzinfo=dt.timezone.utc)
+                    clock = max(clock, last + dt.timedelta(microseconds=1))
+                bucket = old["files"][0].split("/")[1] if old["files"] else gid
+                rel = f"exports/{bucket}/{cid}/{clock.strftime('%Y%m%dT%H%M%S%fZ')}.json"
+                atomic(root, root / rel, {"guild": guild, "channel": {"id": cid, "name": name, "type": ch["type"]},
+                                        "exportedAt": stamp, "messages": chunk, "messageCount": len(chunk)}, immutable=True)
+                ch["files"].append(rel)
+                stats["partitions_written"] += 1
+            man["channels"][cid] = ch
+            stats["channels"] += 1
+            stats["messages_written"] += len(delta)
         atomic(root, root / "users.json", users)
+        import uuid
         man["generation"] = uuid.uuid4().hex
         atomic(root, root / "manifest.json", man)
-    stats["requests"] = getattr(client, "requests", 0)
-    stats["token_type"] = "bot" if client.is_bot else "user"
     return stats
 
 
 def sync_config(cfg, auth_only=False, full=False, max_items=0):
-    if cfg.dc_source == "desktop":
-        from . import desktop
-        source = cfg.dc_desktop_path or desktop.default_path()
-        if auth_only:
-            if not Path(source).is_dir():
-                raise FetchError("desktop_missing")
-            return {"status": "local_ready", "authentication_required": False}
-        return desktop.sync(cfg.sources["dc_archive"], source, cfg.dc_exclude, cfg.dc_channel_ids, max_items)
-    client = DiscordClient(token(cfg.dc_token_file), cfg.dc_token_type)
+    source = cfg.dc_desktop_path or default_path()
     if auth_only:
-        client.authenticate()
-        return {"status": "authenticated", "token_type": "bot" if client.is_bot else "user"}
-    return sync(cfg.sources["dc_archive"], client, cfg.dc_channel_ids, cfg.dc_refresh_days, cfg.dc_exclude, max_items)
+        if not Path(source).is_dir():
+            raise FetchError("desktop_missing")
+        return {"status": "local_ready", "authentication_required": False}
+    return sync(cfg.sources["dc_archive"], source, cfg.dc_exclude, cfg.dc_channel_ids, max_items)
 
 
 if __name__ == "__main__":

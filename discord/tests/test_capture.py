@@ -1,8 +1,8 @@
 import json
 import unittest
 from rawlayer.capture import canon
-from discord.readers.archive import msg_native
-from discord.keys import snowflake_ms
+from discord.origins import msg_native
+from discord.origins import snowflake_ms
 from .fixtures import Fixture, CID, MID, message
 from tests.core import appfix as h
 

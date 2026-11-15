@@ -9,21 +9,18 @@ Apps here: {{APPS}}.
 
 ## How to search
 
-- The `llm_wiki_raw` MCP tools come first: `raw_status` (which indexes exist and how fresh), `raw_aggregate`
-  (count, timeline, senders and the other aggregate modes), `raw_search` (hits with context), `raw_read` (a
-  thread, a page's text, a list), `raw_help` (an app's modes, filters and query language).
-- When they are not connected, run the search command {{WHERE}}:
+- Run the search command {{WHERE}}:
   `{{RUN}} search <app> ... --json`
-  Its `--help` documents its options.
-- Either way the command's help is the documentation: trust it over memory and over this file.
+  Its `--help` (`search <app> --help`) documents an app's modes, filters and query language: trust it over memory
+  and over this file.
 - Turn the request into terms yourself. Korean particles and common endings are stripped automatically (송금을 →
   송금, 회의에서 → 회의, 보냈다 → 보냈 OR 보내): the envelope's `normalized_query` shows what ran, and rows with
   the terms as typed come first. For a verb whose stem changes in other ways, still give both forms. Quote a term,
-  or pass `--literal` (MCP: `filters: {"literal": true}`), to match it exactly as typed.
+  or pass `--literal`, to match it exactly as typed.
 - How many / when / who / where: aggregate first. Read hits only when the content matters. "Read that day / that
   conversation": browse with the container and date filters, paging with the cursors.
 - A question worded unlike the text it is after (a paraphrase, a description, "the mail where they said the
-  launch slips"): search with `hybrid: true` (`--hybrid`). It also ranks by meaning: each hit's
+  launch slips"): search with `--hybrid`. It also ranks by meaning: each hit's
   `sources` gives its keyword and semantic rank (a semantic-only hit holds none of the terms), and `context` is the
   conversation window or section around it. `window: true` means no single row held every term, so the keyword
   ranks went to stretches of one conversation or page whose rows hold them all between them: read the `context`.

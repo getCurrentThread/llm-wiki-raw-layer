@@ -7,7 +7,7 @@ never registered, so it fails here instead of leaking. Prose goes through lit(),
 called on string literals in this package. The rules are those the existing ledger's manifests were
 written under, so a manifest this code writes is accepted (or refused) exactly as before.
 
-The words and patterns of the installed apps (their origin names, kinds, statuses and vocab.py) are added by the
+The words and patterns of the installed apps (their origin names, kinds, statuses and the WORDS and PATTERNS of its origins.py) are added by the
 registry (install()); the first check loads it.
 """
 import json

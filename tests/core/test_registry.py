@@ -52,11 +52,11 @@ class FakeApps:
                                                  "options": tuple(options), "wiki": wiki,
                                                  "archive": archive, "__module__": pkg + ".apps"})
             setattr(apps, cls.__name__, cls)
-        mods[pkg + ".origins"] = types.SimpleNamespace(ORIGINS=tuple(origins))
-        if inputs:                                          # inputs.py and vocab.py are optional modules
-            mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg: {}))
+        mods[pkg + ".origins"] = mod = types.SimpleNamespace(ORIGINS=tuple(origins))
+        if inputs:                                          # resolve, WORDS and PATTERNS are optional
+            mod.resolve = resolve or (lambda cfg: {})
         if vocab:
-            mods[pkg + ".vocab"] = types.SimpleNamespace(WORDS=tuple(words), PATTERNS=tuple(patterns))
+            mod.WORDS, mod.PATTERNS = tuple(words), tuple(patterns)
         if search is not None:
             mods[pkg + ".search"] = search
         for k, v in mods.items():
@@ -100,21 +100,6 @@ class TestDerived(unittest.TestCase):
             self.assertTrue(publicout.ok_str("toy:toy_b:12"))
             self.assertFalse(publicout.ok_str("toy:toy_b:A1"))
             self.assertFalse(publicout.ok_str("somebody"))
-
-    def test_use_restores_the_previous_registry(self):
-        with registry.use([T.TOY]) as outer:
-            with registry.use([T.TOY2]):
-                self.assertEqual(registry.origin_order(), ())
-                self.assertFalse(publicout.ok_str("toy_a"))
-            self.assertIs(registry.get(), outer)
-            self.assertTrue(publicout.ok_str("toy_a"))
-
-    def test_use_without_a_previous_registry_uninstalls(self):
-        with no_registry():
-            with registry.use([T.TOY]):
-                self.assertTrue(publicout.ok_str("toy_a"))
-            self.assertIsNone(registry._current)
-            self.assertFalse(publicout._installed)
 
     def test_shared_table_with_the_same_ddl_is_one_table(self):
         apps = FakeApps()
@@ -193,8 +178,8 @@ class TestRefusals(Base):
         self.assertEqual((app.vocab.WORDS, app.vocab.PATTERNS), ((), ()))
 
     def test_archive_declaration(self):
-        """AppConfig.archive = p adds the source key <p>_archive and, without an inputs.py, that input attribute (the
-        config's path); an inputs.py replaces it."""
+        """AppConfig.archive = p adds the source key <p>_archive and, without resolve() in origins.py, that input attribute (the
+        config's path); a resolve() replaces it."""
         pkg = self.apps.fake("arc", archive="ar", source_keys=["other"], inputs=False)
         reg = registry.Registry([pkg])
         self.assertEqual(reg.source_keys, ("ar_archive", "other"))

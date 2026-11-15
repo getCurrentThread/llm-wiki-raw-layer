@@ -11,7 +11,8 @@ import unittest
 from unittest import mock
 
 from rawlayer import management, registry
-from rawlayer.capture import ledger, paths, steps
+from rawlayer.capture import ledger, paths
+from rawlayer.capture import run as capture_run
 from rawlayer.search import index
 from tests.core import toyfix as T
 from tests.core.projectfix import Project, app_files
@@ -142,7 +143,7 @@ class TestOwnership(T.ToyCase):
                 with self.subTest(command=command):
                     out = io.StringIO()
                     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-                        rc = steps.main([command, "--config", str(self.fx.config_path), *extra])
+                        rc = capture_run.main([command, "--config", str(self.fx.config_path), *extra])
                     self.assertEqual(rc, 2)
                     self.assertIn("refused", out.getvalue())
             with self.assertRaisesRegex(index.UsageError, "belongs to another app"):
@@ -170,7 +171,8 @@ class TestSetup(unittest.TestCase):
         self.files = app_files("toyish", "(ToyA, ToyB, ToyM)", extra={
             "apps.py": ("from tests.core.toyapp.apps import ToyConfig\n\n\n"
                         "class Config(ToyConfig):\n    label = 'toyish'\n"),
-            "inputs.py": "from tests.core.toyapp.inputs import resolve  # noqa: F401\n",
+            "origins.py": ("from tests.core.toyapp.origins import ToyA, ToyB, ToyM, resolve  # noqa: F401\n\n"
+                           "ORIGINS = (ToyA, ToyB, ToyM)\n"),
             "config.example.json": json.dumps(self.EXAMPLE)})
 
     def setup(self, *argv, stdin=None):

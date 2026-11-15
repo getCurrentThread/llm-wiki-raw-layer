@@ -1,11 +1,7 @@
 # kakaotalk: the KakaoTalk raw layer
 
 This app captures private KakaoTalk conversations into an append-only, crash-safe raw ledger and builds an
-SQLite FTS5 search index at `<DATA_ROOT>/index/kakaotalk.sqlite`. It shares the root project's **rawlayer**
-framework: the root README holds what every app shares (commands, machine config and data root, the search
-index and query language, scheduled tasks, tests) and `../CORE.md` the contract. Message data and machine config
-remain outside the repository.
-The implementation uses the standard library plus pycryptodome for `.edb` decryption.
+SQLite FTS5 search index at `<DATA_ROOT>/index/kakaotalk.sqlite`, with pycryptodome for `.edb` decryption.
 
 ## Scope and authorization
 
@@ -19,21 +15,7 @@ repository). `admin.py` posts only as the
 owner's own signed-in account, one message at a time, owner-invoked — the write-side counterpart of mattermost
 admin.py's webhook post.
 
-## Layout
-
-`apps.py` (source keys, options, schedule and the setup hooks), `origins.py`, `inputs.py`, `readers/`, `keys.py`
-(value rules), `vocab.py`, `search.py`, `state.py` (the `schema_base` and `edb_salt` state tables), `provision.py`
-(setup's defaults and the provisioning of the root key and keystore), `admin.py` (the write side — scriptable sending) and `config.example.json`.
-`wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit ported from
-kakatok (the owner's prior research project; its notes live outside this repository). App tests (`tests/`) synthesize
-inputs in code under temporary directories; the search tests capture made-up inputs through `tests/ledgerfix.py`
-and compare incremental indexing with rebuilds over the search modes and filters.
-
 ## Config, origins and records
-
-`kakaotalk/config.example.json` shows the machine config shape; the config is
-`<DATA_PARENT>/raw/kakaotalk/config.json` and `<DATA_ROOT>` is its folder (the root README has the common keys and
-the data root's layout).
 
 Capture reads the decrypted backup room databases and the client's encrypted `.edb` room files read-only.
 Origins, in ledger order, are `backup_decrypted` and `edb`. The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
@@ -202,9 +184,6 @@ python -s -B -m kakaotalk.admin listen    --template <...> [--prefix !!] [--life
 
 ## Search
 
-`search kakaotalk --help` lists the modes, filters and cursors; the index, the query language and the output are
-the root README's ("Search").
-
 - **One row per message key.** Each key `kakao:<chatId>:msg:<logId>` has one row across the three Kakao
   origins.
 - **Text.** It comes from the best origin whose latest capture of the message has text, in the order edb >
@@ -221,9 +200,3 @@ the root README's ("Search").
 - **Cursors.** `--before` / `--after` take `<ts>.<logId>.<row>`. The row id breaks ties between messages that
   share a time and logId (the same logId in two rooms), so no page boundary skips one. A two-part cursor
   `<ts>.<logId>` from an older page still works.
-
-## Wiki export
-
-`kakaotalk/apps.py` declares `wiki = (None, "chat")`: `manage.py collect kakaotalk` (llm.md 13) writes each room's
-closed months as Markdown sources of the wiki vault, but there are no `*_wiki_*` config keys, so `--project`,
-`--include`, `--exclude` and `--since` on the command line give its settings. Only when the owner asks for it.

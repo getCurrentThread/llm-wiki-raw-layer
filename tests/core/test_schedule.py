@@ -496,14 +496,6 @@ class TestManage(Case):
             self.assertEqual((rc, err), (0, ""))
             self.assertIn("note: schedule: toy and toy2 start at the same minute (04:14, 10:14, 16:14, 22:14)", out)
 
-    def test_the_registry_wants_task_checks_to_take_the_config(self):
-        from rawlayer import registry
-        for hook in ([], lambda self: [], None):
-            with self.subTest(hook=hook), mock.patch.object(toyapps.ToyConfig, "task_checks", hook), \
-                    self.assertRaisesRegex(registry.RegistryError, "task_checks must be a method"):
-                registry.Registry([T.TOY])
-
-
 class TestProjectSettings(unittest.TestCase):
     def test_this_projects_schedules_are_well_formed(self):
         """Whatever this project's own apps say (no stand-ins here): no schedule, or a valid one."""

@@ -5,7 +5,6 @@ import hashlib
 from rawlayer.capture import canon
 from rawlayer.capture.model import ContainerError, Obs
 
-from ..keys import kakao_ts_ms
 
 TABLE_KIND = {"chatLogs": "msg", "chatLogHistory": "hist", "chatLogMeta": "meta", "chatLog_attachment": "attachment"}
 KNOWN_TABLES = frozenset((
@@ -101,3 +100,14 @@ def iter_room_obs(con, chat_id, base_for, notes, asof_s, check_counts=True, name
             yield Obs(kind, key, native, derived, ts, asof_s)
         if check_counts and seen != expected:
             raise ContainerError("count_mismatch", "count_mismatch")
+
+
+# KakaoTalk value rule (SPEC 6): the message timestamp.
+def kakao_ts_ms(send_at):
+    """(ts_ms, out_of_range). ts_ms is None unless 1e9 <= sendAt < 1e10 (integer)."""
+    v = send_at
+    if isinstance(v, bool) or not isinstance(v, int):
+        return None, True
+    if 1_000_000_000 <= v < 10_000_000_000:
+        return v * 1000, False
+    return None, True

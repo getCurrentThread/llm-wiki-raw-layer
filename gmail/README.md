@@ -15,21 +15,10 @@ whole mailbox, sending included, with no read-only scope, so the fetch step itse
 folders with EXAMINE, reads with UID FETCH and `BODY.PEEK[]` (no `\Seen` change) and UID SEARCH, and never sends
 STORE, COPY, APPEND or EXPUNGE. Gmail keeps IMAP on for personal accounts.
 
-Prepare the protected data root with `python -s -B manage.py setup gmail`; it fills `sources.gm_archive` and
-`gm_imap_password_file` (`<DATA_ROOT>\app_password.txt`). Set `gm_imap_user` to the Gmail address. The password file
-must be an absolute resolved path under `<DATA_PARENT>`; its folder passes the same ACL, git-tree and Windows
+`gm_imap_user` is the Gmail address. The password file `gm_imap_password_file` (setup fills
+`<DATA_ROOT>\app_password.txt`) must be an absolute resolved path under `<DATA_PARENT>`; its folder passes the same ACL, git-tree and Windows
 Search precheck as data roots. It holds the app password on one line; spaces (Google shows it in four groups)
-and surrounding whitespace are ignored. Keep `gm_sync: false` until manual genesis is complete. Never put the app
-password in this repository.
-
-```
-python -s -B -m gmail.fetch --auth-check --config <CFG>
-python -s -B -m gmail.fetch --max-items 1000 --capture --config <CFG>
-# Repeat the preceding command until limited=false.
-python -s -B manage.py capture gmail --config <CFG>
-# Set gm_sync=true in the external config if scheduled capture should sync Gmail.
-python -s -B manage.py schedule install gmail --config <CFG>
-```
+and surrounding whitespace are ignored.
 
 `--auth-check` signs in; it does not publish message content. The fetch step otherwise prints only
 vocabulary-validated aggregate counts/categories, never message text, addresses, IDs or credentials.
@@ -59,10 +48,7 @@ messages keep their content when excluded later. Removing an exclusion can make 
 UNREAD is the default volatile state label and never changes a ledger signature. The reader applies no exclusions.
 Labels may race between listing and fetch; a fetched message that newly gained an excluded label is discarded.
 
-Exit codes: fetch step 0 success or bounded genesis, 2 authentication/account refusal, 75 incomplete requests,
-busy archive or incomplete work, 1 unexpected/config failure. Capture uses the core's 0/2/3/75/1
-contract; malformed/missing containers yield 75, and removing a retained key from a healthy container yields 3.
-`--capture` runs capture/index once after collection, with automatic sync disabled for that child.
+Malformed or missing containers make capture exit 75, and removing a retained key from a healthy container 3.
 
 ## Archive contract, version 1
 
@@ -125,29 +111,17 @@ HTTP(S) URL queries/fragments are removed from extracted text and headers before
 `body_truncated`. This cap permits up to 16 MiB, subject to the stricter serialized partition cap.
 Attachments retain MIME part path, filename, MIME type, decoded size and SHA-256 only.
 
-## Search and schedule
-
-```
-python -s -B manage.py search gmail 배포 --label INBOX --json
-python -s -B manage.py search gmail deployment --from sender@example.org --json
-python -s -B manage.py search gmail --thread def123 --context 2 --json
-python -s -B manage.py search gmail 배포 --mode labels --json
-python -s -B manage.py search gmail 배포 --include-removed --json
-```
+## Search
 
 FTS covers subject, From, To/Cc, body text and attachment filenames. Filters: repeatable `--label` (name
 substring or exact ID; multiple flags are AND), `--from`/`--sender` (sender substring), `--thread` (thread ID),
 `--since`, `--until`, `--limit`. Modes: hits, count, timeline, senders, labels, threads. Thread selection
 honors other filters; context shows neighbors in that thread. `--before`/`--after` use `ts_ms.hex_id` cursors.
 TRASH, SPAM and `_removedAt` are hidden unless `--include-removed` (or shared `--include-deleted`) is given.
-Label aggregation counts each membership once; a message can belong to multiple labels. The index, the query
-language and the output are the root README's ("Search").
+Label aggregation counts each membership once; a message can belong to multiple labels.
 One derivation handles state before/after content identically during incremental updates and rebuilds.
 
-The SYSTEM task `\llm-wiki\gmail-capture` runs on the
-schedule in [../README.md](../README.md#scheduled-tasks). When gm_sync is true, registration refuses an empty
-`gm_imap_user` and a missing or unsafe app password file. The owner must ensure SYSTEM can read that file through
-the protected inherited ACL. Scheduled sync should begin only after manual genesis and `--auth-check` succeed.
+With `gm_sync` on, `task_checks` refuses an empty `gm_imap_user` and a missing or unsafe app password file.
 
 ## Limitations
 
@@ -156,4 +130,3 @@ implemented.
 The listing and lightweight ID/state maps occupy memory proportional to mailbox metadata;
 message bodies stay partition-bounded. One fetched message and its MIME parsing occupy one message's memory.
 Snapshots preserve the final state observed per sync, not every intermediate label event between captures.
-Tests use only temporary synthetic data and an injected fake IMAP connection.

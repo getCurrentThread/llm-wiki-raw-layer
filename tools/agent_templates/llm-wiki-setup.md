@@ -21,10 +21,9 @@ The tool the runbook uses, run {{WHERE}} (`BOOT` below):
    and 5.3). They never print values, and neither do you: no tokens, client files, URLs of the owner's servers or
    exclusion patterns in messages. After a gate passes, record it with `BOOT checkpoint mark <app> <step>` (the
    steps and fields that 5.0 lists).
-5. [human] steps (sign-ins, consent, bot setup, Windows Search) go to the owner through the 7.1 handshake: say
+5. [human] steps (sign-ins, consent, Windows Search) go to the owner through the 7.1 handshake: say
    exactly what to do, then wait. [elevated] steps go through one batched UAC prompt (7.2).
 6. Report by section 10: the steps run, their gates and exit codes, and aggregates only.
 
-The agent integration (the global CLAUDE.md block, these skills, the raw-retriever subagent and the
-`llm_wiki_raw` MCP server) is managed with `BOOT agents status|install|uninstall` (llm.md section 11). Run
+The agent integration (the global CLAUDE.md block, these skills and the raw-retriever subagent) is managed with `BOOT agents status|install|uninstall` (llm.md section 11). Run
 `install --dry-run` first, show the owner the diff, and install only with their approval.

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Dense retrieval (rawlayer.search.dense): the URL policy, the embedding client against a fake Ollama on 127.0.0.1,
-pack(), and embed + search --hybrid end to end on a synthetic index with a brute-force vector store (the real
-sqlite-vec only when RAWLAYER_TEST_SQLITE_VEC names its vec0 DLL). All data is synthesised in code."""
+pack(), and embed + search --hybrid end to end on a synthetic index with a brute-force vector store. All data is
+synthesised in code. Not covered, on purpose: the real sqlite-vec vec0 DLL, which no test machine has."""
 import argparse
 import array
 import contextlib
@@ -439,25 +439,6 @@ class HybridEndToEnd(unittest.TestCase):
 
 def ids(hits):
     return [i for i, _ in hits]
-
-
-@unittest.skipUnless(os.environ.get("RAWLAYER_TEST_SQLITE_VEC"), "set RAWLAYER_TEST_SQLITE_VEC to the vec0 DLL")
-class RealVec0(unittest.TestCase):
-
-    def test_knn_window_and_delete(self):
-        con = sqlite3.connect(":memory:")
-        self.addCleanup(con.close)
-        with mock.patch.object(dense, "vec_dll", return_value=Path(os.environ["RAWLAYER_TEST_SQLITE_VEC"])):
-            dense.Vec0.load(con)
-        dense.Vec0.create(con, 4)
-        dense.Vec0.insert(con, [(1, [1, 0, 0, 0], 10, 20), (2, [0.9, 0.1, 0, 0], 30, 40), (3, [0, 1, 0, 0], 50, 60)])
-        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3)), [1, 2, 3])
-        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, since=25)), [2, 3])
-        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, until=25)), [1])
-        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, ids=[3, 2])), [2, 3])
-        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3, since=25, ids=[1, 2])), [2])
-        dense.Vec0.delete(con, [1])
-        self.assertEqual(ids(dense.Vec0.knn(con, [1, 0, 0, 0], 3)), [2, 3])
 
 
 if __name__ == "__main__":

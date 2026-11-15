@@ -9,7 +9,7 @@ import unittest
 
 from rawlayer.capture import canon
 from rawlayer.capture.config import Config, ConfigError
-from mattermost.readers import archive as src_matter
+from mattermost import origins as src_matter
 from mattermost.tests.fixtures import Fixture, mm_file, post
 from tests.core.appfix import _force, by_key, capture, invariants, manifests, records, replay_diff
 

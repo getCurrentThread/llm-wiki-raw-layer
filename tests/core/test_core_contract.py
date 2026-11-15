@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The framework (rawlayer/) stays source-agnostic: no origin, source or app name in its code (names and string
 literals; docstrings and comments may cite history), the project's apps keep the app contract."""
+import importlib
 import ast
 import re
 import subprocess
@@ -97,14 +98,16 @@ class TestProjectApps(unittest.TestCase):
         from rawlayer import registry  # noqa: PLC0415
         for name in registry.discover():
             with self.subTest(app=name):
-                for mod in ("__init__", "apps", "origins"):         # inputs, vocab and search are optional
+                for mod in ("__init__", "apps", "origins"):         # search is optional
                     self.assertTrue((REPO / name / (mod + ".py")).is_file(), mod)
                 app = registry.app_registry(name).apps[0]       # loaded on its own, never installed here
                 self.assertEqual((app.name, app.label), (name, name))
                 self.assertTrue(app.origins)
                 self.assertTrue(callable(app.inputs.resolve))
-                if not (REPO / name / "inputs.py").is_file():
-                    self.assertTrue(app.archive, "without an inputs.py the app declares its archive")
+                for mod in ("inputs", "vocab", "keys"):             # folded into origins.py
+                    self.assertFalse((REPO / name / (mod + ".py")).exists(), mod)
+                if not hasattr(importlib.import_module(name + ".origins"), "resolve"):
+                    self.assertTrue(app.archive, "without resolve() in origins.py the app declares its archive")
                 self.assertTrue((REPO / name / "tests" / "__init__.py").is_file())
 
 

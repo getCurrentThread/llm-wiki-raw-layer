@@ -30,7 +30,7 @@ repeating them.
   `capture`, `search`, the fetch steps, `schedule install` and `schedule status`. `setup`, `test`, `schedule run`
   and `schedule remove` take none; `setup` writes `<CFG>` itself.
 - Placeholders appear bare in some commands and already inside quotes in others (for example 5.3,
-  6.2 and 7.2). Substitute every one before running a command:
+  7.2 and 7.4). Substitute every one before running a command:
   - Wrap a bare path in single quotes.
   - Where a placeholder is already quoted, replace only the placeholder and keep its quotes: 7.2's `'<CFG>'`
     becomes `'C:\...\config.json'`.
@@ -59,7 +59,8 @@ repeating them.
 | `<N>` | a fetch step bound, given by the app card |
 | `<HEAD_SEQ>`, `<TOTAL>` | the `head_seq` that `check <app>` printed and the `total` of the 5.5 timeline command, in the step that records them |
 | `<T0>` | the UTC start time printed in 5.8 step 1 |
-| `<W0>` | the write time printed by the discord token file handshake (6.2) |
+| `<FILE>` | the credential file a card names for the token file handshake (7.4) |
+| `<W0>` | the write time printed by the token file handshake (7.4) |
 | `<task>` | a short name for the report file |
 
 ## 2. Ground rules
@@ -86,7 +87,7 @@ repeating them.
 4. Data, archives, configs and tokens live only under `<DATA_PARENT>`. The exceptions are sources read in place
    and never copied: the discord and notion desktop sources (`dc_desktop_path`, `nt_desktop_path`). Never copy any of them into the repository and never commit them
    (`config.json`, `raw/`, `index/`, `*.sqlite`, `*.jsonl` and `reports/` are gitignored).
-5. Never ask a human to paste a secret into chat. Credentials move as files (a token file handshake, 6.2,
+5. Never ask a human to paste a secret into chat. Credentials move as files (the token file handshake, 7.4,
    or a download copied into `<DATA_ROOT>`), never as text.
 6. Always name the app in `schedule` commands. Without one, `install` and `status` act on every app with a
    schedule (`run` and `remove` refuse).
@@ -198,8 +199,7 @@ Gate: `git -C '<PROJECT>' rev-parse --is-inside-work-tree` prints `true`.
   `5.10` checkpoint is recorded (5.10, section 8). Without one, it is `5.7`: check the task elevated first.
 - It exits 0 when nothing needs attention, and 3 otherwise. An app with no config counts only when named with
   `--app <app>`.
-- `--json` prints the same as one object. `--verify` also runs `check <app>`, which takes the ledger lock: never
-  while a capture may run.
+- `--json` prints the same as one object.
 Gate for Phase 0: its `machine` lines show no problem, and `need attention` lists no `machine` item.
 
 Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the owner.
@@ -288,8 +288,8 @@ keys still to set.
 
 **5.4 Authenticate** (apps with a fetch step). Do the app card's auth steps, then
 `python -s -B -m <app>.fetch --auth-check --config <CFG>`
-Gate: exit 0 with `"status": "authenticated"` (gmail, and the `api` source of discord or notion) or
-`"status": "local_ready"` (the `desktop` source or claudecode, which needs no authentication).
+Gate: exit 0 with `"status": "authenticated"` (gmail, mattermost) or `"status": "local_ready"` (discord,
+notion and claudecode, which need no authentication).
 
 **5.5 Bounded first collection.** Always run the fetch step before the first `capture`: capture of an empty
 archive exits 75.
@@ -304,8 +304,7 @@ Gates:
 
 Finish genesis before 5.8: repeat with a larger bound until `"limited": false`. `--max-items 0` means
 unlimited; for notion, 0 falls back to `nt_max_pages`, which is unlimited at its default 0. The task's time limit
-is one hour, so it must not start on a large backlog. This holds for gmail too:
-[gmail/README.md](gmail/README.md) keeps `gm_sync` false until manual genesis is complete.
+is one hour, so it must not start on a large backlog. This holds for gmail too: 6.1 keeps `gm_sync` false until manual genesis is complete.
 Once a run reports `"limited": false` with these gates passed, record it:
 `python -s -B tools/bootstrap.py checkpoint mark <app> genesis_complete --field limited=false --field head_seq=<HEAD_SEQ>`.
 Until it is recorded (or 5.10, which comes after genesis), doctor's `next` for an app with sync off stays 5.5.
@@ -318,7 +317,6 @@ Gates:
 - `check <app> --config <CFG>` exits 0 and prints no line starting with
   `note: schedule install would refuse this config:`. Examples of such a note:
   `app gmail: gm_sync requires the app password file`,
-  `app notion: nt_sync requires a user-account task (ntn keychain)`,
   `app discord: dc_sync requires an absolute dc_desktop_path to an existing folder (SYSTEM has another %APPDATA%)`.
 
 **5.7 Preview the task.**
@@ -384,8 +382,8 @@ If one app's install rc is not 0, gate the other apps normally. After the fix, r
 | app | keys to set or check after `setup` (5.1) | sync option | details |
 |---|---|---|---|
 | gmail | `gm_imap_user` (the Gmail address); `setup` fills `sources.gm_archive` and `gm_imap_password_file` | `gm_sync` | [gmail/README.md](gmail/README.md) |
-| discord | `dc_source` (the example sets `desktop`), then `config defaults discord` after changing it; `dc_desktop_path` when the cache is not at its standard place | `dc_sync` | [discord/README.md](discord/README.md) |
-| notion | `nt_source` (the example sets `desktop`); `nt_desktop_path` when the database is not at its standard place | `nt_sync` | [notion/README.md](notion/README.md) |
+| discord | `dc_desktop_path` when the cache is not at its standard place | `dc_sync` | [discord/README.md](discord/README.md) |
+| notion | `nt_desktop_path` when the database is not at its standard place | `nt_sync` | [notion/README.md](notion/README.md) |
 | mattermost | `mm_url`, `mm_exclude_patterns` (the owner's values) | `mm_sync` | [mattermost/README.md](mattermost/README.md) |
 | claudecode | none: `setup` fills `sources.cc_archive` and `cc_claude_dir` (`<HOME>\.claude`) | `cc_sync` | [claudecode/README.md](claudecode/README.md) |
 
@@ -400,8 +398,7 @@ Values:
 - `gm_imap_user` = the Gmail address to archive. The owner gives it; it is no secret, but never echo it in a
   report (rule 3). Set it in 5.3.
 
-The fetch step signs in to Gmail's IMAP with a Google app password: no Cloud project, consent screen or OAuth
-client. It only reads (EXAMINE and `BODY.PEEK`, [gmail/README.md](gmail/README.md)). Keep `gm_sync` false until
+The fetch step reads Gmail over IMAP with a Google app password ([gmail/README.md](gmail/README.md)). Keep `gm_sync` false until
 6.1.6, and keep the default `gm_exclude_labels`.
 
 **6.1.1** Run 5.1–5.3, with `gm_imap_user` in 5.3.
@@ -413,8 +410,7 @@ but the check fails, use 6.1.7 instead. Otherwise continue with 6.1.3.
 
 **6.1.3 [human] App password.** Never create another app password, or replace a file that signs in, without the
 owner's explicit approval (rule 10).
-1. Run the 6.2 token file handshake's command with `<DATA_ROOT>\app_password.txt` in place of
-   `<DATA_ROOT>\token.txt`, and keep its `<W0>`.
+1. Run the 7.4 token file handshake's command with `<FILE>` = `<DATA_ROOT>\app_password.txt`, and keep its `<W0>`.
 2. **[human]** Ask the owner (7.1), e.g. "Google 계정에 2단계 인증이 켜져 있어야 합니다.
    https://myaccount.google.com/apppasswords 에서 앱 이름(예: llm-wiki)을 입력하고 '만들기'를 누른 다음, 표시된
    16자리 앱 비밀번호를 방금 열린 메모장 탭에 붙여넣고 Ctrl+S로 저장한 뒤 Ctrl+W로 그 탭을 닫아 주세요. 채팅에는
@@ -494,128 +490,46 @@ failed run.
 
 ### 6.2 discord
 
-Choose the source and set `dc_source` explicitly. It defaults to `api` when the key is absent, although the
-config that `setup` writes from the example sets `desktop`.
-- **desktop:** token-free and partial. It reads the Discord desktop cache in `dc_desktop_path`
-  (`<HOME>\AppData\Roaming\discord`). **[human]** The Discord desktop app must be installed and signed in. Cache
-  eviction never counts as deletion.
-- **api:** a bot or user token in a file, `dc_token_file` = `<DATA_ROOT>\token.txt`.
-  - The path must be absolute and under `<DATA_PARENT>`; otherwise the fetch step reports `unsafe_token_path`
-    (exit 75).
-  - The file holds only the token, on one line. Surrounding whitespace and a leading `Bot ` are ignored. A missing
-    or empty file gives `auth_required` (exit 2).
-  - Keep `dc_token_type` at `auto`: the fetch step tries the token as a bot, then as a user token on HTTP 401.
-    `--auth-check` reports which one as `token_type`.
-  - `DISCORD_BOT_TOKEN` and `DISCORD_TOKEN` take precedence over the file whenever they are set, and SYSTEM does
-    not see user variables. So that 5.4 and 5.5 test the file the task will use, start those commands with
-    `$env:DISCORD_BOT_TOKEN = $null; $env:DISCORD_TOKEN = $null;` in the same command.
-  - With `dc_sync` on, `schedule install` (and the 5.6 gate) refuses a token path outside `<DATA_PARENT>` or
-    in a folder that fails the data-root precheck, a missing token file, and a machine-wide `DISCORD_BOT_TOKEN`
-    or `DISCORD_TOKEN`, which SYSTEM does see and which would replace the file. It never reads the token: 5.8's
-    run is the first proof under SYSTEM.
-
-**Bot setup [human]** (api with a bot token), at `https://discord.com/developers/applications`:
-1. **New Application** → name → **Create**.
-2. **Bot** → Privileged Gateway Intents → turn on **Message Content Intent** → **Save Changes**. Without it,
-   server messages that do not mention the bot arrive with empty text. The fetch step counts one error (`"errors"`
-   above 0, exit 75) only for a channel in which every message fetched that run is a plain message (type 0) with no
-   content, attachments, embeds, stickers or forwards. A channel that also holds replies, pins or other message
-   types is archived with empty text and no error, so `"errors": 0` does not prove the intent is on, and
-   `--auth-check` does not detect it either. **[human]** the owner confirms that the intent is on.
-3. **OAuth2** → **URL Generator**: scope `bot`; bot permissions **View Channels** and **Read Message History**.
-   Open the generated URL and add the bot to each server to archive (this needs Manage Server there). A bot sees
-   only the servers it was added to, never the owner's DMs.
-4. **Bot** → **Reset Token**. The owner puts it into the token file (the handshake below), never into chat. Take
-   no screenshot, snapshot or text dump of that page (7.3).
-
-Gates: 5.4 prints `"status": "authenticated"` and `"token_type": "bot"`; after 5.5, `"channels"` is above 0.
-
-**Token file handshake** (api). Create the file in place, so that it inherits the data root's ACL; an existing
-file is reopened for the owner to overwrite, never deleted (rule 10). The command prints the file's write time:
-
-```powershell
-$t = '<DATA_ROOT>\token.txt'; if (-not (Test-Path -LiteralPath $t)) { New-Item -ItemType File -Path $t | Out-Null }; (Get-Item -LiteralPath $t).LastWriteTimeUtc.Ticks; Start-Process notepad -ArgumentList ('"' + $t + '"')
-```
-
-Keep the printed number as `<W0>`. Then **[human]**, e.g. "방금 열린 메모장 탭에 Discord 토큰 한 줄만 붙여넣고
-Ctrl+S로 저장한 다음 Ctrl+W로 그 탭을 닫아 주세요. 창만 닫으면 메모장이 다음 실행 때 토큰 탭을 다시 엽니다. 채팅에는
-붙여넣지 마세요." Closing the tab, not only the window, keeps Windows 11 Notepad's session restore from holding a
-copy of the token outside `<DATA_PARENT>`.
-Gate, without opening or printing the file:
-`$f = Get-Item -LiteralPath '<DATA_ROOT>\token.txt'; $f.Length -gt 0 -and $f.LastWriteTimeUtc.Ticks -gt <W0>`
-prints True.
+The fetch step reads the Discord desktop cache in `dc_desktop_path` (`<HOME>\AppData\Roaming\discord`)
+read-only: no token, and only the messages the cache still holds ([discord/README.md](discord/README.md)).
+**[human]** The Discord desktop app must be installed and signed in.
 
 Steps:
-1. Run 5.1–5.3. 5.1 fills `sources.dc_archive` = `<DATA_ROOT>\archive`, plus the path of the source the config
-   names: `dc_desktop_path` (desktop; only when `<HOME>\AppData\Roaming\discord` is there) or `dc_token_file` =
-   `<DATA_ROOT>\token.txt` (api). Set `dc_source`, and after changing it run `config defaults discord`. A
-   `dc_desktop_path` must be absolute: under SYSTEM, `%APPDATA%` points to the system profile. `check discord` does
-   not read the token file, so the 5.3 gate passes before the file exists.
-   - desktop: Gate: `Test-Path -LiteralPath` on `dc_desktop_path` is True.
-   - api: with a bot token, the bot setup steps 1–3 first, then step 4 with the token file handshake. Gate: the
-     handshake's gate. Only then run 5.4.
-2. Run 5.4. Run 5.5 with `<N>` = 5; it bounds channels. Then finish genesis.
-   - Channels the token cannot read (HTTP 403, e.g. private channels the bot was not given) count as `errors` on
-     every run; they are not skipped. During genesis, exit 75 with `"errors"` above 0 is a stop: report the
-     count.
-   - Then ask the owner either to give the bot **View Channels** and **Read Message History** there, or to name
-     channels to leave out. Leave them out with `dc_exclude_patterns`, case-insensitive fragments of the server,
-     category or channel name, or keep only some with `dc_channel_ids`. Set them with
-     `tools/bootstrap.py config set` (5.3), and never echo either in reports.
-   - Rate limits and 5xx responses are already retried inside the fetch step.
+1. Run 5.1–5.3. 5.1 fills `sources.dc_archive` = `<DATA_ROOT>\archive` and, when that folder is there,
+   `dc_desktop_path`. It must be absolute: under SYSTEM, `%APPDATA%` points to the system profile.
+   Gate: `Test-Path -LiteralPath` on `dc_desktop_path` is True.
+2. Run 5.4, then 5.5 with `<N>` = 5; it bounds channels. Then finish genesis. Channels to leave out go into
+   `dc_exclude_patterns` (case-insensitive fragments of the server, category or channel name); `dc_channel_ids`
+   keeps only the channels it lists. Set them with `tools/bootstrap.py config set` (5.3), and never echo either.
 3. Run 5.6 with `dc_sync`, then 5.7–5.10.
 
 Recovery:
-- `auth_failed` (HTTP 401): **[human]** replace the token through the token file handshake (the file exists;
-  never delete it), then rerun `--auth-check`.
-- Exit 75 with `"errors"` above 0 in a manual run, or `dc_archive status=error` with capture rc 75 in task.log:
-  at least one channel failed. With `dc_sync` on, the whole origin commits nothing in such a run. A one-off
-  failure clears on the next run. If it repeats, run `--auth-check` first, then treat it as the 403 case of step 2.
-- Exit 2 `account_changed` (api, from a sync run; `--auth-check` does not detect it): stop. The archive is bound
-  to the account that first synced into it; another account needs its own data root.
+- `desktop_missing` (exit 75): `dc_desktop_path` is not an existing folder. Correct it (5.3), then rerun 5.4.
 - Exit 3 suspect: use the section 9 suspect row.
 
 ### 6.3 notion
 
-Sources:
-- **desktop:** token-free and partial. It reads the Notion desktop database read-only, so Notion can stay open,
-  through `nt_desktop_path` (`<HOME>\AppData\Roaming\Notion\notion.db`). **[human]** The Notion desktop app must
-  be installed, signed in and synced. If that file does not exist, for example with a Store install, ask the owner
-  where the database is.
-- **api:** the official `ntn` CLI. **[human]** `ntn login` stores its credentials in the owner's keychain. Set
-  `nt_cli` to the absolute path of `ntn.exe` when it is not on PATH.
-
-Only desktop mode can sync inside the SYSTEM task. `task_checks` refuses `nt_sync` together with
-`nt_source: api`. In api mode, run the fetch step in the owner's session and keep the SYSTEM task archive-only
-(`nt_sync` false).
+The fetch step reads the Notion desktop database in `nt_desktop_path`
+(`<HOME>\AppData\Roaming\Notion\notion.db`) read-only, so Notion can stay open: no token, and only what the
+desktop app has synced ([notion/README.md](notion/README.md)). **[human]** The Notion desktop app must be installed,
+signed in and synced. If that file does not exist, for example with a Store install, ask the owner where the
+database is.
 
 Steps:
-1. Run 5.1–5.3. 5.1 fills `sources.nt_archive` = `<DATA_ROOT>\archive` and, in desktop mode, `nt_desktop_path`
-   when the database is at its standard place. Set `nt_source`, and after changing it to desktop run
-   `config defaults notion`. Desktop mode needs an absolute `nt_desktop_path`. Gate: `Test-Path` on that file is
-   True.
-2. Run 5.4. Run 5.5 with `<N>` = 3; it bounds pages. Then finish genesis with larger bounds until
+1. Run 5.1–5.3. 5.1 fills `sources.nt_archive` = `<DATA_ROOT>\archive` and, when the database is at its
+   standard place, `nt_desktop_path`, which must be absolute. Gate: `Test-Path` on that file is True.
+2. Run 5.4, then 5.5 with `<N>` = 3; it bounds pages. Then finish genesis with larger bounds until
    `"limited": false`.
-3. Desktop mode: run 5.6 with `nt_sync`. Then run 5.7–5.10.
+3. Run 5.6 with `nt_sync`, then 5.7–5.10.
 
 Recovery:
-- `auth_required` (api): **[human]** `ntn login`, then `--auth-check`.
-- `cli_missing` (exit 75, api): `ntn.exe` was not found, or `nt_cli` does not name an existing `.exe`. Set `nt_cli`
-  with `tools/bootstrap.py config set` (5.3; if `ntn` is not installed, **[human]** the owner installs it), then
-  rerun `--auth-check`.
-- Exit 2 `account_changed` (api, from a sync run): stop. The archive is bound to the account that first synced
-  into it; another account needs its own data root.
-- Desktop `--auth-check` failure: confirm that `nt_desktop_path` exists and that Notion has synced.
-- api: a captured page whose lookup returns 403 or 404 keeps its file and is marked gone (`pages_gone`), never
-  deleted. A page not captured yet that returns 403 or 404 counts as an error (exit 75; see `error_counts`).
+- `desktop_missing` (exit 75): `nt_desktop_path` is not an existing file, or Notion has not synced yet.
 - Exit 3 suspect: use the section 9 suspect row.
 
 ### 6.4 mattermost
 
-The app's fetch step (`mattermost/fetch.py`, a port of the mattertok archiver) reads the server's REST API v4
-with the owner's session token and keeps `<DATA_ROOT>\archive` in mattertok's format
-([mattermost/README.md](mattermost/README.md)). Each channel is fetched with cursors, so a run fetches only new
-posts; edits and deletions of posts already archived are not fetched again.
+The fetch step reads the server's REST API with the owner's session token
+([mattermost/README.md](mattermost/README.md)).
 
 Values (5.1 fills the archive and the token file):
 - `sources.mm_archive` = `<DATA_ROOT>\archive`
@@ -634,7 +548,7 @@ Values (5.1 fills the archive and the token file):
 It asks for the login id, the password (not shown) and, when the account uses one, an MFA code. It keeps only the
 session token in `mm_token_file` and prints `"status": "auth_ready"`; the password is never stored. Repeated failed
 sign-ins can lock the account: after one `auth_failed`, stop and ask. A personal access token, where the server
-allows one, can go into the token file instead (the 6.2 token file handshake); it does not expire.
+allows one, can go into the token file instead (the 7.4 token file handshake); it does not expire.
 `MM_TOKEN` takes precedence over the file whenever it is set, and SYSTEM does not see user variables: start the
 5.4 and 5.5 commands with `$env:MM_TOKEN = $null;` in the same command.
 
@@ -685,10 +599,9 @@ refuse it, so check it with section 8 steps 2-5 directly.
 
 ### 6.6 claudecode
 
-The fetch step reads the owner's local Claude Code files read-only. No human step, credential or sign-in is
-needed. It keeps prompts, reply text and one-line tool-call summaries; tool results, thinking and attachments
-are not kept. Secrets typed into prompts or the first 200 characters of Bash commands are kept as typed:
-never echo conversation text or commands. See [claudecode/README.md](claudecode/README.md).
+The fetch step reads the owner's local Claude Code files read-only ([claudecode/README.md](claudecode/README.md)); no
+human step or sign-in is needed. Secrets typed into prompts or Bash commands are kept as typed: never echo
+conversation text or commands.
 
 Steps:
 1. Run 5.1–5.3, then `python -s -B tools/bootstrap.py config defaults claudecode`. Defaults fill
@@ -790,9 +703,25 @@ if (Test-Path -LiteralPath $out) {
 - Those pages show the signed-in account's name and email. Find controls by their label with a targeted element
   query (find by text or role) rather than with full-page snapshots or screenshots. Never quote snapshot text in
   messages or reports.
-- On pages that show a token, an app password or another secret (6.1.3, 6.2 bot setup step 4), take no
-  screenshot, accessibility snapshot or page-text dump. The owner copies the secret into the token file
-  handshake's Notepad tab (6.2) themselves.
+- On pages that show a token, an app password or another secret (6.1.3), take no screenshot, accessibility
+  snapshot or page-text dump. The owner copies the secret into the token file handshake's Notepad tab (7.4)
+  themselves.
+
+**7.4 Token file handshake.** A credential moves into `<FILE>` (the card names it, under `<DATA_ROOT>`) without
+passing through chat. Create the file in place, so that it inherits the data root's ACL; an existing file is
+reopened for the owner to overwrite, never deleted (rule 10). The command prints the file's write time:
+
+```powershell
+$t = '<FILE>'; if (-not (Test-Path -LiteralPath $t)) { New-Item -ItemType File -Path $t | Out-Null }; (Get-Item -LiteralPath $t).LastWriteTimeUtc.Ticks; Start-Process notepad -ArgumentList ('"' + $t + '"')
+```
+
+Keep the printed number as `<W0>`. Then **[human]**, e.g. "방금 열린 메모장 탭에 값 한 줄만 붙여넣고 Ctrl+S로 저장한
+다음 Ctrl+W로 그 탭을 닫아 주세요. 창만 닫으면 메모장이 다음 실행 때 그 탭을 다시 엽니다. 채팅에는 붙여넣지 마세요."
+Closing the tab, not only the window, keeps Windows 11 Notepad's session restore from holding a copy of the secret
+outside `<DATA_PARENT>`.
+Gate, without opening or printing the file:
+`$f = Get-Item -LiteralPath '<FILE>'; $f.Length -gt 0 -and $f.LastWriteTimeUtc.Ticks -gt <W0>`
+prints True.
 
 ## 8. Steady-state health routine
 
@@ -802,7 +731,7 @@ Run this per app after a scheduled run or when asked.
    nothing outstanding that doctor can see. Any other `next` names the step or section 9 row to go to first.
    Doctor's task lines are `registration unknown` without elevation: step 2 is still the proof. An app that went
    live before this tool has no `5.10` checkpoint, so its `next` is `5.7` (`5.5`, or gmail's `6.1.5`, when its
-   sync is off, as notion's `api` source keeps it): run this routine, and once steps 2–5 pass, record `5.10` with
+   sync is off): run this routine, and once steps 2–5 pass, record `5.10` with
    the command at the end of 5.10 (`<HEAD_SEQ>` from step 4, `<TOTAL>` from step 5). A recorded 5.10 also stands
    for genesis, which 5.5 finishes before 5.8.
 1. Baseline: read the newest `<PROJECT>\reports\<app>-*.md` and take its `baseline:` line. If there is none, say
@@ -853,7 +782,7 @@ run 5.9 per app and one 5.10 batch.
 | capture 75, task.log line `capture skipped disk_floor=yes` | free space on the data drive minus the run's peak is under 10 GiB. The peak is 1 GiB plus the archive JSON that capture reads: gmail `exports` and `state`, discord and claudecode `exports`, notion every `*.json`, mattermost none | report free GiB: `[math]::Round((Get-PSDrive -Name (Split-Path '<DATA_PARENT>' -Qualifier).TrimEnd(':')).Free / 1GB, 1)`, and the GiB needed (an upper bound that prints no names; mattermost: 11): `$s = 0; foreach ($f in Get-ChildItem -LiteralPath '<DATA_ROOT>\archive' -Recurse -Filter *.json -File -ErrorAction SilentlyContinue) { $s += $f.Length }; [math]::Round(11 + $s / 1GB, 1)`. **[human]** the owner frees space on that drive until free GiB is above the GiB needed. Never delete or move files yourself, least of all under `<DATA_PARENT>`. Before any SYSTEM proof run (6.1.7 step 5), check both numbers again |
 | capture 75 with task.log line `capture busy`, or `step=index rc=75` with `<app>: busy reason=another index update holds the lock` | another process held the ledger lock (`capture`, a fetch step's `--capture` step, `check`, or the scheduled task) or the index lock (another run's index step) | wait and retry later; the lock dies with its process, so a repeat means some process still holds it. If the next scheduled run also shows it, report it. Never list process command lines to find the holder: they hold profile paths |
 | `schedule install` exit 2, elevation | not an Administrator process | 7.2 |
-| `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires gm_imap_user`, `app notion: nt_sync requires a user-account task (ntn keychain)`) | the sync option without what it needs | fix the config, rerun 5.7 |
+| `schedule install` exit 2, task check (e.g. `app gmail: gm_sync requires gm_imap_user`) | the sync option without what it needs | fix the config, rerun 5.7 |
 | Store-alias refusal, or `last result:` `the interpreter or a file the action names was not found` | `WindowsApps` alias, or a moved or removed interpreter (e.g. after a Python upgrade). The run never started, so task.log has no block for it | choose a real `<PY>` (0.2). Every app's task names the interpreter it was installed with, usually the same one. Find the in-scope apps with a task from the bring-up reports in `<PROJECT>\reports\`, or with one 7.2 batch of `status <app> --config <CFG>` for each in-scope app whose `<CFG>` exists (`registered` means it has a task). Re-register them with the new `<PY>` |
 | elevated status: `definition: its action is not this project's ...` | the checkout was moved, or the task was registered from another checkout | if `<PROJECT>` is no longer under `<HOME>`, stop and ask (0.1). Otherwise re-register, from this checkout, each in-scope app with a task |
 | `last result:` `1 (capture error)` and no task.log block written after the run started | the run died before `capture` began: the checkout is outside a user profile (0.1), or an import failed | run 0.3's second command without elevation. `False`: the checkout is outside the profile; stop and tell the owner that every SYSTEM run fails there and that the checkout must sit under `%USERPROFILE%` (0.1); never move it yourself. `True`: stop and report (rule 7) |
@@ -861,7 +790,6 @@ run 5.9 per app and one 5.10 batch.
 | `running now` longer than the limit | a hung run | wait for the limit to stop it, then read the section 3 reader |
 | non-elevated status exit 3, `not registered, or not readable from this prompt` | SYSTEM task not readable without elevation | elevated status (7.2) |
 | gmail not-ok last result; `--auth-check` exit 2 | `auth_required` (app password revoked, or its file missing) | 6.1.7 |
-| discord fetch step `"channels": 0` with `"errors": 0` (bot) | the bot was added to no server | **[human]** step 3 of the bot setup in 6.2 |
 
 
 ## 10. Reporting
@@ -884,8 +812,8 @@ Never include the items listed in rule 3.
 `python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; `--help` and its docstring give the states and
 options) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
 be searched and this runbook found from any folder: a marked block in `<HOME>\.claude\CLAUDE.md`, the `raw-search`
-and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`, and the user-scope MCP server
-`llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app; its app `all` covers them all). It needs
+and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`. It also removes the
+user-scope MCP server `llm_wiki_raw` that an earlier version registered (status shows it as `retired`). It needs
 no elevation and touches no data. Its manifest lives in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
 never in `<PROJECT>`.
 
@@ -895,11 +823,11 @@ never in `<PROJECT>`.
 2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and
    wait for an explicit yes: it rewrites their global configuration (rule 10).
 3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item and replaces
-   nothing: the owner moves it away by hand first. `--python <PY>` names the interpreter the MCP server runs
-   with. When a `claude mcp` call fails, the error ends with the CLI's own reason.
-   Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for every app.
+   nothing: the owner moves it away by hand first. When the `claude mcp remove` call fails, the error ends with the
+   CLI's own reason.
+   Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/raw-search` answers.
 4. Re-run `install` after `git pull` or a moved checkout: a template change shows as `stale`, a moved one as
-   `project_mismatch`. It keeps the recorded interpreter; pass `--python` again to change it.
+   `project_mismatch`.
 
 `agents uninstall [--dry-run]` undoes install and keeps, and names, what was changed by hand. After editing a
 template, run `install` again.

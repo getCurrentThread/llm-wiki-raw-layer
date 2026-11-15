@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import patch
 from rawlayer.capture import fsio, publicout
 from gmail.fetch import sync, main
-from gmail.readers.archive import containers, safe_rel
-from gmail.keys import gm_id
+from gmail.origins import containers, safe_rel
+from gmail.origins import gm_id
 from appkit.archive import load
 from .fixtures import Fixture, Server, MID
 from tests.core import appfix as h
@@ -50,7 +50,7 @@ class HardeningTests(unittest.TestCase):
         def read(path):
             self.assertNotIn("..", str(path))
             return original(path)
-        with patch("gmail.readers.archive.fsio.read_shared", side_effect=read):
+        with patch("gmail.origins.fsio.read_shared", side_effect=read):
             self.assertEqual(h.capture(self.fx), 75)
         for value in ("exports/../outside.json", "exports\\bad.json", "C:/bad.json"):
             self.assertFalse(safe_rel(value, "exports"))

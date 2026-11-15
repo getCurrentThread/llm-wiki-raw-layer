@@ -5,10 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
 
 from rawlayer import registry
-from .fixtures import TEST_PARENT
 
 
 class TaskChecks(unittest.TestCase):
@@ -18,7 +16,7 @@ class TaskChecks(unittest.TestCase):
         self.app = registry.get().apps[0]
 
     def cfg(self, **kv):
-        base = {"dc_sync": True, "dc_source": "desktop", "dc_desktop_path": "", "dc_token_file": ""}
+        base = {"dc_sync": True, "dc_desktop_path": ""}
         base.update(kv)
         return SimpleNamespace(**base)
 
@@ -30,24 +28,3 @@ class TaskChecks(unittest.TestCase):
             with self.subTest(path=path):
                 found = self.app.task_checks(self.cfg(dc_desktop_path=path))
                 self.assertEqual(found == [], ok, found)
-
-    def test_api_token_file(self):
-        inside = Path(tempfile.mkdtemp(prefix="dc-tok-", dir=TEST_PARENT))
-        self.addCleanup(shutil.rmtree, inside, True)
-        outside = Path(TEST_PARENT).parent / "dc-not-under-the-parent" / "token.txt"
-        token = inside / "token.txt"
-        cases = (("", "protected"), ("token.txt", "protected"), (str(outside), "protected"),
-                 (str(token), "requires a token file"))
-        with mock.patch("rawlayer.capture.precheck.check"), \
-                mock.patch("discord.fetch.machine_token_vars", return_value=[]):
-            for path, want in cases:
-                with self.subTest(path=path):
-                    found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=path))
-                    self.assertEqual(len(found), 1)
-                    self.assertIn(want, found[0])
-            token.write_text("x", encoding="utf-8")
-            self.assertEqual(self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token))), [])
-            with mock.patch("discord.fetch.machine_token_vars", return_value=["DISCORD_BOT_TOKEN"]):
-                found = self.app.task_checks(self.cfg(dc_source="api", dc_token_file=str(token)))
-            self.assertEqual(len(found), 1)
-            self.assertIn("machine-wide DISCORD_BOT_TOKEN", found[0])

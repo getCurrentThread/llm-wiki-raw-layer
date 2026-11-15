@@ -1,11 +1,228 @@
 # -*- coding: utf-8 -*-
-"""The Mattermost origin: the mattertok-format archive, read in one stable pass and diffed as a whole (multi-version).
-With mm_sync, a live read runs the app's fetch step first."""
+"""mattermost's capture side: ORIGINS (the registry's contract, rawlayer/registry.py), the strings its
+reader puts in manifests (WORDS, PATTERNS) and the reader itself.
 
+Mattermost value rules (SPEC 6).
+
+Strings the Mattermost reader puts in manifests (origin names, kinds and statuses come from origins.py).
+
+mm_archive (SPEC 7.4, 10.2): mattertok's archive directory -- manifest.json (channels), posts/**.jsonl (one
+file per channel), users.json and, once the fetch step keeps attached files, files.json (their pointers: blob
+records; the files themselves are never read here).
+
+The whole origin is read in one pass between two reads of manifest.json; if the manifest changed under us the
+pass is repeated (origins.MultiVersionMixin, max 3) and otherwise the origin is `unstable`. The pass is diffed as
+a whole by the multi-version rule (rawlayer.capture.multiver): a key may be observed several times (lines, files,
+posts) and its versions are judged together (Q3).
+
+The Mattermost origin: the mattertok-format archive, read in one stable pass and diffed as a whole (multi-version).
+With mm_sync, a live read runs the app's fetch step first."""
+import json
+import os
+from pathlib import Path
+import re
+from rawlayer.capture import canon, fsio
+from rawlayer.capture.model import Obs
+from rawlayer.capture.multiver import OriginRead
+from rawlayer.capture.origins import Unstable
 from appkit.archive import ArchiveOrigin
 from rawlayer.capture.origins import MultiVersionMixin
 
-from .readers import archive
+
+def mm_ts_ms(create_at):
+    if isinstance(create_at, bool) or not isinstance(create_at, int) or create_at <= 0:
+        return None
+    return create_at
+
+
+WORDS = (
+    # notes
+    "excluded", "slim_post", "partial_tail", "bad_line", "orphan_file", "channel_mismatch", "pk_bad",
+)
+
+PATTERNS = ()
+
+
+CH_WHITELIST = ("channel_id", "type", "team_name", "channel_name", "display", "inaccessible_before")
+BLOB_FIELDS = ("post_id", "sha256", "size", "path")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _mm_id(v):
+    """Mattermost ids are strings; anything else (or a string pk_text rejects) is pk_bad."""
+    return canon.pk_text(v) if isinstance(v, str) else None
+
+
+def _lines(data, notes):
+    parts = data.split(b"\n")
+    if parts[-1] != b"":
+        notes["partial_tail"] += 1
+    for ln in parts[:-1]:
+        if ln.endswith(b"\r"):
+            ln = ln[:-1]
+        if not ln.strip():
+            continue
+        try:
+            o = json.loads(ln.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            notes["bad_line"] += 1
+            continue
+        if not isinstance(o, dict):
+            notes["bad_line"] += 1
+            continue
+        yield o
+
+
+def excluded(c, patterns):
+    """mattertok is_excluded_channel: display + LF + channel_name, casefolded, contains a pattern."""
+    s = (str(c.get("display") or "") + "\n" + str(c.get("channel_name") or "")).casefold()
+    return any(p in s for p in patterns)
+
+
+def _safe_rel(path):
+    """A manifest channel path stays below posts/: relative, '/'-separated, no empty / '.' / '..' parts."""
+    if not isinstance(path, str) or not path or "\\" in path or ":" in path or "\x00" in path:
+        return False
+    return all(part not in ("", ".", "..") for part in path.split("/"))
+
+
+def read_once(root, patterns, denylist, origin):
+    root = Path(root)
+    manifest = root / "manifest.json"
+    rd = OriginRead(origin, denylist)
+    man_bytes = fsio.read_shared(manifest)
+    man = json.loads(man_bytes)
+    channels = man.get("channels")
+    if not isinstance(channels, dict):
+        raise ValueError("manifest channels")
+    referenced = set()
+    plan = []
+    for cid in sorted(channels):
+        c = channels[cid]
+        if not isinstance(c, dict):
+            rd.notes["bad_line"] += 1
+            continue
+        if isinstance(c.get("path"), str):
+            referenced.add(c["path"])       # an excluded channel's file is known, not an orphan
+        if excluded(c, patterns):
+            rd.notes["excluded"] += 1
+            continue
+        plan.append((cid, c))
+
+    obs = rd.add
+    # manifest.json container: ch records
+    man_sid = canon.source_id("manifest.json")
+    rd.srcmap[man_sid] = "manifest.json"
+    rd.containers[man_sid] = {"status": "ok"}
+    rd.asof[man_sid] = fsio.mtime_s(manifest)
+    files = []
+    for cid, c in plan:
+        k = _mm_id(c.get("channel_id"))
+        if k is None:
+            rd.notes["pk_bad"] += 1
+        else:
+            native = {f: c[f] for f in CH_WHITELIST if f in c}
+            obs(Obs("ch", f"mm:ch:{k}", native, {}, None, rd.asof[man_sid]), man_sid)
+        path = c.get("path")
+        if not _safe_rel(path):
+            rd.notes["bad_line"] += 1      # missing, absolute, or leaving posts/ (traversal)
+            continue
+        files.append(("posts/" + path, cid, c))
+    # channel files in relpath order
+    for rel, cid, c in sorted(files, key=lambda t: t[0]):
+        sid = canon.source_id(rel)
+        rd.srcmap[sid] = rel
+        p = root.joinpath(*rel.split("/"))
+        try:
+            data = fsio.read_shared(p)
+        except FileNotFoundError:
+            status = "ok" if c.get("post_count") == 0 else "missing"
+            rd.containers[sid] = {"status": status}
+            continue
+        except OSError:
+            rd.containers[sid] = {"status": "error"}
+            rd.notes["read_error"] += 1
+            continue
+        rd.containers[sid] = {"status": "ok"}
+        asof = rd.asof[sid] = fsio.mtime_s(p)
+        for o in _lines(data, rd.notes):
+            pid = _mm_id(o.get("id"))
+            if pid is None:
+                rd.notes["pk_bad"] += 1
+                continue
+            if o.get("channel_id") != cid:
+                rd.notes["channel_mismatch"] += 1
+            obs(Obs("post", f"mm:post:{pid}", o, {}, mm_ts_ms(o.get("create_at")), asof), sid)
+            if "_files" in o or "_reactions" in o:
+                rd.notes["slim_post"] += 1
+                continue
+            md = o.get("metadata")
+            for f in (md.get("files") if isinstance(md, dict) else None) or []:
+                fid = _mm_id(f.get("id")) if isinstance(f, dict) else None
+                if fid is None:
+                    rd.notes["pk_bad"] += 1
+                    continue
+                obs(Obs("file", f"mm:file:{fid}", f, {}, None, asof), sid)
+    # posts/**.jsonl the manifest does not point at. os.walk, not Path.walk: Path.walk lists links and junctions as
+    # files and never enters a junction, which would change the orphan count the manifest records.
+    posts_root = root / "posts"
+    for dp, _d, fs in os.walk(posts_root):
+        for f in fs:
+            if f.endswith(".jsonl"):
+                rel = Path(dp, f).relative_to(posts_root).as_posix()
+                if rel not in referenced:
+                    rd.notes["orphan_file"] += 1
+    # users.json container
+    users_sid = canon.source_id("users.json")
+    rd.srcmap[users_sid] = "users.json"
+    up = root / "users.json"
+    try:
+        users = json.loads(fsio.read_shared(up))
+        if not isinstance(users, dict):
+            raise ValueError("users")
+        rd.containers[users_sid] = {"status": "ok"}
+        asof = rd.asof[users_sid] = fsio.mtime_s(up)
+        for uid in sorted(users):
+            k = _mm_id(uid)
+            v = users[uid]
+            if k is None or not isinstance(v, dict):
+                rd.notes["pk_bad"] += 1
+                continue
+            native = {"id": uid}
+            native.update(v)
+            obs(Obs("user", f"mm:user:{k}", native, {}, None, asof), users_sid)
+    except FileNotFoundError:
+        rd.containers[users_sid] = {"status": "missing"}
+    except (OSError, ValueError):
+        rd.containers[users_sid] = {"status": "error"}
+        rd.notes["read_error"] += 1
+    # files.json container, only once the fetch step wrote one: a config that keeps no files sees no change
+    files_sid = canon.source_id("files.json")
+    fp = root / "files.json"
+    try:
+        stored = json.loads(fsio.read_shared(fp))
+        if not isinstance(stored, dict):
+            raise ValueError("files")
+        rd.srcmap[files_sid] = "files.json"
+        rd.containers[files_sid] = {"status": "ok"}
+        asof = rd.asof[files_sid] = fsio.mtime_s(fp)
+        for fid in sorted(stored):
+            k, v = _mm_id(fid), stored[fid]
+            if k is None or not isinstance(v, dict) or v.get("path") != f"files/{fid[:2]}/{fid}" \
+                    or not isinstance(v.get("sha256"), str) or not _SHA256.fullmatch(v["sha256"]) \
+                    or type(v.get("size")) is not int or not isinstance(v.get("post_id"), str):
+                rd.notes["bad_line"] += 1
+                continue
+            obs(Obs("blob", f"mm:blob:{k}", {f: v[f] for f in BLOB_FIELDS}, {}, None, asof), files_sid)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        rd.srcmap[files_sid] = "files.json"
+        rd.containers[files_sid] = {"status": "error"}
+        rd.notes["read_error"] += 1
+    if fsio.read_shared(manifest) != man_bytes:
+        raise Unstable()
+    return rd
 
 
 class MmArchive(MultiVersionMixin, ArchiveOrigin):
@@ -16,7 +233,7 @@ class MmArchive(MultiVersionMixin, ArchiveOrigin):
     def read_once(self, ctx):
         self.fetch(ctx)
         patterns = [p.casefold() for p in ctx.cfg.mm_exclude]
-        return archive.read_once(ctx.inputs.mm_archive, patterns, ctx.denylist, self.name)
+        return read_once(ctx.inputs.mm_archive, patterns, ctx.denylist, self.name)
 
 
 ORIGINS = (MmArchive,)

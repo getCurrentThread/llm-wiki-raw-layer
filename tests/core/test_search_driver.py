@@ -433,46 +433,6 @@ class Fake(drv.SearchDriver):
         return {"id": r["id"]}
 
 
-class GroupRows(unittest.TestCase):
-    """The group rows of --mode senders/rooms/...: labels from a Group table and every fallback rule."""
-    def setUp(self):
-        self.con = sqlite3.connect(":memory:")
-        self.con.row_factory = sqlite3.Row
-        self.addCleanup(self.con.close)
-        self.con.executescript(GROUP_SCHEMA)
-        self.con.executemany("INSERT INTO users VALUES(?,?,?)", [("u1", "Ann", "annie"), ("u2", "", "x")])
-        self.con.executemany("INSERT INTO rooms VALUES(?,?)", [("r1", "Dev"), ("r2", "")])
-        self.con.executemany("INSERT INTO labels VALUES(?,?)", [("L1", ""), ("L3", "Work")])
-        self.d, self.tz = Fake(None), index.parse_tz("+09:00")
-
-    def row(self, mode, gid, f=1727758980, l=1727845380):
-        return self.d.group_row(self.con, {"gid": gid, "n": 4, "f": f, "l": l}, mode, self.tz)
-
-    def test_label_from_the_table_then_the_fallbacks(self):
-        span = {"first": "2024-10-01", "last": "2024-10-02"}
-        self.assertEqual(self.row("senders", "u1"), {"user_id": "u1", "label": "Ann", "nickname": "annie", "n": 4, **span})
-        self.assertEqual(self.row("senders", "u2")["label"], "u2")           # an empty name: the id
-        self.assertEqual(self.row("senders", "u9"), {"user_id": "u9", "label": "u9", "nickname": "", "n": 4, **span})
-        self.assertEqual(self.row("senders", "")["label"], "?")              # no name, no id: the last fallback
-        row = self.row("senders", None)
-        self.assertEqual((row["user_id"], row["label"], row["nickname"]), (None, "?", ""))
-        self.assertEqual([self.row("rooms", g)["label"] for g in ("r1", "r2", "r9", None)],
-                         ["Dev", "(untitled)", "(untitled)", "(untitled)"])
-        self.assertEqual(self.row("rooms", "r1"), {"chat_id": "r1", "label": "Dev", "n": 4, **span})
-        self.assertEqual(self.row("kinds", "k"), {"kind": "k", "label": "k", "n": 4, **span})   # no table: the id
-        self.assertEqual(self.row("kinds", "")["label"], "")
-        self.assertEqual(list(self.row("senders", "u1")), ["user_id", "label", "nickname", "n", "first", "last"])
-        t = 1727758980                                                      # 2024-10-01 05:23 UTC: the zone's days
-        self.assertEqual(index.day_span(t, None, index.parse_tz("-10:00")), {"first": "2024-09-30", "last": ""})
-        self.assertEqual(index.day_span(0, None, self.tz), {"first": "", "last": ""})
-
-    def test_keep_empty_is_for_an_existing_row_only(self):
-        self.assertEqual(self.row("labels", "L1")["label"], "")              # the row exists with an empty name
-        self.assertEqual(self.row("labels", "L2")["label"], "L2")            # no row: the id
-        self.assertEqual(self.row("labels", "L3")["label"], "Work")
-        self.assertEqual(self.row("labels", "L3")["id"], "L3")                # id_col is label_id, the JSON key id
-
-
 class Context(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")

@@ -24,11 +24,6 @@ class Home(unittest.TestCase):
         self.state = Path(tempfile.mkdtemp(prefix="llmw-state-"))
         for d in (self.home, self.state):
             self.addCleanup(shutil.rmtree, d, True)
-        self.server = self.state / "mcp_rawsearch.py"
-        self.server.write_text("", encoding="utf-8")
-        patcher = mock.patch.object(K, "MCP_SERVER", self.server)
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.calls = []
         self.failing = None                # argv -> True: the stand-in CLI fails that call (rc 1)
 
@@ -47,8 +42,8 @@ class Home(unittest.TestCase):
         p.write_text(json.dumps(d), encoding="utf-8")
         return 0
 
-    def kit(self, python=None):
-        return K.Kit(home=self.home, state=self.state, python=python, claude=self.claude, found=APPS)
+    def kit(self):
+        return K.Kit(home=self.home, state=self.state, claude=self.claude, found=APPS)
 
     def snapshot(self):
         """Every file and folder under home but .claude.json (the stand-in CLI's)."""
@@ -117,17 +112,34 @@ class InstallUninstall(Home):
         rows, _m = self.kit().status()
         self.assertEqual(set(rows.values()), {"absent"})
         plan = self.kit().install()
-        self.assertEqual(len(plan), 5)                      # the block, three files, the MCP server
+        self.assertEqual(len(plan), 4)                      # the block and three files
         rows, mismatch = self.kit().status()
         self.assertFalse(mismatch)
         self.assertEqual(set(rows.values()), {"current"})
         self.assertEqual(self.kit().install(), [])          # idempotent
-        server = self.servers()[K.MCP_NAME]
-        self.assertEqual(server["args"][3:], ["--apps", ",".join(APPS)])
         self.kit().uninstall()
         self.assertEqual(self.snapshot(), {})               # the folders it created are gone too
-        self.assertEqual(self.servers(), {})
-        self.assertEqual([c[:2] for c in self.calls], [["mcp", "add-json"], ["mcp", "remove"]])
+        self.assertEqual(self.calls, [])
+
+    def test_the_retired_mcp_server_is_removed(self):
+        """An earlier version registered llm_wiki_raw (recorded in its manifest, or running mcp_rawsearch.py):
+        install and uninstall each remove it; someone else's server of that name is left alone."""
+        old = {"type": "stdio", "command": "python.exe", "args": ["-s", "-B", "C:/x/tools/mcp_rawsearch.py"]}
+        for how in ("install", "uninstall"):
+            with self.subTest(how=how):
+                self.claude(["mcp", "add-json", "--scope", "user", K.MCP_NAME, json.dumps(old)])
+                self.assertEqual(self.kit().status()[0][f"mcp {K.MCP_NAME}"], "retired")
+                getattr(self.kit(), how)()
+                self.assertEqual(self.servers(), {})
+                self.assertNotIn(f"mcp {K.MCP_NAME}", self.kit().status()[0])
+        self.kit().uninstall()
+        self.add_foreign_server()
+        servers = self.servers()
+        self.assertNotIn(f"mcp {K.MCP_NAME}", self.kit().status()[0])
+        self.kit().install()
+        self.kit().uninstall()
+        self.assertEqual(self.servers(), servers)
+        self.assertEqual(self.calls, [])
 
     def test_an_existing_file_is_kept_byte_for_byte(self):
         self.put(".claude/CLAUDE.md", OTHER)
@@ -176,15 +188,12 @@ class InstallUninstall(Home):
 
     def test_foreign_items_are_refused(self):
         self.put(".claude/agents/raw-retriever.md", "남의 에이전트\r\n".encode("cp949"))    # not even UTF-8
-        self.add_foreign_server()
-        before, servers = self.snapshot(), self.servers()
+        before = self.snapshot()
         with self.assertRaises(K.Refused):
             self.kit().install()
         self.assertEqual(self.snapshot(), before)
-        self.assertEqual(self.servers(), servers)
         self.kit().uninstall()                              # not ours: left alone
         self.assertEqual(self.snapshot(), before)
-        self.assertEqual(self.servers(), servers)
 
     def test_a_claude_md_that_is_not_utf8(self):
         self.put(".claude/CLAUDE.md", "# 내 규칙\r\n".encode("cp949"))
@@ -195,16 +204,6 @@ class InstallUninstall(Home):
         with self.assertRaises(K.Refused):
             self.kit().install()
         self.assertEqual(self.snapshot(), before)
-
-    def test_a_failed_add_puts_the_entry_back(self):
-        self.kit().install()
-        servers, recorded = self.servers(), self.kit().manifest["mcp"]
-        other = str(Path(tempfile.gettempdir()) / "python.exe")
-        self.failing = lambda argv: argv[:2] == ["mcp", "add-json"] and json.loads(argv[5])["command"] == other
-        with self.assertRaises(RuntimeError):
-            self.kit(python=other).install()
-        self.assertEqual(self.servers(), servers)               # removed, the add failed, put back
-        self.assertEqual(self.kit().manifest["mcp"], recorded)  # still this tool's entry
 
     def test_an_older_manifest_still_loads(self):
         """A manifest from the version with backups (backups, mcp_pending, block.replaces) works as it is."""
@@ -218,17 +217,7 @@ class InstallUninstall(Home):
         self.assertEqual(self.kit().install(), [])
         self.kit().uninstall()
         self.assertEqual(self.snapshot(), {})
-        self.assertEqual(self.servers(), {})
         self.assertNotIn("backups", json.loads((self.state / "manifest.json").read_text(encoding="utf-8")))
-
-    def test_a_new_interpreter_makes_the_server_stale(self):
-        self.kit().install()
-        other = str(Path(tempfile.gettempdir()) / "python.exe")
-        rows, _m = self.kit(python=other).status()
-        self.assertEqual(rows[f"mcp {K.MCP_NAME}"], "stale")
-        self.kit(python=other).install()
-        self.assertEqual([c[:2] for c in self.calls[-2:]], [["mcp", "remove"], ["mcp", "add-json"]])
-        self.assertEqual(self.servers()[K.MCP_NAME]["command"], other)
 
     def test_a_template_change_makes_the_files_stale(self):
         self.kit().install()

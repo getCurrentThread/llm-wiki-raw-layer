@@ -8,7 +8,7 @@ from rawlayer.capture import canon, fsio
 from rawlayer.capture.origins import Unstable
 from appkit.archive import FetchError
 from claudecode.origins import CcArchive
-from claudecode.readers.archive import read_once
+from claudecode.origins import read_once
 from .fixtures import Fixture, CID, MID, row
 from tests.core import appfix as h
 
@@ -60,7 +60,7 @@ class CaptureTests(unittest.TestCase):
                 return data + b" " * calls
             return data
 
-        with patch("claudecode.readers.archive.fsio.read_shared", side_effect=changing):
+        with patch("claudecode.origins.fsio.read_shared", side_effect=changing):
             with self.assertRaises(Unstable):
                 read_once(self.fx.root, frozenset(), "cc_archive")
 

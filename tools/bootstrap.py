@@ -26,7 +26,6 @@ if str(PROJECT) not in sys.path:
 
 NOT_COVERED = ("kakaotalk",)
 CORE_KEYS = ("v", "impl", "data_root")
-SHOWN = ("_source", "_token_type")      # options whose values are a fixed vocabulary, which `config get` prints
 CHECKPOINT = "bootstrap.json"
 PROBE_TIMEOUT = 300
 # gmail's card has its own steps for the genesis (6.1.5) and turning sync on (6.1.6)
@@ -39,32 +38,22 @@ GATES = ("5.1", "5.2", "5.3", "5.4", "5.5", "genesis_complete", "5.6", "5.7", "5
          "6.6", "6.6.1", "6.6.2", "6.6.3", "8")
 FIELDS = ("rc", "head_seq", "total", "errors", "limited", "messages_written", "posts_written", "channels", "pages",
           "excluded", "unavailable", "differing_rows")
-# What each app needs before its first collection, by its source option (llm.md section 6): (key, kind, step, why).
-# kind: file/dir (the config path must be there), value (the option set), checkpoint (that step recorded, or rows
-# already captured)
+# What each app needs before its first collection (llm.md section 6): (key, kind, step, why).
+# kind: file/dir (the config path must be there) or value (the option set)
 NEEDS = {
-    "claudecode": {None: [("cc_claude_dir", "dir", "6.6", "the Claude Code source folder is not set or not there: "
-                           "run config defaults claudecode, then check cc_claude_dir")]},
-    "gmail": {None: [("gm_imap_user", "value", "6.1.3", "gm_imap_user is empty: the Gmail address to archive"),
-                     ("gm_imap_password_file", "file", "6.1.3", "no app password file yet: the owner creates one and "
-                      "saves it through the token file handshake")]},
-    "mattermost": {None: [("mm_url", "value", "6.4", "mm_url is empty: the owner gives the server's https:// address"),
-                          ("mm_token_file", "file", "6.4", "no session token yet: the owner signs in (--login)")]},
-    "discord": {"desktop": [("dc_desktop_path", "dir", "6.2", "the Discord desktop cache folder is not set or not "
-                             "there (the desktop app installed and signed in)")],
-                "api": [("dc_token_file", "file", "6.2", "no token file yet: the bot setup and the token file "
-                         "handshake")]},
-    "notion": {"desktop": [("nt_desktop_path", "file", "6.3", "Notion's desktop database is not set or not there "
-                            "(the desktop app installed, signed in and synced)")],
-               "api": [("5.4", "checkpoint", "6.3", "api source: [human] `ntn login`, then 5.4 (--auth-check); record "
-                        "it with `checkpoint mark notion 5.4`")]},
+    "claudecode": [("cc_claude_dir", "dir", "6.6", "the Claude Code source folder is not set or not there: "
+                    "run config defaults claudecode, then check cc_claude_dir")],
+    "gmail": [("gm_imap_user", "value", "6.1.3", "gm_imap_user is empty: the Gmail address to archive"),
+              ("gm_imap_password_file", "file", "6.1.3", "no app password file yet: the owner creates one and "
+               "saves it through the token file handshake")],
+    "mattermost": [("mm_url", "value", "6.4", "mm_url is empty: the owner gives the server's https:// address"),
+                   ("mm_token_file", "file", "6.4", "no session token yet: the owner signs in (--login)")],
+    "discord": [("dc_desktop_path", "dir", "6.2", "the Discord desktop cache folder is not set or not "
+                 "there (the desktop app installed and signed in)")],
+    "notion": [("nt_desktop_path", "file", "6.3", "Notion's desktop database is not set or not there "
+                "(the desktop app installed, signed in and synced)")],
 }
-KINDS = {key: kind for by_source in NEEDS.values() for needs in by_source.values() for key, kind, _s, _w in needs
-         if kind in ("file", "dir")}
-_WORD = re.compile(r"[a-z]{1,16}")
-# sources whose sync never runs in the SYSTEM task (llm.md 6.3: ntn's keychain is the owner's; the task stays
-# archive-only and the owner runs the fetch step)
-NO_TASK_SYNC = {"notion": ("api",)}
+KINDS = {key: kind for needs in NEEDS.values() for key, kind, _s, _w in needs if kind in ("file", "dir")}
 _INT = re.compile(r"-?(0|[1-9][0-9]*)")
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}(\.[A-Za-z_][A-Za-z0-9_]{0,39})?$")
 
@@ -416,12 +405,8 @@ def probe(app):
     c["placeholders"] = placeholders(raw)
     defaults = {op.key: op.default for op in a.options}
     sync_key = next((k for k in defaults if k.endswith("_sync")), None)
-    source_key = next((k for k in defaults if k.endswith("_source")), None)
     c["sync_key"] = sync_key
     c["sync"] = raw.get(sync_key, defaults.get(sync_key)) is True if sync_key else None
-    source = raw.get(source_key, defaults.get(source_key)) if source_key else None
-    # only a value of the option's fixed vocabulary is shown (a host or path typed into the key is not)
-    c["source"] = source if source is None or (isinstance(source, str) and _WORD.fullmatch(source)) else "invalid"
     files = {}
     sources = raw.get("sources") if isinstance(raw.get("sources"), dict) else {}
     for k in a.source_keys:
@@ -478,11 +463,6 @@ def index_state(app):
     return {"state": "error", "rc": rc, "why": (err.strip().splitlines() or ["no message"])[-1][:200]}
 
 
-def _needs(app, c):
-    by_source = NEEDS.get(app, {})
-    return by_source.get(c.get("source"), by_source.get(None, []))
-
-
 def next_step(app, p, idx):
     """(llm.md step, why) for one app's state: the first gate it has not passed, by the app card's own step where
     the card runs a section 5 step as one of its numbered steps (CARD_STEPS)."""
@@ -508,14 +488,8 @@ def _next_step(app, p, idx):
     files = c.get("files") or {}
     cps = p.get("checkpoints") or {}
     idx = idx or {}
-    for key, kind, step, why in _needs(app, c):
-        if kind == "value":
-            missing = key not in c.get("values_set", ())
-        elif kind == "checkpoint":
-            missing = key not in cps and not idx.get("total")
-        else:
-            missing = files.get(key) != "there"
-        if missing:
+    for key, kind, step, why in NEEDS.get(app, []):
+        if key not in c.get("values_set", ()) if kind == "value" else files.get(key) != "there":
             return step, why
     state = idx.get("state")
     if state in ("missing", "not_configured") or (state in ("ok", "stale") and not idx.get("total")):
@@ -533,8 +507,7 @@ def _next_step(app, p, idx):
         if "genesis_complete" not in cps and "5.10" not in cps:
             return "5.5", ('finish genesis with larger bounds until "limited": false, then '
                            f"`bootstrap.py checkpoint mark {app} genesis_complete`")
-        if c.get("source") not in NO_TASK_SYNC.get(app, ()):
-            return "5.6", f"turn on {c.get('sync_key')}"
+        return "5.6", f"turn on {c.get('sync_key')}"
     if c.get("task_problems"):
         return "5.6", "schedule install would refuse: " + "; ".join(c["task_problems"])
     task = p.get("task") or {}
@@ -591,14 +564,6 @@ def _probe_child(app):
         return {"app": app, "error": "unreadable probe output"}
 
 
-def _verify(app):
-    rc, out, err = _run(_manage("check", app), timeout=600)
-    text = out + err
-    m = re.search(r"differing_rows=(\d+) head_seq=(\d+)", text)
-    return {"rc": rc, "busy": "ledger busy" in text, "differing_rows": int(m.group(1)) if m else None,
-            "head_seq": int(m.group(2)) if m else None}
-
-
 def doctor(a):
     apps, off = in_scope_apps()
     named = a.app or []
@@ -620,10 +585,6 @@ def doctor(a):
             entry = dict(p, index=idx, next={"step": step, "why": why})
             entry.pop("app", None)
             results[app] = entry
-    if a.verify:
-        for app in todo:
-            if (results[app].get("config") or {}).get("valid"):
-                results[app]["verify"] = _verify(app)
     report["apps"] = results
     report["skipped"] = [f"{x} (not covered)" for x in off]
     attention = [f"machine {step}: {text}" for step, text in problems]
@@ -632,9 +593,6 @@ def doctor(a):
         configured = r.get("error") or (r.get("config") or {}).get("exists")
         if r["next"]["step"] != "8" and (configured or app in named):
             attention.append(f"{app} {r['next']['step']}: {r['next']['why']}")
-        v = r.get("verify")
-        if v and (v["rc"] != 0 or v["busy"] or v["differing_rows"]):
-            attention.append(f"{app}: check {'busy (not verified)' if v['busy'] else 'did not pass'}")
     report["attention"] = attention
     rc = 3 if attention else 0
     report["rc"] = rc
@@ -673,9 +631,8 @@ def _print_doctor(r):
             continue
         if c.get("readable"):
             sync = "" if c.get("sync_key") is None else f"; {c['sync_key']} {'on' if c.get('sync') else 'off'}"
-            src = f"; source {c['source']}" if c.get("source") else ""
             state = "ok" if c.get("valid") else f"refused ({c.get('refused')})"
-            _out(f"  config: {state}{src}{sync}")
+            _out(f"  config: {state}{sync}")
             missing = [k for k, v in (c.get("files") or {}).items() if v not in ("there", "unset")]
             if missing:
                 _out("  paths not there: " + ", ".join(f"{k} ({(c['files'][k])})" for k in missing))
@@ -700,10 +657,6 @@ def _print_doctor(r):
                  f"{'; a newer run has started and finished no step yet' if log.get('newer_started') else ''}")
         if e.get("checkpoints"):
             _out("  checkpoints: " + ", ".join(sorted(e["checkpoints"])))
-        v = e.get("verify")
-        if v:
-            _out(f"  check: rc={v['rc']} differing_rows={v['differing_rows']} head_seq={v['head_seq']}"
-                 f"{' (ledger busy: not verified)' if v['busy'] else ''}")
     for s in r["skipped"]:
         _out(f"doctor: {s}: not checked")
     if r["attention"]:
@@ -901,7 +854,7 @@ MISSING = object()          # a key the config does not hold (a key holding null
 
 def describe_value(v, data_root, key="", option=False):
     """What `config get` prints for a value: its state, never the value itself (a path, an organisation's value or
-    a credential), except booleans, integers and the fixed vocabulary of the SHOWN options. `option`: an app option,
+    a credential), except booleans and integers. `option`: an app option,
     whose default applies only when the key is missing."""
     if v is MISSING:
         return "missing (the app's default applies)" if option else "missing"
@@ -909,8 +862,6 @@ def describe_value(v, data_root, key="", option=False):
         return "null (checked as given, not as the default: remove the key or set a value)" if option else "null"
     if isinstance(v, bool) or isinstance(v, int):
         return json.dumps(v)
-    if key.endswith(SHOWN) and isinstance(v, str) and re.fullmatch(r"[a-z]{1,16}", v):
-        return v
     if isinstance(v, list):
         return f"list of {len(v)}" + (" (placeholder)" if any(is_placeholder(x) for x in v) else "")
     if isinstance(v, dict):
@@ -1027,7 +978,6 @@ def parser():
     p = sub.add_parser("doctor", help="the machine's and the apps' state, and each app's next llm.md step")
     p.add_argument("--app", action="append", help="check only this app (repeatable)")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--verify", action="store_true", help="also run manage.py check <app> (takes the ledger lock)")
     p = sub.add_parser("config", help="read or change an app's config.json (never printing its values)")
     cs = p.add_subparsers(dest="action", required=True)
     g = cs.add_parser("get")

@@ -13,7 +13,7 @@ from rawlayer.capture import canon, ledger as ledger_mod, run
 from rawlayer.capture.config import ConfigError
 from rawlayer.capture.origins import Guard
 from tests.core import toyfix as T
-from tests.core.toyapp import readers
+from tests.core.toyapp import origins as readers
 from tests.core.toyapp.origins import ToyB
 from tests.core.toyfix import by_key, capture, export, invariants, item, manifests, records, replay_diff
 

@@ -51,10 +51,8 @@ registry loads, and by `manage.py check`):
 
 | module | what it holds |
 |---|---|
-| `apps.py` | exactly one `AppConfig` subclass: `label`, `source_keys` (config `"sources"` entries, absolute paths that must exist), `archive` (a prefix `p`: the app reads the archive folder its own fetch step keeps; the registry adds the source key `<p>_archive` and, without an `inputs.py`, the input attribute of that name), `options` (top-level config keys: `Option(key, default, check, attr)`), optionally `schedule` (the scheduled task), `task_checks(cfg)` (a list of short reasons the config is unfit for the scheduled task; `schedule install` refuses while there is one) and `wiki = (prefix, layout)` (the app can be exported by `manage.py collect`: `layout` is `chat`, `mail` or `page`, what the containers of its index are; `prefix` is written once and the registry adds `<prefix>_wiki_project`, `_include`, `_exclude` and `_since` to `options`, or `None` for an app whose settings come from the command line only; an app without `wiki` is refused by `collect`) |
-| `origins.py` | `ORIGINS`: the app's `Origin` subclasses, in processing and commit order |
-| `inputs.py` | optional: `resolve(cfg)` -> {input attribute: path}. Without it the app's inputs are the one `archive` input (the config's path), or none |
-| `vocab.py` | optional: `WORDS`, `PATTERNS`, the strings its readers put in manifests and console lines (none without it) |
+| `apps.py` | exactly one `AppConfig` subclass: `label`, `source_keys` (config `"sources"` entries, absolute paths that must exist), `archive` (a prefix `p`: the app reads the archive folder its own fetch step keeps; the registry adds the source key `<p>_archive` and, without a `resolve` in `origins.py`, the input attribute of that name), `options` (top-level config keys: `Option(key, default, check, attr)`), optionally `schedule` (the scheduled task), `task_checks(cfg)` (a list of short reasons the config is unfit for the scheduled task; `schedule install` refuses while there is one) and `wiki = (prefix, layout)` (the app can be exported by `manage.py collect`: `layout` is `chat`, `mail` or `page`, what the containers of its index are; `prefix` is written once and the registry adds `<prefix>_wiki_project`, `_include`, `_exclude` and `_since` to `options`, or `None` for an app whose settings come from the command line only; an app without `wiki` is refused by `collect`) |
+| `origins.py` | the capture side: `ORIGINS`, the app's `Origin` subclasses in processing and commit order, and its readers (a `readers/` package only for readers too large for one file, as kakaotalk's); optionally `resolve(cfg)` -> {input attribute: path} (without it the app's inputs are the one `archive` input, the config's path, or none) and `WORDS`, `PATTERNS`, the strings its readers put in manifests and console lines (none without them) |
 | `search.py` | optional: a search source (`SPEC` a `SourceIndex`, `HELP`, `add_arguments`, `run`) for `manage.py search <label>`. The index half of the usual shape (one content table folded from one origin) subclasses `rawlayer/search/index.py`'s `SimpleIndex` and `SimpleApplier`; the query half subclasses `rawlayer/search/driver.py`'s `SearchDriver`, which derives `--mode` from its `group_modes` (a `Group` per mode: what it groups by and how a group is named) and owns `--before` / `--after`, so `add_arguments` and `run` just delegate to the driver. A `DRIVER` that sets `key_col`, `container_col` and implements `chunk_units` can be embedded (`manage.py embed <label>`, `search --hybrid`: `rawlayer/search/dense.py`) and exported (`manage.py collect <label>`, with `wiki` in `apps.py`) |
 
 An origin is a class (`rawlayer/capture/origins.py`). It sets `name`, `kinds` and the optional `day_kinds`,
@@ -76,10 +74,7 @@ attribute.
 
 ## Settings and machine config
 
-`settings.py` (versioned): `BASE_DIR` (the project directory), `HOME_DIR` (the owning user's profile home, also
-under SYSTEM), `IMPL_NAME` (recorded in every manifest), `DATA_PARENT` (the ACL'd, Search-excluded parent every
-data root must sit in; by convention `<DATA_PARENT>/raw/<app>`), `SQLITE_VEC_DIR` (sqlite-vec's DLL for `search
---hybrid`, outside the data parent) and optionally `EXCLUDE_APPS` (app folders to leave out of discovery). Never remove an app
+README.md lists the settings of `config/settings.py`. Never remove an app
 from a project whose ledger already holds its origins: every manifest holding their segments or containers would stop validating.
 
 `config.json` (per machine, never committed; `config.example.json` shows the shape): `v`, `impl`, `data_root`,

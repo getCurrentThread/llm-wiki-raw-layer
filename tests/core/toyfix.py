@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 from rawlayer import registry
-from rawlayer.capture import paths, run, steps
+from rawlayer.capture import paths, run
 from rawlayer.capture.config import Config
 from rawlayer.capture.ledger import Ledger
 from tests.core.appfix import (by_key, export, force_rmtree, invariants, manifests,  # noqa: F401
@@ -163,7 +163,7 @@ def cli_main(fx, *argv):
     """The internal capture CLI in-process (its replay action included), with --config; returns the
     exit code. A path in argv is passed as its text, as a command line passes it."""
     with preserved_env(), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        return steps.main([os.fspath(a) for a in argv] + ["--config", os.fspath(fx.config_path)])
+        return run.main([os.fspath(a) for a in argv] + ["--config", os.fspath(fx.config_path)])
 
 
 def ledger(fx):

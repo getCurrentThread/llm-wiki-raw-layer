@@ -2,7 +2,7 @@
 import re
 from rawlayer.search import driver as drv, fts, index
 from rawlayer.capture.canon import iso_ms
-from .keys import nt_id
+from .origins import nt_id
 
 NAME = "notion"
 HELP = "search Notion blocks, page titles/properties and comments"
