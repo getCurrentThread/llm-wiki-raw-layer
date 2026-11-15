@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """The apps' AppConfig.setup_defaults (appkit/setup.py) on the config `manage.py setup` writes from each
 config.example.json, one table row per app: the archive and data-root files are filled, a profile path only when it
-is there, a value the owner set is kept, and the notes name keys, never paths. Each app's task_checks cases stay in
-its own suite; kakaotalk's defaults are its provisioning (kakaotalk/tests/test_provision.py)."""
+is there, a value the owner set is kept, and the notes name keys, never paths. The task_checks the apps share
+(appkit.setup.existing_path) are tested in discord's suite; kakaotalk's defaults are its provisioning (kakaotalk/tests/test_provision.py)."""
 import json
 import shutil
 import tempfile

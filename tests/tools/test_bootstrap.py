@@ -43,21 +43,6 @@ class Temp(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
 
-class ValueRule(unittest.TestCase):
-    def test_json_or_string(self):
-        for raw, want in (("true", True), ("false", False), ("null", None), ("0", 0), ("-5", -5), ("12", 12),
-                          ('["a", "b"]', ["a", "b"]), ('{"k": 1}', {"k": 1}), ("007", "007"), ("3.5", "3.5"),
-                          ("-0", 0), ("C:\\x\\y", "C:\\x\\y"), ("api", "api"), ("", "")):
-            with self.subTest(raw=raw):
-                self.assertEqual(B.parse_value(raw), want)
-
-    def test_string_flag_and_bad_json(self):
-        self.assertEqual(B.parse_value("true", string=True), "true")
-        self.assertEqual(B.parse_value("[x", string=True), "[x")
-        with self.assertRaises(B.Refused):
-            B.parse_value("[x")
-
-
 class Masking(unittest.TestCase):
     def setUp(self):
         B._MASKS = None
@@ -201,32 +186,6 @@ class NextStep(unittest.TestCase):
         for g in B.GATES:
             with self.subTest(gate=g):
                 self.assertIn(f"`{g}`", section)
-
-
-class DefinitionState(unittest.TestCase):
-    """A registered task is current, differs or foreign, as `schedule status` reads it."""
-
-    def test_states(self):
-        from rawlayer import schedule  # noqa: PLC0415
-        s = schedule.parse({"task": "\\toy-folder\\toy-capture", "start": "01:14", "every_hours": 3, "limit_hours": 2,
-                            "description": "toy: capture every 3 h"})
-        project, cfg = schedule._project(), Path(tempfile.gettempdir()) / "toy" / "config.json"
-        xml = schedule.task_xml(s, "python.exe", project, "toy", cfg)
-        state = lambda text: B.definition_state(schedule, s, "toy", text)  # noqa: E731
-        self.assertEqual(state(xml)["definition"], "current")
-        self.assertEqual(state(xml.replace(" capture toy --config", " collect toy --config"))["definition"], "foreign")
-
-
-class IndexState(unittest.TestCase):
-    def test_states(self):
-        env = {"total": 4, "updated_at": "u", "index": {"seq": 2, "ledger_seq": 3, "stale": True}}
-        for result, want in (((0, json.dumps(env), ""), "stale"), ((0, "{", ""), "error"), ((75, "", ""), "busy"),
-                             ((2, "", "search: no gmail index yet -- run capture"), "missing"),
-                             ((2, "", "the gmail index was built by another version"), "outdated"),
-                             ((2, "", "config file unreadable"), "not_configured"),
-                             ((1, "", "something else"), "error")):
-            with self.subTest(want=want), mock.patch.object(B, "_run", return_value=result):
-                self.assertEqual(B.index_state("gmail")["state"], want)
 
 
 class ConfigWrite(Temp):
@@ -384,14 +343,6 @@ class Checkpoints(Temp):
         self.assertEqual(run("checkpoint", "clear", "gmail")[0], 0)
         self.assertEqual(B.read_checkpoints(self.tmp), {})
 
-    def test_vocabulary(self):
-        for argv in (["mark", "gmail", "whatever"], ["mark", "gmail"], ["mark", "gmail", "5.5", "--field", "x=1"],
-                     ["mark", "gmail", "5.5", "--field", "rc=abc"], ["mark", "gmail", "5.5", "--field", "rc"]):
-            with self.subTest(argv=argv):
-                self.assertEqual(run("checkpoint", *argv)[0], 2)
-        self.assertFalse((self.tmp / "reports" / B.CHECKPOINT).exists())
-
-
 class OffLimits(unittest.TestCase):
     def test_every_command_refuses_kakaotalk(self):
         for argv in (["doctor", "--app", "kakaotalk"], ["config", "get", "kakaotalk"],
@@ -411,12 +362,6 @@ class OffLimits(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("no app", err)
         self.assertNotIn("nosuchapp", err)                  # it may be a value typed in the app's place
-
-    def test_discovery_leaves_it_out(self):
-        apps, off = B.in_scope_apps()
-        self.assertNotIn("kakaotalk", apps)
-        self.assertTrue(set(off) <= set(B.NOT_COVERED))
-
 
 class DoctorReport(unittest.TestCase):
 

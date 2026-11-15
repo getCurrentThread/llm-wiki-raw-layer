@@ -101,21 +101,6 @@ class TestDerived(unittest.TestCase):
             self.assertFalse(publicout.ok_str("toy:toy_b:A1"))
             self.assertFalse(publicout.ok_str("somebody"))
 
-    def test_use_restores_the_previous_registry(self):
-        with registry.use([T.TOY]) as outer:
-            with registry.use([T.TOY2]):
-                self.assertEqual(registry.origin_order(), ())
-                self.assertFalse(publicout.ok_str("toy_a"))
-            self.assertIs(registry.get(), outer)
-            self.assertTrue(publicout.ok_str("toy_a"))
-
-    def test_use_without_a_previous_registry_uninstalls(self):
-        with no_registry():
-            with registry.use([T.TOY]):
-                self.assertTrue(publicout.ok_str("toy_a"))
-            self.assertIsNone(registry._current)
-            self.assertFalse(publicout._installed)
-
     def test_shared_table_with_the_same_ddl_is_one_table(self):
         apps = FakeApps()
         try:

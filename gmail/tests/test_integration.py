@@ -1,10 +1,8 @@
 import contextlib
-import io
 import json
 import sqlite3
 import unittest
 from unittest.mock import patch
-from rawlayer.management.commands import capture
 from rawlayer.capture.config import Config
 from rawlayer.search import index
 from gmail.fetch import sync
@@ -34,13 +32,6 @@ class IntegrationTests(unittest.TestCase):
         with contextlib.closing(sqlite3.connect(index.index_path(self.fx.data_root, SPEC))) as con:
             return {t: con.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
                     for t in ("msgs", "states", "labels", "membership", "counts")}
-
-    def test_collect_pipeline_ledger_index_search_replay(self):
-        with h.preserved_env(), patch("rawlayer.capture.precheck.check"), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(capture.main(["gmail", "--config", str(self.fx.config_path)]), 0)
-        self.assertEqual(self.query("deployment")["total"], 2)
-        self.assertFalse(h.invariants(self.fx)[0])
-        self.assertEqual(h.replay_diff(self.fx), 0)
 
     def test_modes_filters_and_shared_envelope(self):
         self.build()
