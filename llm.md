@@ -199,8 +199,7 @@ Gate: `git -C '<PROJECT>' rev-parse --is-inside-work-tree` prints `true`.
   `5.10` checkpoint is recorded (5.10, section 8). Without one, it is `5.7`: check the task elevated first.
 - It exits 0 when nothing needs attention, and 3 otherwise. An app with no config counts only when named with
   `--app <app>`.
-- `--json` prints the same as one object. `--verify` also runs `check <app>`, which takes the ledger lock: never
-  while a capture may run.
+- `--json` prints the same as one object.
 Gate for Phase 0: its `machine` lines show no problem, and `need attention` lists no `machine` item.
 
 Do 0.6 first: the installs in 0.1 and 0.2 and the exclusion in 0.5 can need the owner.
@@ -813,8 +812,8 @@ Never include the items listed in rule 3.
 `python -s -B tools/bootstrap.py agents ...` (`tools/agentkit.py`; `--help` and its docstring give the states and
 options) renders `tools/agent_templates/` into Claude Code's global configuration, so that the ledgers can
 be searched and this runbook found from any folder: a marked block in `<HOME>\.claude\CLAUDE.md`, the `raw-search`
-and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`, and the user-scope MCP server
-`llm_wiki_raw` (`tools/mcp_rawsearch.py`, read-only search of every app; its app `all` covers them all). It needs
+and `llm-wiki-setup` skills and the `raw-retriever` subagent under `<HOME>\.claude\`. It also removes the
+user-scope MCP server `llm_wiki_raw` that an earlier version registered (status shows it as `retired`). It needs
 no elevation and touches no data. Its manifest lives in `%LOCALAPPDATA%\llm-wiki-raw-layer\agentkit`,
 never in `<PROJECT>`.
 
@@ -824,11 +823,11 @@ never in `<PROJECT>`.
 2. `agents install --dry-run`. It prints the diff with paths masked and changes nothing. Show the owner the diff and
    wait for an explicit yes: it rewrites their global configuration (rule 10).
 3. With that yes, the same command without `--dry-run`. `install` refuses a `modified` or `foreign` item and replaces
-   nothing: the owner moves it away by hand first. `--python <PY>` names the interpreter the MCP server runs
-   with. When a `claude mcp` call fails, the error ends with the CLI's own reason.
-   Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/mcp` lists `llm_wiki_raw` as connected and `raw_status` (no app) answers for every app.
+   nothing: the owner moves it away by hand first. When the `claude mcp remove` call fails, the error ends with the
+   CLI's own reason.
+   Gate: `agents status` exits 0, and in a new Claude Code session opened outside `<PROJECT>`, `/raw-search` answers.
 4. Re-run `install` after `git pull` or a moved checkout: a template change shows as `stale`, a moved one as
-   `project_mismatch`. It keeps the recorded interpreter; pass `--python` again to change it.
+   `project_mismatch`.
 
 `agents uninstall [--dry-run]` undoes install and keeps, and names, what was changed by hand. After editing a
 template, run `install` again.

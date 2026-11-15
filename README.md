@@ -37,8 +37,7 @@ archive contract and search rows.
    It runs the steps, gates each one and hands back only the steps a person must do (sign-ins, consent, UAC).
 6. Optional, for Claude Code from any folder: `python -s -B tools/bootstrap.py agents install --dry-run`, then,
    after reviewing the diff, `agents install`. It adds a block to the global CLAUDE.md, the `raw-search` and
-   `llm-wiki-setup` skills, the `raw-retriever` subagent and the `llm_wiki_raw` MCP search server (llm.md
-   section 11).
+   `llm-wiki-setup` skills and the `raw-retriever` subagent (llm.md section 11).
 
 ## Layout
 

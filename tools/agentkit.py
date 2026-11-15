@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """python -s -B <PROJECT>/tools/bootstrap.py agents <command> ... -- this checkout's agent integration (llm.md 11):
 tools/agent_templates/ rendered into Claude Code's global configuration, i.e. a marked block in .claude/CLAUDE.md (the
-rest of the file kept byte for byte), the raw-search and llm-wiki-setup skills, the raw-retriever subagent and the
-user-scope MCP server llm_wiki_raw. Standard library only.
+rest of the file kept byte for byte), the raw-search and llm-wiki-setup skills and the raw-retriever subagent. The
+user-scope MCP server llm_wiki_raw that an earlier version registered is removed by install and uninstall. Standard
+library only.
 
   status [--json]                     each item absent, current, stale (an older version this tool wrote), modified
                                       (changed by hand since), foreign (not written by this tool) or unreadable,
                                       and project_mismatch; exit 0 only when every item is current
-  install [--dry-run] [--python EXE]  writes what is absent or stale, refusing a modified or foreign item
+  install [--dry-run]                 writes what is absent or stale, refusing a modified or foreign item
   uninstall [--dry-run]               removes what install wrote and nobody changed since; the rest is kept, named
 
 --dry-run prints the diff (paths masked). The manifest lives in %LOCALAPPDATA%\\llm-wiki-raw-layer\\agentkit.
@@ -35,9 +36,7 @@ _BEGIN = re.compile(r"^<!-- llm-wiki-raw-layer:begin\b[^\n]*-->[ \t]*\r?$", re.M
 _END = re.compile(r"^<!-- llm-wiki-raw-layer:end -->[ \t]*(?:\r?\n|\Z)", re.M)
 BOM = b"\xef\xbb\xbf"
 CLAUDE_MD = ".claude/CLAUDE.md"
-MCP_NAME = "llm_wiki_raw"
-MCP_TOOLS = ("raw_status", "raw_aggregate", "raw_search", "raw_read", "raw_help")
-MCP_SERVER = PROJECT / "tools" / "mcp_rawsearch.py"
+MCP_NAME = "llm_wiki_raw"           # the MCP server an earlier version registered: removed when it is ours
 # (template, kind, path): kind picks the frontmatter keys the file keeps (FRONT)
 GLOBAL_FILES = (("raw-search.md", "skill", ".claude/skills/raw-search/SKILL.md"),
                 ("llm-wiki-setup.md", "skill", ".claude/skills/llm-wiki-setup/SKILL.md"),
@@ -68,7 +67,6 @@ def values(found):
     posix = PROJECT.as_posix()
     run = f'python -s -B "{posix}/manage.py"'
     return {"PROJECT": str(PROJECT), "APPS": ", ".join(found), "RUN": run,
-            "MCP_TOOLS": ", ".join(f"mcp__{MCP_NAME}__{t}" for t in MCP_TOOLS),
             "BOOT": f'python -s -B "{posix}/tools/bootstrap.py"', "DOC": f"{posix}/", "WHERE": "from any folder",
             "BASH_SEARCH": f"Bash({run} search:*)"}
 
@@ -160,13 +158,6 @@ def state_dir():
     return Path(base) / "llm-wiki-raw-layer" / "agentkit"
 
 
-def _same_mcp(a, b):
-    def norm(s):
-        return (s.get("type", "stdio"), os.path.normcase(str(s.get("command", ""))),
-                [str(x) for x in s.get("args") or []])
-    return isinstance(a, dict) and isinstance(b, dict) and norm(a) == norm(b)
-
-
 def _claude_cli(argv):
     exe = shutil.which("claude")
     if not exe:
@@ -181,28 +172,16 @@ def _claude_cli(argv):
 
 class Kit:
     """Claude Code's configuration in `home` (its .claude/ folder and .claude.json), with the manifest in `state`.
-    `claude(argv) -> rc` runs the claude CLI; `found` are the apps the MCP server may search; `python` is the MCP
-    server's interpreter (None: the one it was installed with while that is still there, else this one)."""
+    `claude(argv) -> rc` runs the claude CLI; `found` are the apps the templates name."""
 
-    def __init__(self, home=None, state=None, python=None, claude=None, found=None):
+    def __init__(self, home=None, state=None, claude=None, found=None):
         self.home = Path(home) if home else Path.home()
         self.state = Path(state) if state else state_dir()
         self.claude = claude or _claude_cli
         self.found = list(found if found is not None else apps())
         self.vals = values(self.found)
         self.manifest = self._load()
-        self.python = self._interpreter(python)
         self.problems = []              # status: why an item is unreadable
-
-    def _interpreter(self, python):
-        if python:
-            return os.path.abspath(python)
-        recorded = (self.manifest.get("mcp") or {}).get("command")
-        if isinstance(recorded, str) and recorded:
-            from rawlayer import schedule  # noqa: PLC0415
-            if schedule.python_problem(recorded) is None:
-                return recorded
-        return os.path.abspath(sys.executable)
 
     # ---- the manifest
     def _load(self):
@@ -218,8 +197,8 @@ class Kit:
 
     @staticmethod
     def _empty():
-        # files: path -> sha256 written; block: {sha256, before, after, created}; mcp: the entry registered;
-        # dirs: folders install created
+        # files: path -> sha256 written; block: {sha256, before, after, created}; mcp: the entry an earlier version
+        # registered; dirs: folders install created
         return {"v": 1, "project": None, "files": {}, "block": None, "mcp": None, "dirs": []}
 
     def _save(self):
@@ -236,10 +215,6 @@ class Kit:
     # ---- the wanted state
     def files(self):
         return {rel: artifact(t, kind, self.vals) for t, kind, rel in GLOBAL_FILES}
-
-    def mcp_spec(self):
-        args = ["-s", "-B", str(MCP_SERVER), "--apps", ",".join(self.found)]
-        return {"type": "stdio", "command": self.python, "args": args}
 
     def mcp_now(self):
         """The user-scope llm_wiki_raw entry of .claude.json, or None."""
@@ -277,15 +252,13 @@ class Kit:
         known = (self.manifest["block"] or {}).get("sha256")
         return ("stale" if cur == known else "modified" if known else "foreign"), text, span, bom
 
-    def mcp_state(self):
+    def mcp_retired(self):
+        """The llm_wiki_raw entry when an earlier version of this tool registered it (recorded in the manifest, or
+        running tools/mcp_rawsearch.py), else None: someone else's server of that name is left alone."""
         now = self.mcp_now()
-        if now is None:
-            return "absent"
-        if _same_mcp(now, self.mcp_spec()):
-            return "current"
-        if self.manifest["mcp"] is None:
-            return "foreign"
-        return "stale" if _same_mcp(now, self.manifest["mcp"]) else "modified"
+        if now is not None and (self.manifest["mcp"] is not None or "mcp_rawsearch.py" in json.dumps(now)):
+            return now
+        return None
 
     def status(self):
         self.problems = []
@@ -297,7 +270,8 @@ class Kit:
         rows = {f"{CLAUDE_MD} (block)": st}
         for rel, want in self.files().items():
             rows[rel] = self.file_state(rel, want)
-        rows[f"mcp {MCP_NAME}"] = self.mcp_state()
+        if self.mcp_retired() is not None:
+            rows[f"mcp {MCP_NAME}"] = "retired"
         project = self.manifest["project"]
         mismatch = project is not None and os.path.normcase(project) != os.path.normcase(str(PROJECT))
         return rows, mismatch
@@ -328,20 +302,12 @@ class Kit:
                 plan.append((rel, _shown(self.home / rel), body, lambda rel=rel, body=body: self._write_file(rel, body)))
             elif fst in ("modified", "foreign"):
                 refusals.append(f"{rel}: {fst}; move it away by hand, then install")
-        ms, now = self.mcp_state(), self.mcp_now()
-        if ms in ("absent", "stale"):
-            plan.append((f"mcp {MCP_NAME} (claude mcp add-json --scope user)",
-                         json.dumps(now, indent=1) + "\n" if now else None,
-                         json.dumps(self.mcp_spec(), indent=1) + "\n", lambda now=now: self._add_mcp(now)))
-        elif ms in ("modified", "foreign"):
-            refusals.append(f"mcp {MCP_NAME}: {ms}; `claude mcp remove --scope user {MCP_NAME}` it, then install")
+        self._plan_mcp_removal(plan)
         if refusals:
             raise Refused("; ".join(refusals))
         return plan
 
     def install(self, dry_run=False):
-        if not dry_run and self.mcp_state() != "current" and not MCP_SERVER.is_file():
-            raise Refused("tools/mcp_rawsearch.py is not in this checkout")
         plan = self.plan_install()
         if dry_run:
             return plan
@@ -378,22 +344,15 @@ class Kit:
         self.manifest["files"][rel] = _sha(body)
         self._save()
 
-    def _add_mcp(self, now):
-        spec = self.mcp_spec()
-        add = ["mcp", "add-json", "--scope", "user", MCP_NAME]
+    def _plan_mcp_removal(self, plan):
+        now = self.mcp_retired()
         if now is not None:
-            self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
-        try:
-            self._cli([*add, json.dumps(spec, ensure_ascii=False)])
-        except BaseException:
-            if now is not None and self.mcp_now() is None:      # removed, not added: put the old entry back
-                try:
-                    self.claude([*add, json.dumps(now, ensure_ascii=False)])
-                except Exception:  # noqa: BLE001 -- the first failure is the one to report
-                    pass
-            raise
-        self.manifest["mcp"] = spec
-        self._save()
+            def apply_mcp():
+                self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
+                self.manifest["mcp"] = None
+                self._save()
+            plan.append((f"mcp {MCP_NAME} (claude mcp remove --scope user)", json.dumps(now, indent=1) + "\n", None,
+                         apply_mcp))
 
     # ---- uninstall
     def plan_uninstall(self):
@@ -433,16 +392,7 @@ class Kit:
                 plan.append((rel, _shown(self.home / rel), None, apply_file))
             elif fst == "modified":
                 kept.append(f"{rel} (modified)")
-        ms, now = self.mcp_state(), self.mcp_now()
-        if ms in ("current", "stale"):
-            def apply_mcp():
-                self._cli(["mcp", "remove", "--scope", "user", MCP_NAME])
-                self.manifest["mcp"] = None
-                self._save()
-            plan.append((f"mcp {MCP_NAME} (claude mcp remove --scope user)", json.dumps(now, indent=1) + "\n", None,
-                         apply_mcp))
-        elif ms == "modified":
-            kept.append(f"mcp {MCP_NAME} (modified)")
+        self._plan_mcp_removal(plan)
         return plan, kept
 
     def uninstall(self, dry_run=False):
@@ -501,8 +451,6 @@ def parser():
     s.add_argument("--json", action="store_true")
     i = sub.add_parser("install")
     i.add_argument("--dry-run", action="store_true")
-    i.add_argument("--python", help="the interpreter the MCP server runs with (default: the one it was installed "
-                                    "with, while that is still there, else this one)")
     u = sub.add_parser("uninstall")
     u.add_argument("--dry-run", action="store_true")
     return ap
@@ -524,12 +472,7 @@ def main(argv=None, kit=None):
 
 
 def _run(a, kit):
-    k = kit or Kit(python=getattr(a, "python", None))
-    if a.command == "install" and kit is None:
-        from rawlayer import schedule  # noqa: PLC0415 -- the MCP server's interpreter, as the task's is checked
-        problem = schedule.python_problem(k.python)
-        if problem:
-            raise Refused(f"the MCP server's interpreter: {problem}")
+    k = kit or Kit()
     if a.command == "status":
         rows, mismatch = k.status()
         rc = 0 if set(rows.values()) == {"current"} and not mismatch else 3

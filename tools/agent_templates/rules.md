@@ -7,12 +7,11 @@ Checkout: `{{PROJECT}}`. Append-only raw ledgers with FTS5 search over the owner
 
 - `/raw-search <question>` answers from the ledgers with cited records. The `raw-retriever` subagent does the same
   in its own context and returns a masked summary: use it for broad, multi-app or many-query questions.
-- Tools: the `llm_wiki_raw` MCP server (`raw_status`, `raw_aggregate`, `raw_search`, `raw_read`, `raw_help`);
-  without it, this command, whose `--help` is the documentation:
+- The tool is this command, whose `--help` is the documentation:
   `{{RUN}} search <app> ... --json`
 - Korean particles and common endings are stripped automatically (`normalized_query` shows what ran; `--literal`
   or quotes match as typed); a zero-hit search retries OR-ed and says `relaxed: true`.
-- For a question worded unlike the text (a paraphrase), search with `hybrid: true` (`--hybrid`): it also ranks by
+- For a question worded unlike the text (a paraphrase), search with `--hybrid`: it also ranks by
   meaning; `hybrid.available: false` means keyword hits only.
 - 클로드코드 / 클로드 코드 / Claude Code → `claudecode` (sessions, projects).
 - Aggregate first for how many / when / who; read hits only when the content matters.
@@ -41,6 +40,6 @@ Checkout: `{{PROJECT}}`. Append-only raw ledgers with FTS5 search over the owner
   explicit yes.
   `mattermost/admin.py` and `kakaotalk/admin.py` write outward (posts, channels, messages): only when the owner
   asks for that write, after their read-only step or `--dry-run`.
-- This block, the skills, the subagent and the MCP server are managed by the checkout's agent integration
+- This block, the skills and the subagent are managed by the checkout's agent integration
   (`{{BOOT}} agents status`, `install`, `uninstall`). Change the templates in the checkout
   (`tools/agent_templates/`), not the installed copies.

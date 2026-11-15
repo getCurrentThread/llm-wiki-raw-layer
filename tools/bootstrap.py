@@ -564,14 +564,6 @@ def _probe_child(app):
         return {"app": app, "error": "unreadable probe output"}
 
 
-def _verify(app):
-    rc, out, err = _run(_manage("check", app), timeout=600)
-    text = out + err
-    m = re.search(r"differing_rows=(\d+) head_seq=(\d+)", text)
-    return {"rc": rc, "busy": "ledger busy" in text, "differing_rows": int(m.group(1)) if m else None,
-            "head_seq": int(m.group(2)) if m else None}
-
-
 def doctor(a):
     apps, off = in_scope_apps()
     named = a.app or []
@@ -593,10 +585,6 @@ def doctor(a):
             entry = dict(p, index=idx, next={"step": step, "why": why})
             entry.pop("app", None)
             results[app] = entry
-    if a.verify:
-        for app in todo:
-            if (results[app].get("config") or {}).get("valid"):
-                results[app]["verify"] = _verify(app)
     report["apps"] = results
     report["skipped"] = [f"{x} (not covered)" for x in off]
     attention = [f"machine {step}: {text}" for step, text in problems]
@@ -605,9 +593,6 @@ def doctor(a):
         configured = r.get("error") or (r.get("config") or {}).get("exists")
         if r["next"]["step"] != "8" and (configured or app in named):
             attention.append(f"{app} {r['next']['step']}: {r['next']['why']}")
-        v = r.get("verify")
-        if v and (v["rc"] != 0 or v["busy"] or v["differing_rows"]):
-            attention.append(f"{app}: check {'busy (not verified)' if v['busy'] else 'did not pass'}")
     report["attention"] = attention
     rc = 3 if attention else 0
     report["rc"] = rc
@@ -672,10 +657,6 @@ def _print_doctor(r):
                  f"{'; a newer run has started and finished no step yet' if log.get('newer_started') else ''}")
         if e.get("checkpoints"):
             _out("  checkpoints: " + ", ".join(sorted(e["checkpoints"])))
-        v = e.get("verify")
-        if v:
-            _out(f"  check: rc={v['rc']} differing_rows={v['differing_rows']} head_seq={v['head_seq']}"
-                 f"{' (ledger busy: not verified)' if v['busy'] else ''}")
     for s in r["skipped"]:
         _out(f"doctor: {s}: not checked")
     if r["attention"]:
@@ -997,7 +978,6 @@ def parser():
     p = sub.add_parser("doctor", help="the machine's and the apps' state, and each app's next llm.md step")
     p.add_argument("--app", action="append", help="check only this app (repeatable)")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--verify", action="store_true", help="also run manage.py check <app> (takes the ledger lock)")
     p = sub.add_parser("config", help="read or change an app's config.json (never printing its values)")
     cs = p.add_subparsers(dest="action", required=True)
     g = cs.add_parser("get")
