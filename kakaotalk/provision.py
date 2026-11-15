@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """kakaotalk's side of `manage.py setup` (setup_defaults / setup_provision): the config's default source paths,
-and the inputs the app derives itself (the root key, the keystore, the macOS database). `setup --provision` reruns
+and the inputs the app derives itself (the root key and the keystore). `setup --provision` reruns
 it on an existing config.json (the recovery path when a credential rotated), with `--scan` (the client's memory
 fallback), `--root` (a root file to install, verified first) and `--restart-client`.
 
@@ -285,64 +285,9 @@ def write_keystore_for(cfg, note, root, store, udir, scan=False) -> list:
     return []
 
 
-# ----------------------------------------------------------------- the macOS database (the old macdb command)
-def run_macdb(cfg, note, uuid=None, user_id=None, db=None, home=None, brute_limit=None) -> int:
-    """The old macdb command's body: derive the client database's name and key from the platform UUID and the
-    userId (the kakaocli port), decrypt it in one consistent snapshot into the configured mac_db path. Counts
-    only, never the key. 0 ok · 2 refusal (mac_db unset or outside the data root, no uuid/userId/database) ·
-    3 the key opens nothing."""
-    from . import maccrypt
-    out = cfg.get("mac_db")
-    if not out:
-        note('the config sets no "mac_db": the macOS database is not captured on this machine')
-        return 2                                    # provision only calls this when mac_db is set
-    if not paths.inside(Path(out), Path(cfg["data_root"])):
-        note('"mac_db" is not inside the data root: the decrypted database is written only there')
-        return 2                                    # plaintext lives only under the app's data root
-    home = home or os.path.expanduser("~")
-    uuid = uuid or maccrypt.platform_uuid()
-    if uuid is None:
-        note("no IOPlatformUUID (ioreg): not macOS, or pass the uuid")
-        return 2
-    uid = user_id
-    if uid is None:
-        uid = maccrypt.user_id(home, brute_limit=brute_limit or maccrypt.BRUTE_DEFAULT)
-        if uid is None:
-            note(f"no userId in the KakaoTalk plists under {home} (strategies 1/2/3/4)")
-            return 2
-    db = db or maccrypt.discover_database_file(maccrypt.container_path(home), uid, uuid)
-    if db is None or not os.path.exists(db):
-        note(f"no encrypted database found for user {uid} in {maccrypt.container_path(home)}")
-        return 2
-    note(f"database: {os.path.basename(db)} (user {uid})")
-    main_bytes, wal, stable = maccrypt.read_stable(db)
-    if not stable:
-        note("no consistent snapshot of the database (KakaoTalk is writing): retry")
-        return 3
-    image, facts = maccrypt.decrypt_db(main_bytes, wal, maccrypt.secure_key(uid, uuid))
-    del main_bytes, wal
-    if image is None:
-        note("the derived key opens no SQLCipher page (wrong uuid/userId, or a new scheme)")
-        return 3
-    tmp = out + ".tmp"
-    try:
-        with open(tmp, "wb") as fh:
-            fh.write(image)
-        os.replace(tmp, out)
-    finally:
-        try:                                        # a failed write leaves no plaintext behind
-            os.remove(tmp)
-        except OSError:                             # held by a scanner: it stays inside the data root, and the
-            pass                                    # original error is the one to report
-    note(f"decrypted: {facts['cipher']}, {facts['pages']} pages, wal {facts['wal']['state']} "
-         f"({facts['wal']['frames_applied']} frames) -> {out}")
-    return 0
-
-
 # ----------------------------------------------------------------- the setup_provision hook
 def provision(cfg, note, restart_client=False, home=None, scan=False, root_file=None) -> list:
-    """Install a live root under <data_root>/keys, write the keystore and (on a Mac) decrypt the
-    client database (setup_provision's body). Returns the attention lines; an empty list means the app's
+    """Install a live root under <data_root>/keys, write the keystore (setup_provision's body). Returns the attention lines; an empty list means the app's
     capture inputs are as ready as this machine allows."""
     src = cfg.get("sources") or {}
     udir = src.get("kakao_user_dir")
@@ -413,11 +358,6 @@ def provision(cfg, note, restart_client=False, home=None, scan=False, root_file=
                     note("the client's memory holds no root (current clients wipe it right after deriving it)")
 
     problems = write_keystore_for(cfg, note, root, store, udir, scan=scan)
-
-    if cfg.get("mac_db"):
-        mrc = run_macdb(cfg, note)
-        if mrc != 0:
-            problems.append(f"the macOS database did not decrypt (rc={mrc}; check the uuid/userId on the Mac)")
 
     if problems:
         return problems

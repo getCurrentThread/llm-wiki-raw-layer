@@ -15,7 +15,7 @@ one's own history, not a collection tool for anyone else's data. Everything stay
 place, plaintext exists only under `<DATA_ROOT>` (outside this repository, excluded from Windows Search),
 nothing captured is sent anywhere, and keys are credentials that never leave the data root and are never printed. The
 Windows key hierarchy and the memory fallback are the owner's kakatok research (its notes live outside this
-repository); the macOS side ports the MIT-licensed kakaocli derivation (below). `admin.py` posts only as the
+repository). `admin.py` posts only as the
 owner's own signed-in account, one message at a time, owner-invoked — the write-side counterpart of mattermost
 admin.py's webhook post.
 
@@ -23,10 +23,9 @@ admin.py's webhook post.
 
 `apps.py` (source keys, options, schedule and the setup hooks), `origins.py`, `inputs.py`, `readers/`, `keys.py`
 (value rules), `vocab.py`, `search.py`, `state.py` (the `schema_base` and `edb_salt` state tables), `provision.py`
-(setup's defaults and the provisioning of the root key, keystore and macOS database), `admin.py` (the write side — scriptable sending) and `config.example.json`.
+(setup's defaults and the provisioning of the root key and keystore), `admin.py` (the write side — scriptable sending) and `config.example.json`.
 `wincrypt.py`, `keystore.py` and `keychain.py` are the in-repo key derivation and decryption toolkit ported from
-kakatok (the owner's prior research project; its notes live outside this repository), and `maccrypt.py` is the
-macOS port of Jaeha0526/kakaocli (kakao-mcp, MIT — see the macOS section below). App tests (`tests/`) synthesize
+kakatok (the owner's prior research project; its notes live outside this repository). App tests (`tests/`) synthesize
 inputs in code under temporary directories; the search tests capture made-up inputs through `tests/ledgerfix.py`
 and compare incremental indexing with rebuilds over the search modes and filters.
 
@@ -37,13 +36,13 @@ and compare incremental indexing with rebuilds over the search modes and filters
 the data root's layout).
 
 Capture reads the decrypted backup room databases and the client's encrypted `.edb` room files read-only.
-Origins, in ledger order, are `backup_decrypted`, `edb`, and `macdb` (the macOS client's decrypted database;
-see the macOS section). The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
+Origins, in ledger order, are `backup_decrypted`, `edb`, and `macdb`, an inert name that reads nothing and
+stays registered because older manifests list it (a config's leftover `mac_db` key is ignored). The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
 `msg`, `room`, `hist`, `meta`, and `attachment`. The `edb` origin
 uses guarded pending-to-absent detection when a key disappears from a completely read room, and titles its
 rooms from the client's own chat-list database (`chat_data/chatListInfo.edb`, decrypted with the room keys —
 the same store wraps its DEK): the client-materialised `chatRoomTitle` first, then the type-3 room-title meta,
-then the displayed member names, the Windows reading of the macOS reader's title chain. The same store keys
+then the displayed member names. The same store keys
 the client's user database (`TalkUserDB.edb`, at the user directory's root), whose `talkUser` names label the
 senders: the account's display name (`nickName`), with the owner's own alias (`friendNickName`) only where
 the account has none — the join the kakatok research documented as the sender reconstruction. Both are read
@@ -60,12 +59,6 @@ beside the rooms names its senders.
 | `kakao_user_dir` | client user directory; encrypted rooms are under `chat_data` |
 | `keystore` | decryption keystore file |
 
-`mac_db` is an optional
-top-level path (default null): the macOS client's decrypted database, what the `macdb` origin captures. It is
-an option, not a source, so configs on machines without macOS inputs stay valid with no placeholder; when
-set, its parent directory must exist (setup's provisioning writes the file there). The path must lie inside
-the app's data root: `provision.run_macdb` refuses (exit 2) to write the plaintext anywhere else, and a failed
-write leaves no `.tmp` behind.
 
 ## In-repo key derivation and decryption (the kakatok port)
 
@@ -112,50 +105,6 @@ no command can read anywhere else, the root key:
   that is already there — the recovery path when the root has rotated (logout/re-login/device added): recover a
   new root with `--scan` (the running client's memory) or install one with `--root <hex file>` (verified
   against the store before it is installed).
-
-## macOS support (the kakaocli port)
-
-`kakaotalk/maccrypt.py` is the Python port of [Jaeha0526/kakaocli](https://github.com/Jaeha0526/kakaocli)
-(branch `kakao-mcp`, MIT License; the key derivation goes back to
-[this gist](https://gist.github.com/blluv/8418e3ef4f4aa86004657ea524f2de14)). On macOS the KakaoTalk client
-keeps one SQLCipher database of `NT*` tables in the app container, and both its 78-hex-character filename and
-its passphrase derive offline from two values the machine knows:
-
-    filename = PBKDF2-HMAC-SHA256(".".join([".","F",userId,"A","F",reversed(uuid),".","|"]),
-                                  salt=base64(SHA1(uuid) ‖ SHA256(uuid)) reversed)[hex 28:106]
-    key      = PBKDF2-HMAC-SHA256(reversed("F".join(["A",hashed(uuid),"|","F",uuid[:5],"H",userId,"|",uuid[7:]])),
-                                  salt=uuid[int(len(uuid)*0.3):])   →  PRAGMA KEY='<hex>'
-
-the `IOPlatformUUID` (ioreg) and the userId from the KakaoTalk preference plists (`FSChatWindow*` key
-suffixes, direct keys, the `DESIGNATEDFRIENDSREVISION` SHA-512 hash — verified against `AlertKakaoIDsList`
-candidates, then a bounded brute force — or `NSWindow Frame FSChatWindowFrame_*`). The port also decrypts the
-database with the standard library and pycryptodome alone (no `sqlcipher` build): compatibility 3 and 4
-parameter sets are auto-detected through the page-1 header oracle, and the WAL is applied up to its last
-valid commit frame, the same rules `readers/edb.py` uses.
-
-Two pieces put a Mac into the ledger:
-
-- setup's provisioning decrypts the client database (`provision.run_macdb`): on the Mac, as the KakaoTalk user,
-  `setup kakaotalk` (or `setup kakaotalk --provision` to rerun it) discovers the database (the derived name
-  first, then any 78-hex file in the container), reads it with its WAL in one consistent snapshot, decrypts it
-  and writes the plaintext to the configured `mac_db` path. It runs whenever the config sets `mac_db`; the
-  lookups can be skipped by passing `uuid`/`user_id`/`db`/`home` to `run_macdb` directly (a copied database,
-  or another home), so a copied database also decrypts off macOS. The key is a credential: output is the
-  derived filename and counts only. Attention is reported when the derived key opens no page (wrong
-  uuid/userId) or the database holds no `NTChatMessage` rows.
-- the `macdb` origin captures that decrypted database: `schema` records for the `NT*` tables, `msg` records
-  from `NTChatMessage` (`logId`, `chatId`, `authorId`, `message`, `type` and the timestamp — the client spells
-  it `sentAt`, the app's value rules `sendAt`; the reader maps that one name for the timestamp, nothing else),
-  and `room` records titled the way the client names rooms (`chatName`, the
-  `NTChatMeta` type-3 title, the open-link name, the direct-chat partner). Message keys
-  are the ones every origin uses, so a message seen on both a PC and a Mac is one row across origins; search
-  takes macdb text after `edb` and before `backup_decrypted`, its titles after `edb`, and its sender names
-  (from `NTUser`) at the live client's rank. A database without `NTChatMessage` (a placeholder) is noted `not_mac`
-  and captures nothing.
-
-A minimal macOS deployment: the same config with the PC-only sources pointing at placeholder files
-(an empty file is a valid empty SQLite database for the origins you do not capture), `"mac_db"` set to the
-decrypted database path, then `manage.py setup kakaotalk` and `manage.py capture kakaotalk --origins macdb`.
 
 ## Administration (admin.py)
 
@@ -260,14 +209,14 @@ the root README's ("Search").
 - **One row per message key.** Each key `kakao:<chatId>:msg:<logId>` has one row across the three Kakao
   origins.
 - **Text.** It comes from the best origin whose latest capture of the message has text, in the order edb >
-  macdb > backup_decrypted. An origin that has since tombstoned or
+  backup_decrypted. An origin that has since tombstoned or
   emptied the message does not outrank another origin's current text with its old one. A message deleted for
   everyone, or deleted locally, keeps the last text that was captured.
 - **Flags.** `deleted` rows are hidden unless `--include-deleted`. `gone` means no origin holds the message
   any more. `edited` means an origin's text changed between captures.
 - **Labels.** Sender names come from the client's own user database — `TalkUserDB` read beside the rooms
   (`edb`) and from the backup's decrypted copy (`backup_decrypted`; the accounts' display names, the live
-  client's winning a tie) — and the macOS database's NTUser; room titles from the newest capture (the
+  client's winning a tie); room titles from the newest capture (the
   client's chat-list database for `edb` rooms, the manifest titles for the backup's).
   Renames relabel old rows.
 - **Cursors.** `--before` / `--after` take `<ts>.<logId>.<row>`. The row id breaks ties between messages that

@@ -12,7 +12,7 @@
 
 WHAT IS INDEXED (extractor "kakao-4")
 -------------------------------------
-Ledger records of the three Kakao origins (backup_decrypted, edb, macdb -- kakao-4 dropped the retired
+Ledger records of the Kakao origins (backup_decrypted, edb; macdb is inert and reads nothing -- kakao-4 dropped the retired
 kakatok exports merged_out / live_out / decrypted_live: the app reads the client itself now).
 One row per message KEY kakao:<chatId>:msg:<logId> across origins
 (UNIQUE(chat_id, log_id), like the knowledge-base corpus), built from a per-origin fold `ksrc` that keeps the
@@ -34,15 +34,14 @@ latest record of every origin for every key:
   Deleted rows are hidden unless --include-deleted.
 * edited: an origin put a usable text and later a different usable text for the same key.
 * sender: author names come from the client's own user database -- TalkUserDB read beside the rooms (edb) and
-  from the backup's decrypted copy (backup_decrypted), plus the macOS database's NTUser (derived.sender, when
-  it is not just digits). The names are the accounts' display names (nickName; the owner's own alias for a
+  from the backup's decrypted copy (backup_decrypted). The names are the accounts' display names (nickName; the owner's own alias for a
   friend only where the account has no nickname), the join the kakatok research documented; rows from room
   DBs without a named author carry only authorId. The authors table
   keeps, per author id, the name on the newest such message (sendAt, then ledger seq; the live client's names
   outrank the backup's at a tie). `sender` on each row is that name ('' when unknown; the author id is shown
   instead).
 * room: title from room records (the client's chat-list database for edb rooms, the manifest titles for the
-  backup's, macdb rooms): the newest put with a non-empty title (ledger seq; edb before macdb before
+  backup's): the newest put with a non-empty title (ledger seq; edb before macdb before
   backup_decrypted within one capture).
 * Facets: rooms(chat_id, title, n, senders, first_ts, last_ts, n_deleted, n_gone), n = rows not deleted.
 * Not indexed, only counted (counts table): hist, meta, attachment and schema records, bad keys, odd values.
@@ -64,6 +63,7 @@ from rawlayer.search import fts
 
 NAME = "kakaotalk"
 HELP = "search KakaoTalk messages (index: <data_root>/index/kakaotalk.sqlite)"
+# macdb stays: the index stores origins as bits over PRECEDENCE, so dropping it would renumber backup_decrypted
 PRECEDENCE = ("edb", "macdb", "backup_decrypted")  # text, best first
 RANK = {o: i for i, o in enumerate(PRECEDENCE)}
 TITLE_ORDER = ("edb", "macdb", "backup_decrypted")  # ties within seq

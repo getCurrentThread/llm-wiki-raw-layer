@@ -59,22 +59,10 @@ class Edb(PendingAbsentMixin, KakaoOrigin):
 
 
 class MacDb(KakaoOrigin):
-    """The macOS client's database (kakaocli port): the single decrypted NT-schema SQLite the macdb command
-    writes to the mac_db option path. The option is unset on machines without macOS inputs, so there the
-    origin reads nothing (no containers, nothing in the ledger)."""
-
-    name = "macdb"
+    name = "macdb"      # inert, reads nothing: kept registered because old manifests list it
 
     def read(self, ctx):
-        p = getattr(ctx.inputs, "mac_db", None)
-        if p is None or not Path(p).is_file():
-            return []
-        from .readers import macdb  # noqa: PLC0415
-        return macdb.macdb_containers(ctx)
-
-    def estimate_peak(self, inputs):
-        p = getattr(inputs, "mac_db", None)
-        return fsio.size(p) if p is not None else 0
+        return []
 
 
 ORIGINS = (BackupDecrypted, Edb, MacDb)

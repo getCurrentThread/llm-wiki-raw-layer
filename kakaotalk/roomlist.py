@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """Room titles and sender names from the client's own databases (chatListInfo.edb and TalkUserDB.edb,
-decrypted): the way the client labels rooms and people on Windows. The macOS reader names rooms the client's
-way (chatName -> the NTChatMeta type-3 title -> the open-link name -> the direct partner, kakaocli's rule); the
-Windows client keeps the effective display title materialised, so the title chain here is:
+decrypted): the way the client labels rooms and people on Windows. The client keeps the effective display title
+materialised, so the title chain here is:
 
   1. chatRoomList.chatRoomTitle -- the title the client shows (every observed row holds one; a custom name
      where the room has one, the members' names where it has not -- for a 1:1 room the peer's name);
-  2. the chatMetas type-3 content -- the room-title meta, the NTChatMeta rule (sparse: rooms whose list row
+  2. the chatMetas type-3 content -- the room-title meta (sparse: rooms whose list row
      carries no title);
   3. chatRoomList.titleDisplayMembers -- the member names the client displays for unnamed rooms.
 
