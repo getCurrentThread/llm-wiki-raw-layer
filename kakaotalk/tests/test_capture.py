@@ -57,13 +57,6 @@ class TestCapture(Base):
         self.assertEqual(sum(1 for r in records(self.fx) if r["origin"] == "backup_decrypted"
                              and r["kind"] == "msg"), 6)     # the 2^53 row included
 
-    def test_inert_macdb(self):
-        """A config with the leftover mac_db key loads, and a manifest listing the inert macdb origin verifies."""
-        self.assertEqual(capture(self.fx, ["backup_decrypted", "macdb"]), 0)
-        self.assertEqual(manifests(self.fx)[0]["origins"]["macdb"]["containers"], {})
-        self.assertEqual(replay_diff(self.fx), 0)
-        self.assertEqual(invariants(self.fx)[0], {})
-
     def test_pk_bad(self):
         p = self.fx.backup / "103.sqlite"
         make_room(p, 103, 2)

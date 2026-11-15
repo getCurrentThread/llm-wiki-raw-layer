@@ -12,21 +12,21 @@
 
 WHAT IS INDEXED (extractor "kakao-4")
 -------------------------------------
-Ledger records of the Kakao origins (backup_decrypted, edb; macdb is inert and reads nothing -- kakao-4 dropped the retired
+Ledger records of the Kakao origins (backup_decrypted, edb; kakao-4 dropped the retired
 kakatok exports merged_out / live_out / decrypted_live: the app reads the client itself now).
 One row per message KEY kakao:<chatId>:msg:<logId> across origins
 (UNIQUE(chat_id, log_id), like the knowledge-base corpus), built from a per-origin fold `ksrc` that keeps the
 latest record of every origin for every key:
 
 * Text: from the highest-precedence origin whose LATEST put carries usable text, precedence
-  edb > macdb > backup_decrypted (PRECEDENCE). Usable text = a str message with
+  edb > backup_decrypted (RANK). Usable text = a str message with
   something besides whitespace, in a row that is not a delete-for-all tombstone. An origin whose latest put has
   no usable text (a tombstone, a row emptied by a local delete) does not outrank one that currently has text
   with the text it held before (ksrc.has_text). When no origin's latest put has usable text, the last usable text
   an origin put is kept, highest precedence first, holders before origins that dropped the key (so a message
   that was deleted for everyone, or deleted locally and emptied, still shows what was captured before -- with
   --include-deleted).
-* origins: bitmask of the origins whose head is a put (bit i = PRECEDENCE[i]). `absent` (edb's two-phase
+* origins: bitmask of the origins whose head is a put (bit RANK[o] of origin o). `absent` (edb's two-phase
   absence) and `purged` clear the origin's bit. gone = no origin holds the key any more; the row stays, with
   its last text, flagged [gone] (shown by default).
 * deleted: some origin's latest put has the 0x4000 bit in `type` (delete for everyone; the body is then a
@@ -41,7 +41,7 @@ latest record of every origin for every key:
   outrank the backup's at a tie). `sender` on each row is that name ('' when unknown; the author id is shown
   instead).
 * room: title from room records (the client's chat-list database for edb rooms, the manifest titles for the
-  backup's): the newest put with a non-empty title (ledger seq; edb before macdb before
+  backup's): the newest put with a non-empty title (ledger seq; edb before
   backup_decrypted within one capture).
 * Facets: rooms(chat_id, title, n, senders, first_ts, last_ts, n_deleted, n_gone), n = rows not deleted.
 * Not indexed, only counted (counts table): hist, meta, attachment and schema records, bad keys, odd values.
@@ -63,12 +63,11 @@ from rawlayer.search import fts
 
 NAME = "kakaotalk"
 HELP = "search KakaoTalk messages (index: <data_root>/index/kakaotalk.sqlite)"
-# macdb stays: the index stores origins as bits over PRECEDENCE, so dropping it would renumber backup_decrypted
-PRECEDENCE = ("edb", "macdb", "backup_decrypted")  # text, best first
-RANK = {o: i for i, o in enumerate(PRECEDENCE)}
-TITLE_ORDER = ("edb", "macdb", "backup_decrypted")  # ties within seq
+RANK = {"edb": 0, "backup_decrypted": 2}   # text, best first; bit 1 is retired, the index on disk uses these values
+ORIGIN_OF = {r: o for o, r in RANK.items()}
+TITLE_ORDER = ("edb", "backup_decrypted")  # ties within seq
 TITLE_RANK = {RANK[o]: i for i, o in enumerate(TITLE_ORDER)}
-NAME_RANK = {"edb": 1, "macdb": 1, "backup_decrypted": 0}   # name sources; the live client's names win a tie
+NAME_RANK = {"edb": 1, "backup_decrypted": 0}   # name sources; the live client's names win a tie
 DELETE_ALL = 0x4000
 SKIP_KINDS = ("hist", "meta", "attachment", "schema")
 TYPE_NAMES = {0: "system", 1: "text", 2: "photo", 3: "video", 5: "audio", 6: "emoticon", 12: "schedule",
@@ -90,7 +89,7 @@ CREATE TABLE kakao(
   sender    TEXT NOT NULL DEFAULT '',  -- author name ('' unknown; show author_id)
   author_id TEXT,
   type      INTEGER,
-  origins   INTEGER NOT NULL DEFAULT 0,-- bitmask over PRECEDENCE of origins holding a put
+  origins   INTEGER NOT NULL DEFAULT 0,-- bitmask over RANK of origins holding a put
   source    TEXT NOT NULL DEFAULT '',  -- origin the text came from
   edited    INTEGER NOT NULL DEFAULT 0,
   deleted   INTEGER NOT NULL DEFAULT 0,
@@ -162,7 +161,7 @@ def derive(srcs):
     w = pick(lambda s: s.ts > 0)
     a = pick(lambda s: s.author_id is not None)
     y = pick(lambda s: s.type is not None)
-    return {"th": t.th if t else None, "source": PRECEDENCE[t.rank] if t else "",
+    return {"th": t.th if t else None, "source": ORIGIN_OF[t.rank] if t else "",
             "ts": w.ts if w else 0, "author_id": a.author_id if a else None, "type": y.type if y else None,
             "origins": sum(1 << s.rank for s in holders), "edited": int(any(s.edited for s in srcs)),
             "deleted": int(any(s.deleted for s in srcs)), "gone": int(not holders)}
@@ -413,7 +412,7 @@ class KakaoApplier:
 
 class KakaoIndex(index.SourceIndex):
     name = NAME
-    origins = frozenset(PRECEDENCE)
+    origins = frozenset(RANK)
     schema_version = "kakao-4"        # kakao-4: the kakatok exports (merged_out/live_out/decrypted_live) left
     extractor_version = "kakao-4"     # kakao-4: names from the client's TalkUserDB (edb, backup_decrypted)
     fts_tables = ("kakao_fts",)
@@ -444,7 +443,7 @@ SPEC = KakaoIndex()
 # ================================================================================================ search
 
 def origin_names(mask):
-    return [o for i, o in enumerate(PRECEDENCE) if mask & (1 << i)]
+    return [o for o, r in RANK.items() if mask & (1 << r)]
 
 
 def type_name(t):

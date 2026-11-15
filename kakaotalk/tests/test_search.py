@@ -16,7 +16,7 @@ from kakaotalk import search as kakao
 from kakaotalk.tests import ledgerfix as L
 from kakaotalk.tests.fixtures import Fixture
 
-EDB, MACDB, BACKUP = (1 << kakao.RANK[o] for o in kakao.PRECEDENCE)
+EDB, BACKUP = 1, 4      # the origin bits the index on disk stores (kakao.RANK)
 QUERIES = ["10월", "가나다", "api", "메시지", "edb 메시지", "수정", "삭제될", "\"100%\"", "라이브 OR 잡담", "메시지 -edb",
            "사라질", "SQL문", "3시"]
 
@@ -343,8 +343,8 @@ class TestApplier(unittest.TestCase):
                     self.rec("backup_decrypted", "kakao:x:msg:1", 1), self.rec("backup_decrypted", key, True),
                     self.rec("backup_decrypted", key, 2, op="erase"),
                     self.rec("edb", "kakao:9", 1, kind="room", derived=7),
-                    self.rec("edb", key, 1, native="not a dict"), self.rec("macdb", "kakao:9:msg:2", 1,
-                                                                           native={"message": 5, "type": 2 ** 70})):
+                    self.rec("edb", key, 1, native="not a dict"), self.rec("edb", "kakao:9:msg:2", 1,
+                                                                         native={"message": 5, "type": 2 ** 70})):
             self.app.record(bad, 2)
         self.app.end_manifest(2)
         counts = index.read_counts(self.con)
@@ -361,11 +361,14 @@ class TestApplier(unittest.TestCase):
     def test_derive_precedence(self):
         S = kakao._Src
         d = kakao.derive([S(kakao.RANK["backup_decrypted"], 1, b"m", 0, 10, "1", 1, 0, 1),
-                          S(kakao.RANK["edb"], 1, None, 1, 20, "1", 0x4001, 0, 0),
-                          S(kakao.RANK["macdb"], 0, b"l", 0, 30, None, 1, 1, 1)])
+                          S(kakao.RANK["edb"], 1, None, 1, 20, "1", 0x4001, 0, 0)])
         self.assertEqual((d["th"], d["source"], d["ts"], d["deleted"], d["edited"], d["gone"], d["type"]),
-                         (b"m", "backup_decrypted", 20, 1, 1, 0, 0x4001))
+                         (b"m", "backup_decrypted", 20, 1, 0, 0, 0x4001))
         self.assertEqual(d["origins"], EDB | BACKUP)
+        # a non-holder's later ts does not win over a holder's; its edit still counts
+        d = kakao.derive([S(kakao.RANK["backup_decrypted"], 1, b"m", 0, 10, "1", 1, 0, 1),
+                          S(kakao.RANK["edb"], 0, b"l", 0, 30, None, 1, 1, 1)])
+        self.assertEqual((d["th"], d["source"], d["ts"], d["edited"], d["origins"]), (b"m", "backup_decrypted", 10, 1, BACKUP))
         d = kakao.derive([S(kakao.RANK["edb"], 0, b"e", 0, 0, None, None, 0, 1)])
         self.assertEqual((d["gone"], d["th"], d["source"], d["origins"]), (1, b"e", "edb", 0))
         # a holder's OLD text (its latest put had none) does not outrank a lower holder's current text ...
@@ -373,7 +376,7 @@ class TestApplier(unittest.TestCase):
                           S(kakao.RANK["backup_decrypted"], 1, b"new", 0, 20, "1", 1, 1, 1)])
         self.assertEqual((d["th"], d["source"]), (b"new", "backup_decrypted"))
         # ... but with no current text anywhere, the best holder's last text is kept, before a non-holder's
-        d = kakao.derive([S(kakao.RANK["macdb"], 0, b"gone", 0, 20, "1", 1, 0, 0),
+        d = kakao.derive([S(kakao.RANK["edb"], 0, b"gone", 0, 20, "1", 1, 0, 0),
                           S(kakao.RANK["backup_decrypted"], 1, b"kept", 1, 20, "1", 1, 0, 0)])
         self.assertEqual((d["th"], d["source"]), (b"kept", "backup_decrypted"))
 

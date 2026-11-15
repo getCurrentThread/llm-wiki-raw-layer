@@ -26,7 +26,9 @@ every app on the contract below. After changing a core file, run every suite: `p
 
 - **The ledger is append-only.** A capture run reads every installed origin, diffs it against `state.sqlite`
   (the fold of the ledger), and commits one manifest with gzipped JSONL segments, chained by `prev_sha256`. The
-  commit is crash-safe (`inflight.json`, recovered on the next run) and never rewrites a committed file.
+  commit is crash-safe (`inflight.json`, recovered on the next run) and never rewrites a committed file. A
+  manifest may list an origin the registry no longer has only as a retired origin: no segment of it and no
+  containers in its (still well-formed) entry (`ledger.manifest_ok`).
 - **Records and manifests have one format** (SPEC 6, 9.3): `canon` is the hash input, `publicout` refuses any
   string that is not a registered public word (no message text, name or id ever reaches a manifest, a log or the
   console).
@@ -78,7 +80,7 @@ attribute.
 under SYSTEM), `IMPL_NAME` (recorded in every manifest), `DATA_PARENT` (the ACL'd, Search-excluded parent every
 data root must sit in; by convention `<DATA_PARENT>/raw/<app>`), `SQLITE_VEC_DIR` (sqlite-vec's DLL for `search
 --hybrid`, outside the data parent) and optionally `EXCLUDE_APPS` (app folders to leave out of discovery). Never remove an app
-from a project whose ledger already holds its origins: every manifest naming them would stop validating.
+from a project whose ledger already holds its origins: every manifest holding their segments or containers would stop validating.
 
 `config.json` (per machine, never committed; `config.example.json` shows the shape): `v`, `impl`, `data_root`,
 `sources` and the apps' options. Keys nobody reads are accepted and ignored.

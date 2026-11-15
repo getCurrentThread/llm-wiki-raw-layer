@@ -7,7 +7,7 @@ roots, ledgers, indexes, configs and scheduled tasks.
 
 | app (folder name) | origins, in ledger order |
 |---|---|
-| `kakaotalk` | backup_decrypted, edb, macdb (inert, listed by old manifests) |
+| `kakaotalk` | backup_decrypted, edb |
 | `mattermost` | mm_archive |
 | `discord` | dc_archive |
 | `notion` | nt_archive |
