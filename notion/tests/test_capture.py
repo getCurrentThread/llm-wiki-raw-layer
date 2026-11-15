@@ -1,5 +1,5 @@
 import unittest
-from notion.readers.archive import project
+from notion.origins import project
 from .fixtures import Fixture, page, block, BID, PID, OTHER, COMMENT, rt
 from tests.core import appfix as h
 
@@ -65,7 +65,7 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(len(by[f"nt:page:{PID}"]), 2)
 
     def test_uuid_normalization_dedupe(self):
-        from notion.readers.archive import _page
+        from notion.origins import _page
         obj = page()
         obj["blocks"] = [block(), block(text="last")]
         obj["order"] *= 2

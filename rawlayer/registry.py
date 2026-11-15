@@ -6,11 +6,12 @@ its index file, the <app> of every command). Each app has the same modules:
   apps.py     exactly one AppConfig subclass: label (= the folder name), source_keys (config "sources" entries the
               app reads) or archive (the one source an app's own fetch step keeps), options (top-level config keys the app reads), optionally schedule (the scheduled task,
               rawlayer/schedule.py) and task_checks(cfg) (what makes a config unfit for the scheduled task)
-  origins.py  ORIGINS: the app's Origin subclasses (rawlayer.capture.origins) in processing and commit order
-  inputs.py   optional: resolve(cfg) -> {InputSet attribute: Path}; without it, AppConfig.archive
-              gives the one archive input (_Inputs) and an app without that either has no input at all
-  vocab.py    optional: WORDS and PATTERNS, the strings the app's readers put in manifests and console lines (its
-              origin names, kinds and statuses are registered from origins.py); without it, none
+  origins.py  the capture side: ORIGINS, the app's Origin subclasses (rawlayer.capture.origins) in processing and
+              commit order, and its readers (a reader too large for one file goes in a readers/ package); optionally
+              resolve(cfg) -> {InputSet attribute: Path} (without it, AppConfig.archive gives the one archive input,
+              _Inputs, and an app without that either has no input at all) and WORDS and PATTERNS, the strings the
+              app's readers put in manifests and console lines (its origin names, kinds and statuses are registered
+              from ORIGINS; without them, none)
   search.py   optional: a rawlayer.search source module (SPEC, HELP, add_arguments, run)
               (an app that sets AppConfig.wiki also declares its export to the wiki vault: rawlayer/collect.py)
 
@@ -75,7 +76,7 @@ class AppConfig:
     source_keys = ()
     options = ()
     # A prefix p: the app reads an archive folder that its own fetch step keeps. The registry adds the source key
-    # `<p>_archive` to `source_keys` and, unless the app has an inputs.py, the input attribute of that name (`_Inputs`).
+    # `<p>_archive` to `source_keys` and, unless its origins.py has resolve(), the input attribute of that name (`_Inputs`).
     archive = None
     # (config key prefix or None, layout "chat" | "mail" | "page"): the app's index can be exported to the wiki
     # vault by `manage.py collect <app>`. A prefix adds the keys <prefix>_wiki_project / _include / _exclude /
@@ -124,7 +125,7 @@ def _optional(module):
 
 
 class _Inputs:
-    """The inputs of an app without inputs.py: none, or the archive of AppConfig.archive `prefix` -- attribute
+    """The inputs of an app whose origins.py has no resolve(): none, or the archive of AppConfig.archive `prefix` -- attribute
     `<prefix>_archive`, the config's "sources" path."""
 
     def __init__(self, prefix):
@@ -147,9 +148,10 @@ def _load(name):
         app.options = tuple(app.options) + collect.options(app.wiki)
     if app.archive is not None:
         app.source_keys = (f"{app.archive}_archive",) + tuple(app.source_keys)
-    app.origins = tuple(cls(app) for cls in importlib.import_module(name + ".origins").ORIGINS)
-    app.inputs = _optional(name + ".inputs") or _Inputs(app.archive)
-    app.vocab = _optional(name + ".vocab") or types.SimpleNamespace(WORDS=(), PATTERNS=())
+    origins = importlib.import_module(name + ".origins")
+    app.origins = tuple(cls(app) for cls in origins.ORIGINS)
+    app.inputs = origins if hasattr(origins, "resolve") else _Inputs(app.archive)
+    app.vocab = types.SimpleNamespace(WORDS=getattr(origins, "WORDS", ()), PATTERNS=getattr(origins, "PATTERNS", ()))
     app.search = _optional(name + ".search")
     return app
 

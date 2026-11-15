@@ -3,7 +3,7 @@ import json
 import re
 from rawlayer.capture.canon import pk_text
 from rawlayer.search import driver as drv, fts, index
-from .keys import gm_id, MAX_MS
+from .origins import gm_id, MAX_MS
 
 NAME, HELP, ORIGIN = "gmail", "search Gmail messages, labels and threads", "gm_archive"
 SCHEMA = """

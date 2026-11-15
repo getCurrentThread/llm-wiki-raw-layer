@@ -23,7 +23,7 @@ from appkit.archive import FetchError, load
 from mattermost import fetch
 from mattermost.apps import MatterConfig
 from mattermost.fetch import MattermostClient, login, sync, token
-from mattermost.readers import archive as reader
+from mattermost import origins as reader
 from mattermost.tests.fixtures import Fixture
 from tests.core.appfix import _force, by_key, capture, invariants, records, replay_diff
 

@@ -2,7 +2,8 @@
 """Config loading and input resolution (SPEC 2, 16). Never derives a path from the environment.
 
 The "sources" entries and top-level options a config must carry are the installed apps' (AppConfig.source_keys,
-AppConfig.options); the input paths are resolved by each app's inputs.py."""
+AppConfig.options); the input paths are resolved by each app's origins.py
+(resolve) or its AppConfig.archive."""
 import json
 import os
 from pathlib import Path

@@ -12,8 +12,8 @@ from pathlib import Path
 import re
 import zlib
 from appkit.archive import FetchError, atomic, inside, load, locked, now
-from .keys import snowflake_ms
-from .readers.archive import _safe_rel, msg_native
+from .origins import snowflake_ms
+from .origins import _safe_rel, msg_native
 
 CHANNEL_TYPES = {0: "GuildTextChat", 1: "DirectTextChat", 2: "GuildVoiceChat", 3: "DirectGroupTextChat",
                  4: "GuildCategory", 5: "GuildNewsChat", 10: "GuildNewsThread", 11: "GuildPublicThread",

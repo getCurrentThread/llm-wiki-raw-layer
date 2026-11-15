@@ -10,7 +10,7 @@ import uuid
 from appkit.archive import FetchError, atomic, bind, inside, load, locked, now, read_token
 from .apps import EXCLUDED
 from .imap import ImapClient
-from .keys import gm_id
+from .origins import gm_id
 from .mime import extract
 
 PARTITION_BYTES = 16 * 1024 * 1024
@@ -34,7 +34,7 @@ def _directory(rows, old, stamp):
 
 
 def _archive(root, man):
-    from .readers.archive import safe_rel, partition
+    from .origins import safe_rel, partition
     known = set()
     files = man.get("files")
     if not isinstance(files, list) or files != sorted(set(files)):

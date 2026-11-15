@@ -74,7 +74,7 @@ thread may retain the same starter id independently. Timestamps come from `(snow
 
 ## Message signature and shared test vectors
 
-`readers.archive.msg_native()` is the fetch/reader projection contract:
+`origins.msg_native()` is the fetch/reader projection contract:
 
 - Keep id, type, timestamp, timestampEdited, isPinned, content and `_removedAt`.
 - Keep author.id, attachments `{id,fileName,fileSizeBytes}`, stickers `{id,name}`.

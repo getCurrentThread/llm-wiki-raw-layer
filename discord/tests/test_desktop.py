@@ -54,7 +54,7 @@ class DesktopTests(unittest.TestCase):
 
     def test_later_guild_classification_preserves_partition_order(self):
         from appkit.archive import load
-        from discord.readers.archive import read_once
+        from discord.origins import read_once
         self.obj.pop('guild_id')
         self.save(self.obj)
         sync(self.fx.root,self.source)

@@ -52,11 +52,11 @@ class FakeApps:
                                                  "options": tuple(options), "wiki": wiki,
                                                  "archive": archive, "__module__": pkg + ".apps"})
             setattr(apps, cls.__name__, cls)
-        mods[pkg + ".origins"] = types.SimpleNamespace(ORIGINS=tuple(origins))
-        if inputs:                                          # inputs.py and vocab.py are optional modules
-            mods[pkg + ".inputs"] = types.SimpleNamespace(resolve=resolve or (lambda cfg: {}))
+        mods[pkg + ".origins"] = mod = types.SimpleNamespace(ORIGINS=tuple(origins))
+        if inputs:                                          # resolve, WORDS and PATTERNS are optional
+            mod.resolve = resolve or (lambda cfg: {})
         if vocab:
-            mods[pkg + ".vocab"] = types.SimpleNamespace(WORDS=tuple(words), PATTERNS=tuple(patterns))
+            mod.WORDS, mod.PATTERNS = tuple(words), tuple(patterns)
         if search is not None:
             mods[pkg + ".search"] = search
         for k, v in mods.items():
@@ -178,8 +178,8 @@ class TestRefusals(Base):
         self.assertEqual((app.vocab.WORDS, app.vocab.PATTERNS), ((), ()))
 
     def test_archive_declaration(self):
-        """AppConfig.archive = p adds the source key <p>_archive and, without an inputs.py, that input attribute (the
-        config's path); an inputs.py replaces it."""
+        """AppConfig.archive = p adds the source key <p>_archive and, without resolve() in origins.py, that input attribute (the
+        config's path); a resolve() replaces it."""
         pkg = self.apps.fake("arc", archive="ar", source_keys=["other"], inputs=False)
         reg = registry.Registry([pkg])
         self.assertEqual(reg.source_keys, ("ar_archive", "other"))

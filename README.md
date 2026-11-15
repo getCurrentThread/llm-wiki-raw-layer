@@ -50,7 +50,7 @@ archive contract and search rows.
     management/commands/       core commands
   tests/core/                  framework tests with toyapp and toyapp2
   <app>/                       one package per app (claudecode, discord, gmail, kakaotalk, mattermost, notion): its
-                               README, apps.py, origins.py, readers/, search.py, tests/, config.example.json
+                               README, apps.py, origins.py, search.py, fetch.py, tests/, config.example.json
   appkit/archive.py            the apps' shared library: the fetch steps' file, lock, token and exit-code helpers and
                                `ArchiveOrigin`; appkit/setup.py: the shared setup defaults (AppConfig.setup_defaults)
   tools/bootstrap.py           setup helper for agents: doctor, config get/set/defaults, checkpoints (llm.md 5.0)

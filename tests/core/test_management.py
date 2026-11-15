@@ -170,7 +170,8 @@ class TestSetup(unittest.TestCase):
         self.files = app_files("toyish", "(ToyA, ToyB, ToyM)", extra={
             "apps.py": ("from tests.core.toyapp.apps import ToyConfig\n\n\n"
                         "class Config(ToyConfig):\n    label = 'toyish'\n"),
-            "inputs.py": "from tests.core.toyapp.inputs import resolve  # noqa: F401\n",
+            "origins.py": ("from tests.core.toyapp.origins import ToyA, ToyB, ToyM, resolve  # noqa: F401\n\n"
+                           "ORIGINS = (ToyA, ToyB, ToyM)\n"),
             "config.example.json": json.dumps(self.EXAMPLE)})
 
     def setup(self, *argv, stdin=None):

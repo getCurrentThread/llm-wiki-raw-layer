@@ -11,8 +11,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 from appkit.archive import FetchError, atomic, inside, load, locked, now
-from .keys import nt_id
-from .readers.archive import project
+from .origins import nt_id
+from .origins import project
 
 TYPES = {"text": "paragraph", "header": "heading_1", "sub_header": "heading_2", "sub_sub_header": "heading_3",
          "header_4": "heading_3", "bulleted_list": "bulleted_list_item", "numbered_list": "numbered_list_item",

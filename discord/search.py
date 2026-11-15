@@ -2,7 +2,7 @@
 import json
 import re
 from rawlayer.search import driver as drv, fts, index
-from .keys import snowflake_ms
+from .origins import snowflake_ms
 
 NAME = "discord"
 HELP = "search Discord messages and threads"

@@ -6,7 +6,7 @@ from email.parser import BytesParser
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, urlunsplit
 from appkit.archive import FetchError
-from .keys import gm_id, MAX_MS
+from .origins import gm_id, MAX_MS
 
 
 class HTMLText(HTMLParser):

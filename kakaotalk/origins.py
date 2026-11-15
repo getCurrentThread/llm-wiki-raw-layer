@@ -1,13 +1,42 @@
 # -*- coding: utf-8 -*-
-"""The KakaoTalk origins, in ledger order. Every origin keys messages the same way (kakao:<chatId>:msg:<logId>),
+"""kakaotalk's capture side: where its sources are (resolve), the strings its
+readers put in manifests (WORDS, PATTERNS) and ORIGINS; the readers are in readers/.
+
+Where the KakaoTalk sources are: config.json "sources".
+
+Strings the KakaoTalk readers put in manifests (origin names, kinds and statuses come from origins.py).
+
+The KakaoTalk origins, in ledger order. Every origin keys messages the same way (kakao:<chatId>:msg:<logId>),
 so a message seen by several of them can be matched across origins."""
 from pathlib import Path
-
 from rawlayer.capture import fsio
 from rawlayer.capture.origins import Origin, PendingAbsentMixin
-
 from . import state as kstate
 from .readers import out
+
+
+def resolve(cfg):
+    s = cfg.sources
+    return {"backup_decrypted": Path(s["backup_decrypted"]), "keystore": Path(s["keystore"]),
+            "edb_dir": Path(s["kakao_user_dir"]) / "chat_data"}
+
+
+WORDS = (
+    # room-DB tables (container facts "tables")
+    "chatLogs", "chatLogHistory", "chatLogMeta", "chatLog_attachment", "chatLogDrafts", "chatLogOutdated",
+    "chatLogTagMapping", "chatLogTagRevision", "chatLogMetaPendingRestoreRanges",
+    # edb WAL facts
+    "frames_total", "frames_valid", "frames_applied", "commits", "zero_filled", "bad_header",
+    # notes
+    "ts_out_of_range", "pk_bad", "no_pk", "missing_table", "not_room", "count_mismatch", "quick_check",
+    "gate_header", "main_not_page_multiple", "sidecar_left", "room_gone", "titled", "named",
+)
+
+PATTERNS = (
+    r"^kakao:[0-9]+(:[a-z]+(:-?[0-9]+)+)?$",                                     # key (manifest pending lists)
+    r"^kakao:[0-9]+@(chatLogs|chatLogHistory|chatLogMeta|chatLog_attachment)$",  # room-DB schema key (Q10)
+    r"^t_[0-9a-f]{8}$",                                                          # hashed table name
+)
 
 
 class KakaoOrigin(Origin):
