@@ -76,10 +76,7 @@ attribute.
 
 ## Settings and machine config
 
-`settings.py` (versioned): `BASE_DIR` (the project directory), `HOME_DIR` (the owning user's profile home, also
-under SYSTEM), `IMPL_NAME` (recorded in every manifest), `DATA_PARENT` (the ACL'd, Search-excluded parent every
-data root must sit in; by convention `<DATA_PARENT>/raw/<app>`), `SQLITE_VEC_DIR` (sqlite-vec's DLL for `search
---hybrid`, outside the data parent) and optionally `EXCLUDE_APPS` (app folders to leave out of discovery). Never remove an app
+README.md lists the settings of `config/settings.py`. Never remove an app
 from a project whose ledger already holds its origins: every manifest holding their segments or containers would stop validating.
 
 `config.json` (per machine, never committed; `config.example.json` shows the shape): `v`, `impl`, `data_root`,

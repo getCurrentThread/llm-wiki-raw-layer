@@ -305,8 +305,7 @@ Gates:
 
 Finish genesis before 5.8: repeat with a larger bound until `"limited": false`. `--max-items 0` means
 unlimited; for notion, 0 falls back to `nt_max_pages`, which is unlimited at its default 0. The task's time limit
-is one hour, so it must not start on a large backlog. This holds for gmail too:
-[gmail/README.md](gmail/README.md) keeps `gm_sync` false until manual genesis is complete.
+is one hour, so it must not start on a large backlog. This holds for gmail too: 6.1 keeps `gm_sync` false until manual genesis is complete.
 Once a run reports `"limited": false` with these gates passed, record it:
 `python -s -B tools/bootstrap.py checkpoint mark <app> genesis_complete --field limited=false --field head_seq=<HEAD_SEQ>`.
 Until it is recorded (or 5.10, which comes after genesis), doctor's `next` for an app with sync off stays 5.5.
@@ -400,8 +399,7 @@ Values:
 - `gm_imap_user` = the Gmail address to archive. The owner gives it; it is no secret, but never echo it in a
   report (rule 3). Set it in 5.3.
 
-The fetch step signs in to Gmail's IMAP with a Google app password: no Cloud project, consent screen or OAuth
-client. It only reads (EXAMINE and `BODY.PEEK`, [gmail/README.md](gmail/README.md)). Keep `gm_sync` false until
+The fetch step reads Gmail over IMAP with a Google app password ([gmail/README.md](gmail/README.md)). Keep `gm_sync` false until
 6.1.6, and keep the default `gm_exclude_labels`.
 
 **6.1.1** Run 5.1–5.3, with `gm_imap_user` in 5.3.
@@ -531,10 +529,8 @@ Recovery:
 
 ### 6.4 mattermost
 
-The app's fetch step (`mattermost/fetch.py`, a port of the mattertok archiver) reads the server's REST API v4
-with the owner's session token and keeps `<DATA_ROOT>\archive` in mattertok's format
-([mattermost/README.md](mattermost/README.md)). Each channel is fetched with cursors, so a run fetches only new
-posts; edits and deletions of posts already archived are not fetched again.
+The fetch step reads the server's REST API with the owner's session token
+([mattermost/README.md](mattermost/README.md)).
 
 Values (5.1 fills the archive and the token file):
 - `sources.mm_archive` = `<DATA_ROOT>\archive`
@@ -604,10 +600,9 @@ refuse it, so check it with section 8 steps 2-5 directly.
 
 ### 6.6 claudecode
 
-The fetch step reads the owner's local Claude Code files read-only. No human step, credential or sign-in is
-needed. It keeps prompts, reply text and one-line tool-call summaries; tool results, thinking and attachments
-are not kept. Secrets typed into prompts or the first 200 characters of Bash commands are kept as typed:
-never echo conversation text or commands. See [claudecode/README.md](claudecode/README.md).
+The fetch step reads the owner's local Claude Code files read-only ([claudecode/README.md](claudecode/README.md)); no
+human step or sign-in is needed. Secrets typed into prompts or Bash commands are kept as typed: never echo
+conversation text or commands.
 
 Steps:
 1. Run 5.1–5.3, then `python -s -B tools/bootstrap.py config defaults claudecode`. Defaults fill

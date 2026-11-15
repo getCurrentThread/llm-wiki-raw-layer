@@ -69,13 +69,6 @@ every following block. A newly inserted block gets its own first version.
 
 ## Search
 
-```
-python -s -B manage.py search notion deployment --page Project --context 2 --json
-python -s -B manage.py search notion --page-text 00000000-0000-0000-0000-000000000001 --json
-python -s -B manage.py search notion --list-pages --json
-python -s -B manage.py search notion deployment --mode pages --json
-```
-
 Each block is a searchable row; page title/properties are one synthetic page row, and comments have their own
 rows. Rich text, equations, table cells, captions and authored properties are extracted. Filters: repeatable
 `--page` (title substring/UUID), `--sender`, `--since`, `--until` (last-edited time), `--include-deleted`.
@@ -87,6 +80,3 @@ cut down this whole-page mode. `--before` / `--after` browse by printed `ts_ms.n
 sender and deletion for incremental manifests and rebuilds. A block is deleted when tombstoned, its page is
 trashed/gone, or it is missing from current page order; missing pages leave order NULL. Thus blocks arriving
 before their page still fold deterministically. Breadcrumbs query parent links recursively, with cycle guards.
-The index, the query language and the output are the root README's ("Search").
-
-SYSTEM capture runs on the schedule in [../README.md](../README.md#scheduled-tasks).

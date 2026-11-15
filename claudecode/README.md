@@ -6,11 +6,6 @@ thinking and attachments are left out. The app includes a stdlib fetch step (`fe
 keeps from the owner's `.claude` folder into the archive. Claude Code deletes transcripts after about 30 days; the
 archive keeps them. With `cc_sync: true`, live `manage.py capture claudecode` updates the archive before capturing
 it.
-```
-python -s -B -m claudecode.fetch --max-items 20
-python -s -B -m claudecode.fetch --capture
-python -s -B manage.py capture claudecode
-```
 
 ## Options
 
@@ -129,9 +124,8 @@ publishes the manifest last.
 
 ## Search
 
-`manage.py search claudecode [QUERY] --json`: modes `hits`, `count`, `timeline`, `senders` (by role),
-`sessions`, `projects`; filters `--project` (working folder), `--session ID` (a whole session in order),
-`--role`, `--list-sessions`, `--before`, `--after`. `search claudecode --help` is the reference.
+Containers are sessions; `senders` groups by role. `--session ID` prints a whole session in order and
+`--project` filters by working folder (`search claudecode --help`).
 
 ## Privacy
 

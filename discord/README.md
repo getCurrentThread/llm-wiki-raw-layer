@@ -90,27 +90,13 @@ the last observation still chooses the head. This avoids source-only refresh chu
 
 ## Search
 
-```
-python -s -B manage.py search discord deployment --guild Server --channel general --json
-python -s -B manage.py search discord --thread 1300000000000000000 --json
-python -s -B manage.py search discord --list-channels --json
-python -s -B manage.py search discord --channel general --limit 30 --json
-python -s -B manage.py search discord deployment --mode timeline --json
-```
-
 Filters: `--guild`, repeatable `--channel`, `--sender` (name/nickname/id), `--since`, `--until`,
 `--include-deleted`. Modes: hits, count, timeline, senders, channels. `--context N` shows adjacent messages
 in the same channel. `--before` / `--after` use `ts_ms.snowflake.channel_id` cursors; the channel tie-breaker
 prevents skipping duplicate parent/thread starters. Threads include the named/root message, its matching
 thread channel and reference replies. Query/selection filters do not cut a thread down. Parent renames update
 `parent › thread` labels. Text fallback is content → embed text → filenames/forwarded text; tombstones keep
-previous text when their content is empty. The index, the query language and the output are the root README's
-("Search").
-
-Scheduled capture runs as SYSTEM (times and limit:
-[../README.md](../README.md#scheduled-tasks)). Run genesis manually (or plan a 2-hour task limit) for a large archive.
-With `dc_sync` disabled, an external fetch step must finish before capture starts. With it enabled, collection
-runs inside the app's live read hook.
+previous text when their content is empty.
 
 ## References
 

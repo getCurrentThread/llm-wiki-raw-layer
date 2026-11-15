@@ -64,16 +64,11 @@ archive contract and search rows.
 ```
 
 CORE.md, "The app contract", lists the modules of an app folder.
-The core consists of `manage.py`, `CORE.md`, `rawlayer/`, `tests/__init__.py` and `tests/core/`.
 
 ## Discovery, selection and settings
 
-`registry.discover()` finds apps without importing them: every top-level folder beside `manage.py` containing
-both `__init__.py` and `apps.py`, with a valid lower-case app name, is discovered in name order unless reserved
-or listed in `settings.EXCLUDE_APPS`. The folder name is the package, `AppConfig.label`, command argument and
-index filename. `registry.select(app)` loads that app before a data-root command starts. One process selects
-one app and works on one ledger; selecting another app in that process is refused. Required app arguments may
-be omitted when the project has only one app. Cross-app validation is done separately by `check`.
+Every folder beside `manage.py` holding `__init__.py` and `apps.py` is an app (`rawlayer/registry.py`); its
+folder name is its one name. One process works on one app and its ledger.
 
 `config/settings.py` holds versioned project settings:
 
@@ -132,10 +127,7 @@ Discord, Notion, Gmail, Mattermost and Claude Code have an app-owned fetch step 
 reads: `python -s -B -m <app>.fetch [--auth-check] [--max-items N] [--full] [--capture] [--config CFG]`. With the
 app's sync option on (`dc_sync`, `nt_sync`, `gm_sync`, `mm_sync`, `cc_sync`), capture runs it first. The app READMEs define the options, archive contracts and authentication boundaries.
 
-Capture exit codes are 0 ok, 3 suspect, 75 busy, below the disk floor or skipped, 2 refused, and 1 error. Suspect
-origins commit nothing that run; other origins may commit. Search returns 0 even for zero hits, 2 for
-usage/query/index problems, 75 for a busy index lock, and 1 for an unexpected error. Consult command output for
-other commands' results.
+Exit codes: CORE.md ("What the core guarantees") and llm.md section 3.
 
 ## Search
 
