@@ -5,13 +5,11 @@ WORDS = (
     # room-DB tables (container facts "tables")
     "chatLogs", "chatLogHistory", "chatLogMeta", "chatLog_attachment", "chatLogDrafts", "chatLogOutdated",
     "chatLogTagMapping", "chatLogTagRevision", "chatLogMetaPendingRestoreRanges",
-    # macOS client tables (macdb, the kakaocli port)
-    "NTChatMessage", "NTChatRoom", "NTChatMeta", "NTUser", "NTOpenLink",
     # edb WAL facts
     "frames_total", "frames_valid", "frames_applied", "commits", "zero_filled", "bad_header",
     # notes
     "ts_out_of_range", "pk_bad", "no_pk", "missing_table", "not_room", "count_mismatch", "quick_check",
-    "gate_header", "main_not_page_multiple", "sidecar_left", "room_gone", "not_mac", "titled", "named",
+    "gate_header", "main_not_page_multiple", "sidecar_left", "room_gone", "titled", "named",
 )
 
 PATTERNS = (

@@ -7,7 +7,7 @@ roots, ledgers, indexes, configs and scheduled tasks.
 
 | app (folder name) | origins, in ledger order |
 |---|---|
-| `kakaotalk` | backup_decrypted, edb, macdb |
+| `kakaotalk` | backup_decrypted, edb, macdb (inert, listed by old manifests) |
 | `mattermost` | mm_archive |
 | `discord` | dc_archive |
 | `notion` | nt_archive |
@@ -115,7 +115,7 @@ and `setup`, not as commands of their own.
 
 | invocation after `manage.py` | purpose and options |
 |---|---|
-| `setup <app> [--from CFG\|-] [--force] [--provision] [--scan] [--root HEXFILE] [--restart-client]` | prepare the data parent, app data root and config; `-` reads config from stdin; force replaces an existing config; the app fills its own config defaults and runs its provisioning (kakaotalk: the root key, keystore, and on a Mac the client database); `--provision` reruns only that provisioning — the recovery path when a credential rotated — with `--scan` (memory fallback), `--root` (a root file to install, verified first) and `--restart-client` |
+| `setup <app> [--from CFG\|-] [--force] [--provision] [--scan] [--root HEXFILE] [--restart-client]` | prepare the data parent, app data root and config; `-` reads config from stdin; force replaces an existing config; the app fills its own config defaults and runs its provisioning (kakaotalk: the root key and keystore); `--provision` reruns only that provisioning — the recovery path when a credential rotated — with `--scan` (memory fallback), `--root` (a root file to install, verified first) and `--restart-client` |
 | `capture <app> [--config CFG] [--origins a,b,...] [--rebuild-index]` | the capture+index pipeline: append source changes, then bring the index up to the committed ledger after every capture exit code; log steps in `<DATA_ROOT>/reports/task.log` and return capture's code; the body of each app's scheduled task |
 | `collect <app> [--config CFG] [--project DIR] [--include S ...] [--exclude S ...] [--since YYYY-MM] [--dry-run] [--prune]` | the owner-only export step: render the app's index as Markdown sources of the wiki vault, whose headless ingest sends them to its LLM (llm.md 13). Needs `AppConfig.wiki` in the app's `apps.py`; refuses to run as LocalSystem; `--prune` deletes orphaned source files (their wiki pages stay) and runs only on the owner's explicit yes; prints counts only; not part of any scheduled task |
 | `search <app> [QUERY] [--config CFG] [options]` | search the app's index ("Search" below); `search <app> --help` lists the options |

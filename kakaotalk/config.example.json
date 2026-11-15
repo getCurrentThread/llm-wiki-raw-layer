@@ -6,6 +6,5 @@
     "backup_decrypted": "<abs dir>\\backup_decrypted",
     "kakao_user_dir": "<abs dir>\\Kakao\\KakaoTalk\\users\\<live user dir>",
     "keystore": "<abs path>\\keystore.json"
-  },
-  "mac_db": null
+  }
 }

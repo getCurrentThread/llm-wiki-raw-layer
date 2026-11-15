@@ -10,8 +10,7 @@ from ..keys import kakao_ts_ms
 TABLE_KIND = {"chatLogs": "msg", "chatLogHistory": "hist", "chatLogMeta": "meta", "chatLog_attachment": "attachment"}
 KNOWN_TABLES = frozenset((
     "chatLogs", "chatLogHistory", "chatLogMeta", "chatLog_attachment", "chatLogDrafts", "chatLogOutdated",
-    "chatLogTagMapping", "chatLogTagRevision", "chatLogMetaPendingRestoreRanges", "messages", "rooms", "cursors",
-    "NTChatMessage", "NTChatRoom", "NTChatMeta", "NTUser", "NTOpenLink"))     # the macOS client's (macdb)
+    "chatLogTagMapping", "chatLogTagRevision", "chatLogMetaPendingRestoreRanges", "messages", "rooms", "cursors"))
 
 
 def qi(name):
