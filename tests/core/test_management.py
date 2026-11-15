@@ -11,7 +11,8 @@ import unittest
 from unittest import mock
 
 from rawlayer import management, registry
-from rawlayer.capture import ledger, paths, steps
+from rawlayer.capture import ledger, paths
+from rawlayer.capture import run as capture_run
 from rawlayer.search import index
 from tests.core import toyfix as T
 from tests.core.projectfix import Project, app_files
@@ -142,7 +143,7 @@ class TestOwnership(T.ToyCase):
                 with self.subTest(command=command):
                     out = io.StringIO()
                     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-                        rc = steps.main([command, "--config", str(self.fx.config_path), *extra])
+                        rc = capture_run.main([command, "--config", str(self.fx.config_path), *extra])
                     self.assertEqual(rc, 2)
                     self.assertIn("refused", out.getvalue())
             with self.assertRaisesRegex(index.UsageError, "belongs to another app"):

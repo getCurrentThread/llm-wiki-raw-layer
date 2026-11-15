@@ -15,7 +15,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from rawlayer.capture import canon, steps
+from rawlayer.capture import canon, run
 from rawlayer.capture import ledger as ledger_mod
 from rawlayer.capture.ledger import LedgerCorrupt
 from tests.core import toyfix as T
@@ -280,7 +280,7 @@ class TestLedgerDefects(T.ToyCase):
         last.write_bytes(json.dumps(m).encode("ascii"))
         out = io.StringIO()
         with T.preserved_env(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            rc = steps.main(["replay", "--check", "--config", str(self.fx.config_path)])
+            rc = run.main(["replay", "--check", "--config", str(self.fx.config_path)])
         self.assertEqual(rc, 1)
         self.assertIn("corrupt", out.getvalue())
         self.assertNotIn("KeyError", out.getvalue())
