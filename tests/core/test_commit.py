@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 
 from rawlayer.capture import canon, steps
+from rawlayer.capture import ledger as ledger_mod
 from rawlayer.capture.ledger import LedgerCorrupt
 from tests.core import toyfix as T
 from tests.core.toyfix import (capture, cli_main, crash_at, export, invariants, item, ledger, log_runs, manifests,
@@ -302,7 +303,13 @@ class TestLedgerDefects(T.ToyCase):
 
         def unknown_origin(m):
             m["origins"]["toy_q"] = m["origins"].pop("toy_m")
-        for change in (rename_path, status_type, input_set, container_status, unknown_origin):
+
+        def segment_of_unknown_origin(m):
+            s = m["segments"][0]
+            s["path"], s["origin"] = s["path"].replace(s["origin"], "toy_q"), "toy_q"
+            m["origins"]["toy_q"] = dict(m["origins"]["toy_a"], containers={})
+        for change in (rename_path, status_type, input_set, container_status, unknown_origin,
+                       segment_of_unknown_origin):
             with self.subTest(change=change.__name__):
                 fx = T.ToyFixture().standard()
                 try:
@@ -319,6 +326,20 @@ class TestLedgerDefects(T.ToyCase):
                     self.assertEqual(state_p.read_bytes(), state_before)
                 finally:
                     T.force_rmtree(fx.base)
+
+    def test_retired_origin_without_segments_verifies(self):
+        """An origin the registry no longer has, listed with no containers and no segment, is a retired origin: the
+        manifest verifies, replays with no differing row and does not make the ledger another app's."""
+        self.assertEqual(capture(self.fx), 0)
+        last = ledger(self.fx).manifests()[-1][2]
+        m = json.loads(last.read_bytes())
+        m["origins"]["toy_q"] = {"status": m["origins"]["toy_a"]["status"], "counts": {}, "notes": {},
+                                 "pending": {"add": [], "drop": []}, "containers": {}}
+        rewrite(last, json.dumps(m, sort_keys=True, indent=1).encode("ascii"))
+        self.assertEqual(cli_main(self.fx, "replay", "--check"), 0)
+        self.assertEqual(replay_diff(self.fx), 0)
+        self.assertEqual(invariants(self.fx)[0], {})
+        self.assertEqual(ledger_mod.foreign_origins(ledger(self.fx).raw), [])
 
     def test_record_sqlite_cannot_store_is_a_ledger_defect(self):
         """A record with op null is LedgerCorrupt, not state damage: nothing is set aside, capture stops (and keeps

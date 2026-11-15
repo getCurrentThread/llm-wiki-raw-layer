@@ -228,13 +228,15 @@ def manifest_ok(m):
         if g is None or not g.group(1) == g.group(2) == s.get("origin") or s["origin"] not in order:
             return False
     for o, doc in origins.items():
-        if o not in order or not isinstance(doc, dict) or doc.get("status") not in statuses:
+        if not isinstance(doc, dict) or doc.get("status") not in statuses:
             return False
         counts, pend = doc.get("counts"), doc.get("pending")
         if not isinstance(counts, dict) or not all(_int(v) for v in counts.values()) \
                 or not isinstance(pend, dict) or not _strs(pend.get("add")) or not _strs(pend.get("drop")) \
                 or not isinstance(doc.get("notes"), dict) or not isinstance(doc.get("containers"), dict) \
                 or not all(isinstance(f, dict) and f.get("status") in statuses for f in doc["containers"].values()):
+            return False
+        if o not in order and doc["containers"]:      # a retired origin (no segment: checked above) holds nothing
             return False
     return True
 
@@ -256,7 +258,8 @@ def foreign_origins(raw_dir):
         m = json.loads(data)
     except ValueError:
         raise LedgerCorrupt("manifest") from None
-    named = set(m.get("origins") or {}) if isinstance(m, dict) and isinstance(m.get("origins"), dict) else set()
+    named = {o for o, d in m["origins"].items() if not isinstance(d, dict) or d.get("containers")} \
+        if isinstance(m, dict) and isinstance(m.get("origins"), dict) else set()     # a retired origin is not foreign
     if isinstance(m, dict) and isinstance(m.get("segments"), list):
         named |= {s.get("origin") for s in m["segments"] if isinstance(s, dict) and isinstance(s.get("origin"), str)}
     return sorted(named - set(registry.origin_order()))

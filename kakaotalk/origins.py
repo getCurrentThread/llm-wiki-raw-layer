@@ -58,11 +58,4 @@ class Edb(PendingAbsentMixin, KakaoOrigin):
         return 2 * room
 
 
-class MacDb(KakaoOrigin):
-    name = "macdb"      # inert, reads nothing: kept registered because old manifests list it
-
-    def read(self, ctx):
-        return []
-
-
-ORIGINS = (BackupDecrypted, Edb, MacDb)
+ORIGINS = (BackupDecrypted, Edb)

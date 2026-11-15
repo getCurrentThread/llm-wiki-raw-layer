@@ -36,8 +36,7 @@ and compare incremental indexing with rebuilds over the search modes and filters
 the data root's layout).
 
 Capture reads the decrypted backup room databases and the client's encrypted `.edb` room files read-only.
-Origins, in ledger order, are `backup_decrypted`, `edb`, and `macdb`, an inert name that reads nothing and
-stays registered because older manifests list it (a config's leftover `mac_db` key is ignored). The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
+Origins, in ledger order, are `backup_decrypted` and `edb`. The message key is `kakao:<chatId>:msg:<logId>` across origins. Records have kinds `schema`,
 `msg`, `room`, `hist`, `meta`, and `attachment`. The `edb` origin
 uses guarded pending-to-absent detection when a key disappears from a completely read room, and titles its
 rooms from the client's own chat-list database (`chat_data/chatListInfo.edb`, decrypted with the room keys —
