@@ -30,17 +30,10 @@ def run(*argv):
     return rc, out.getvalue(), err.getvalue()
 
 
-def _source(value):
-    if value not in ("api", "desktop"):
-        raise ValueError("fk_source")
-    return value
-
-
 def fake_app():
     """A stand-in AppConfig: what the config commands read of one (label, source_keys, options)."""
     return SimpleNamespace(label="fake", source_keys=("fk_archive",),
-                           options=(Option("fk_sync", False, boolean), Option("fk_token_file", "", text),
-                                    Option("fk_source", "api", _source)),
+                           options=(Option("fk_sync", False, boolean), Option("fk_token_file", "", text)),
                            setup_defaults=lambda cfg, note: None)
 
 
@@ -95,7 +88,7 @@ TASK = {"registered": True, "enabled": True, "definition": "current", "result_ok
 def probe(**over):
     """A doctor probe of a live gmail-like app, with `over` merged into its config (None removes a key)."""
     c = {"exists": True, "readable": True, "placeholders": [], "valid": True, "sync_key": "gm_sync", "sync": True,
-         "source": None, "files": {"sources.gm_archive": "there", "gm_imap_password_file": "there"},
+         "files": {"sources.gm_archive": "there", "gm_imap_password_file": "there"},
          "values_set": ["gm_imap_user", "gm_imap_password_file"], "task_problems": []}
     top = {k: over.pop(k) for k in ("task", "log", "checkpoints", "error") if k in over}
     c.update(over)
@@ -132,14 +125,10 @@ class NextStep(unittest.TestCase):
             ("cc source wrong kind", "claudecode", probe(files={"cc_claude_dir": "wrong_kind"}), None, "6.6"),
             ("cc source ready", "claudecode", probe(sync_key="cc_sync", files={"cc_claude_dir": "there"}),
              {"state": "missing"}, "5.5"),
-            ("dc desktop", "discord", probe(source="desktop", files={"dc_desktop_path": "wrong_kind"}), None, "6.2"),
-            ("dc api", "discord", probe(source="api", files={"dc_token_file": "missing"}), None, "6.2"),
-            ("nt desktop", "notion", probe(source="desktop", files={"nt_desktop_path": "unset"}), None, "6.3"),
-            ("nt api, no login", "notion", probe(source="api", files={}), {"state": "missing"}, "6.3"),
-            ("nt api, login", "notion", probe(source="api", files={}, checkpoints={"5.4": {}}), {"state": "missing"},
-             "5.5"),
+            ("dc desktop", "discord", probe(files={"dc_desktop_path": "wrong_kind"}), None, "6.2"),
+            ("nt desktop", "notion", probe(files={"nt_desktop_path": "unset"}), None, "6.3"),
             ("empty index", "gmail", probe(), {"state": "ok", "total": 0}, "6.1.5"),
-            ("empty index, another card", "discord", probe(source="desktop", files={"dc_desktop_path": "there"}),
+            ("empty index, another card", "discord", probe(files={"dc_desktop_path": "there"}),
              {"state": "ok", "total": 0}, "5.5"),
             ("outdated", "gmail", probe(), {"state": "outdated"}, "9"),
             ("unreadable", "gmail", probe(), {"state": "unreadable"}, "9"),
@@ -149,15 +138,10 @@ class NextStep(unittest.TestCase):
             ("sync, another card", "mattermost", probe(sync=False, checkpoints={"genesis_complete": {}},
                                                        values_set=["mm_url", "mm_token_file"],
                                                        files={"mm_token_file": "there"}), OK_INDEX, "5.6"),
-            ("nt api archive-only", "notion", probe(source="api", sync=False, files={},
-                                                     checkpoints={"genesis_complete": {}},
-                                                     task={"registered": False}), OK_INDEX, "5.7"),
             # live before this tool: section 8 records 5.10, which implies genesis (5.5 comes before 5.8)
-            ("nt api live, 5.10", "notion", probe(source="api", sync=False, files={}, checkpoints={"5.10": {}},
-                                                  task={"registered": "unknown"}), OK_INDEX, "8"),
-            ("nt api live, nothing recorded", "notion", probe(source="api", sync=False, files={}), OK_INDEX, "5.5"),
+            ("live, 5.10, sync off", "gmail", probe(sync=False, checkpoints={"5.10": {}}), OK_INDEX, "6.1.6"),
             ("task checks", "gmail", probe(task_problems=["app gmail: x"]), OK_INDEX, "6.1.6"),
-            ("task checks, another card", "notion", probe(source="desktop", files={"nt_desktop_path": "there"},
+            ("task checks, another card", "notion", probe(files={"nt_desktop_path": "there"},
                                                           task_problems=["app notion: x"]), OK_INDEX, "5.6"),
             ("no task", "gmail", probe(task={"registered": False}), OK_INDEX, "5.7"),
             ("unknown, no run", "gmail", probe(task={"registered": "unknown"}, log=None), OK_INDEX, "5.7"),
@@ -205,11 +189,10 @@ class NextStep(unittest.TestCase):
                     body = re.split(r"\n#{2,3} ", body, maxsplit=1)[0]
                     self.assertIn("\nSteps:\n", body, g)
                     self.assertIn(f"\n{n}. ", body[body.index("\nSteps:\n") + 7:], g)
-        for by_source in B.NEEDS.values():
-            for needs in by_source.values():
-                for _k, kind, step, _w in needs:
-                    self.assertIn(kind, ("file", "dir", "value", "checkpoint"))
-                    self.assertIn(step, doc)
+        for needs in B.NEEDS.values():
+            for _k, kind, step, _w in needs:
+                self.assertIn(kind, ("file", "dir", "value"))
+                self.assertIn(step, doc)
 
     def test_gates_are_listed_in_llm_md(self):
         # llm.md 5.0 lists every id `checkpoint mark` takes, literally
@@ -338,7 +321,7 @@ class ConfigCommands(Temp):
                      ["fk_source", "carrier-pigeon"], ["fk_sync", "yes"], ["sources.fk_archive", "[1]"],
                      ["Bad Key", "1"], ["fk_sync", "[oops"], ["fk_token_file", "<DATA_ROOT>\\token.txt"],
                      ["sources.fk_archive", "relative\\archive"], ["sources.fk_archive", str(self.tmp / "none")],
-                     ["sources.fk_archive", str(self.tmp / "file.txt")], ["fk_source", '["<x>"]']):
+                     ["sources.fk_archive", str(self.tmp / "file.txt")], ["fk_sync", '["<x>"]']):
             with self.subTest(argv=argv):
                 rc, out, err = run("config", "set", "fake", *argv)
                 self.assertEqual(rc, 2, err)
@@ -355,22 +338,21 @@ class ConfigCommands(Temp):
                 self.assertNotIn("host", (out + err).replace("fake", ""))
 
     def test_get_prints_states_only(self):
-        self.cfg.update(fk_token_file=SECRET, fk_source="desktop", sources={"fk_archive": str(self.tmp / "a")})
+        self.cfg.update(fk_token_file=SECRET, sources={"fk_archive": str(self.tmp / "a")})
         self.path.write_text(json.dumps(self.cfg), encoding="utf-8")
         rc, out, _err = run("config", "get", "fake", "--json")
         self.assertEqual(rc, 0)
         keys = json.loads(out)["keys"]
         self.assertEqual(keys["fk_token_file"], "set")
-        self.assertEqual(keys["fk_source"], "desktop")
         self.assertEqual(keys["sources.fk_archive"], "path in the data root, missing")
         self.assertEqual(keys["data_root"], "the data root, there")
         self.assertEqual(keys["fk_sync"], "false")
         self.assertNotIn(SECRET, out)
-        del self.cfg["fk_source"]
+        del self.cfg["fk_sync"]
         self.cfg.update(fk_token_file=None)
         self.path.write_text(json.dumps(self.cfg), encoding="utf-8")
         keys = json.loads(run("config", "get", "fake", "--json")[1])["keys"]
-        self.assertEqual(keys["fk_source"], "missing (the app's default applies)")
+        self.assertEqual(keys["fk_sync"], "missing (the app's default applies)")
         self.assertTrue(keys["fk_token_file"].startswith("null (checked as given"))
 
 

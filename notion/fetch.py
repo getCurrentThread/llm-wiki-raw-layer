@@ -1,326 +1,247 @@
-"""Read-only Notion API collection via the official ntn executable/keychain."""
-import copy
+"""The fetch step: a read-only SQLite snapshot of Notion Desktop's structured cache (no token).
+
+Missing cache rows are retained. Only explicit alive=false/resolved flags retire
+records. Internal CRDT-only bodies are reported as unsupported, never guessed.
+"""
+import contextlib
+import datetime as dt
 import json
 import os
 from pathlib import Path
-import re
-import shutil
-import subprocess
-import time
+import sqlite3
 import uuid
-from appkit.archive import FetchError, atomic, bind, inside, load, locked, now
-from rawlayer.capture.canon import iso_ms
+from appkit.archive import FetchError, atomic, inside, load, locked, now
 from .keys import nt_id
 from .readers.archive import project
-from .search import page_title
 
-API_VERSION = "2026-03-11"
-
-
-def executable(configured=""):
-    if configured:
-        path = Path(configured)
-        if not path.is_file() or path.suffix.lower() != ".exe" and os.name == "nt":
-            raise FetchError("cli_missing")
-        return str(path)
-    found = shutil.which("ntn.exe" if os.name == "nt" else "ntn")
-    if found:
-        return found
-    if os.name == "nt":
-        path = Path(os.environ.get("APPDATA", "")) / "npm/node_modules/ntn/dist/ntn-win32-x64/ntn.exe"
-        if path.is_file():
-            return str(path)
-    raise FetchError("cli_missing")
+TYPES = {"text": "paragraph", "header": "heading_1", "sub_header": "heading_2", "sub_sub_header": "heading_3",
+         "header_4": "heading_3", "bulleted_list": "bulleted_list_item", "numbered_list": "numbered_list_item",
+         "transclusion_container": "synced_block", "transclusion_reference": "synced_block"}
+PAGE_TYPES = {"page", "collection_view_page", "personal_home_page"}
 
 
-class NotionClient:
-    def __init__(self, cli="", runner=subprocess.run, sleep=time.sleep):
-        self.cli, self.runner, self.sleep = executable(cli), runner, sleep
-        self.requests, self.last = 0, 0.0
-
-    def request(self, path, method="GET", body=None, query=None):
-        if not re.fullmatch(r"/v1/[A-Za-z0-9_%/-]+", path):
-            raise FetchError("bad_endpoint")
-        argv = [self.cli, "api", path, "-X", method, "--notion-version", API_VERSION]
-        if body is not None:
-            argv += ["--data", "@-"]
-        argv += [f"{k}=={v}" for k, v in (query or {}).items()]
-        # Pin production; a caller's debug URL must never receive keychain credentials.
-        env = {k: v for k, v in os.environ.items() if k not in ("NOTION_API_BASE_URL", "NOTION_ENV")}
-        env.update(NOTION_API_BASE_URL="https://api.notion.com", NOTION_ENV="prod")
-        for attempt in range(6):
-            self.sleep(max(0, 0.35 - (time.monotonic() - self.last)))
-            self.last = time.monotonic()
-            try:
-                r = self.runner(argv, input=json.dumps(body) if body is not None else "", env=env,
-                                capture_output=True, text=True, encoding="utf-8", timeout=90)
-            except (OSError, subprocess.SubprocessError):
-                raise FetchError("transport_error") from None
-            self.requests += 1
-            try:
-                value = json.loads(r.stdout)
-            except ValueError:
-                value = None
-            if isinstance(value, dict) and value.get("object") != "error" and r.returncode == 0:
-                return value
-            detail = (r.stderr + " " + r.stdout).lower()
-            status = value.get("status") if isinstance(value, dict) else None
-            if status is None:
-                match = re.search(r"\b(400|401|403|404|409|429|500|502|503|504|529)\b", detail)
-                status = int(match[1]) if match else None
-            if status in (429, 500, 502, 503, 504, 529) and attempt < 5:
-                delay = re.search(r"retry[-_ ]after[^0-9]*(\d+(?:\.\d+)?)", detail)
-                self.sleep(min(120, float(delay[1]) if delay else 2 ** attempt))
-                continue
-            if status == 401 or status is None and any(x in detail for x in ("not logged", "login", "credential", "token")):
-                raise FetchError("auth_required", status)
-            raise FetchError("api_error", status)
-        raise FetchError("retry_exhausted")
-
-    def items(self, path, method="GET", body=None, query=None):
-        cursor, seen = None, set()
-        while True:
-            b, q = dict(body or {}), dict(query or {})
-            target = b if method == "POST" else q
-            target["page_size"] = 100
-            if cursor:
-                target["start_cursor"] = cursor
-            obj = self.request(path, method, b if method == "POST" else None, q)
-            if not isinstance(obj.get("results"), list):
-                raise FetchError("bad_response")
-            yield from obj["results"]
-            if not obj.get("has_more"):
-                break
-            cursor = obj.get("next_cursor")
-            if not isinstance(cursor, str) or not cursor or cursor in seen:
-                raise FetchError("pagination_stalled")
-            seen.add(cursor)
+def default_path():
+    return Path(os.environ.get("APPDATA", Path.home())) / "Notion/notion.db"
 
 
-def _page_path(root, pid):
-    return inside(root, Path(root) / "pages" / pid[:2] / (pid + ".json"))
-
-
-def _complete_properties(client, page):
-    # Inline relations, people and rich text can be truncated at 25 items.
-    for prop in page.get("properties", {}).values():
-        typ = prop.get("type") if isinstance(prop, dict) else None
-        values = prop.get(typ) if isinstance(typ, str) else None
-        if typ not in ("title", "rich_text", "relation", "people") or not isinstance(values, list):
-            continue
-        if not prop.get("has_more") and len(values) < 25:
-            continue
-        # Property IDs can contain URL-escaped punctuation; ntn handles the encoded path.
-        from urllib.parse import quote, unquote
-        ident = quote(unquote(str(prop.get("id", ""))), safe="")
-        if not ident:
-            raise FetchError("bad_response")
-        rows = list(client.items(f"/v1/pages/{page['id']}/properties/{ident}"))
-        prop[typ] = [v[typ] for v in rows if typ in v]
-        prop.pop("has_more", None)
-
-
-def fetch_page(client, pid, comments=True):
-    try:
-        before = client.request(f"/v1/pages/{pid}")
-    except FetchError as e:
-        if e.status in (403, 404):
-            raise FetchError("page_gone", e.status) from None
-        raise
-    if nt_id(before.get("id")) != pid:
-        raise FetchError("bad_response")
-    _complete_properties(client, before)
-    blocks, order, comment_map, visiting = {}, [], {}, set()
-
-    def read_comments(ident):
-        if comments:
-            for obj in client.items("/v1/comments", query={"block_id": ident}):
-                cid = nt_id(obj.get("id"))
-                if cid is None:
-                    raise FetchError("bad_response")
-                comment_map[cid] = obj
-
-    def children(ident, depth, parent):
-        if ident in visiting or depth > 200:
-            raise FetchError("block_cycle")
-        visiting.add(ident)
-        for obj in client.items(f"/v1/blocks/{ident}/children"):
-            bid = nt_id(obj.get("id"))
-            if bid is None:
-                raise FetchError("bad_response")
-            if bid in blocks:
-                continue
-            blocks[bid] = obj
-            order.append([bid, depth, parent])
-            read_comments(bid)
-            typ = obj.get("type")
-            source = bid
-            if typ == "synced_block":
-                synced = obj.get("synced_block", {}).get("synced_from")
-                if isinstance(synced, dict):
-                    source = nt_id(synced.get("block_id"))
-                    if source is None:
-                        raise FetchError("bad_response")
-            if (obj.get("has_children") or source != bid) and typ not in ("child_page", "child_database"):
-                children(source, depth + 1, bid)
-        visiting.remove(ident)
-
-    read_comments(pid)
-    children(pid, 0, None)
-    after = client.request(f"/v1/pages/{pid}")
-    if any(before.get(k) != after.get(k) for k in ("last_edited_time", "in_trash", "archived")):
-        raise FetchError("page_unstable")
-    return {"page": before, "blocks": blocks, "order": order, "comments": comment_map}
-
-
-def merge(old, new, stamp, comments=True):
-    new = copy.deepcopy(new)
-    if old:
-        for kind in ("blocks", "comments"):
-            for ident, obj in old.get(kind, {}).items():
-                if ident not in new[kind]:
-                    missing = copy.deepcopy(obj)
-                    if kind != "comments" or comments:
-                        missing.setdefault("_removed_at", stamp)
-                    new[kind][ident] = missing
-    return new
-
-
-def sync(root, client, page_ids=(), comments=True, full=False, max_items=0):
-    root = Path(root)
-    stamp = now()
-    stats = {"status": "ok", "pages_attempted": 0, "pages_fetched": 0, "pages_written": 0, "pages_gone": 0,
-             "data_sources": 0, "errors": 0, "error_counts": {}, "comments_enabled": comments,
-             "user_directory_available": True, "limited": False}
-
-    def failed(e):
-        stats["errors"] += 1
-        category = e.category + ("_" + str(e.status) if isinstance(e.status, int) else "")
-        stats["error_counts"][category] = stats["error_counts"].get(category, 0) + 1
-    with locked(root):
-        me = client.request("/v1/users/me")
-        if not isinstance(me.get("id"), str):
-            raise FetchError("bad_response")
-        bind(root, me["id"])
-        users = load(root / "users.json", {})
+def _json(value, fallback):
+    if value is None:
+        return fallback
+    if isinstance(value, (str, bytes)):
         try:
-            for user in client.items("/v1/users"):
-                uid = nt_id(user.get("id"))
-                if uid is None:
-                    raise FetchError("bad_response")
-                users[uid] = user
-        except FetchError as e:
-            if e.status != 403:
-                raise
-            # Content access need not include directory access. Keep known users;
-            # page/block authors still remain searchable by their UUIDs.
-            stats["user_directory_available"] = False
-        users.setdefault(nt_id(me["id"]), me)
-        atomic(root, root / "users.json", users)
-        man = load(root / "manifest.json", {"version": 1, "pages": {}, "data_sources": {}})
-        if man.get("version") != 1 or not isinstance(man.get("pages"), dict) or not isinstance(man.get("data_sources"), dict):
-            raise FetchError("bad_archive")
-        state = load(root / "_collector_state.json", {})
-        last_sweep = iso_ms(state.get("last_full_sweep")) or 0
-        sweep = full or (iso_ms(stamp) - last_sweep >= 86400000)
-        selected = {nt_id(v) for v in page_ids}
-        if None in selected:
-            raise FetchError("bad_page_id")
-        candidates, sources = {}, {}
-        # Full pagination makes discovery independent of coarse page edit timestamps.
-        if not selected:
-            for trash in (False, True):
-                body = {"sort": {"direction": "descending", "timestamp": "last_edited_time"},
-                        "filter": {"in_trash": trash}}
-                for obj in client.items("/v1/search", "POST", body=body):
-                    ident = nt_id(obj.get("id"))
-                    if ident is None:
-                        raise FetchError("bad_response")
-                    if obj.get("object") == "page":
-                        candidates[ident] = obj
-                    elif obj.get("object") == "data_source":
-                        sources[ident] = obj
-            for sid in sorted(sources):
-                try:
-                    ds = client.request(f"/v1/data_sources/{sid}")
-                    atomic(root, root / "ds" / (sid + ".json"), ds)
-                    man["data_sources"][sid] = {"path": f"ds/{sid}.json", "title": page_title(ds), "parent": ds.get("parent")}
-                    stats["data_sources"] += 1
-                    for obj in client.items(f"/v1/data_sources/{sid}/query", "POST"):
-                        if obj.get("object") == "page" and nt_id(obj.get("id")):
-                            candidates[nt_id(obj["id"])] = obj
-                except FetchError as e:
-                    failed(e)
-        else:
-            candidates = {pid: {} for pid in selected}
-        if sweep:
-            for pid in man["pages"]:
-                if not selected or pid in selected:
-                    candidates.setdefault(pid, {})
-        for pid, meta in candidates.items():
-            old_meta = man["pages"].get(pid, {})
-            old_path = _page_path(root, pid)
-            fetched = iso_ms(old_meta.get("fetched_at"))
-            edited = iso_ms(meta.get("last_edited_time"))
-            if not sweep and old_path.exists() and fetched and edited and edited < fetched // 60000 * 60000 \
-                    and meta.get("in_trash") == old_meta.get("in_trash"):
+            return json.loads(value)
+        except (ValueError, UnicodeError):
+            raise FetchError("bad_cache_json") from None
+    return value
+
+
+def rich_text(value):
+    out = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, list) or not item or not isinstance(item[0], str):
+            continue
+        text = item[0]
+        annotations, link = {}, None
+        for fmt in item[1] if len(item) > 1 and isinstance(item[1], list) else []:
+            if isinstance(fmt, list) and fmt:
+                key = {"b": "bold", "i": "italic", "s": "strikethrough", "_": "underline", "c": "code"}.get(fmt[0])
+                if key:
+                    annotations[key] = True
+                elif fmt[0] == "a" and len(fmt) > 1:
+                    link = {"url": fmt[1]}
+        out.append({"type": "text", "text": {"content": text, "link": link}, "plain_text": text, "annotations": annotations})
+    return out
+
+
+def _time(value):
+    if isinstance(value, (int, float)) and value > 0:
+        return dt.datetime.fromtimestamp(value / 1000, dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return None
+
+
+def native_block(raw):
+    props = raw.get("properties") or {}
+    typ = TYPES.get(raw.get("type"), raw.get("type") or "unsupported")
+    value = {"rich_text": rich_text(props.get("title", []))}
+    if typ in ("image", "file", "pdf", "video", "audio"):
+        source = props.get("source", [])
+        url = source[0][0] if isinstance(source, list) and source and isinstance(source[0], list) else ""
+        value = {"type": "external", "external": {"url": url}, "caption": rich_text(props.get("caption", []))}
+        if typ == "file":
+            title = rich_text(props.get("title", []))
+            value["name"] = "".join(t["plain_text"] for t in title)
+    elif typ == "equation":
+        value = {"expression": "".join(t["plain_text"] for t in rich_text(props.get("title", [])))}
+    elif typ == "table_row":
+        value = {"cells": [rich_text(v) for _, v in sorted(props.items())]}
+    elif typ in ("bookmark", "embed"):
+        source = props.get("link") or props.get("source") or []
+        value["url"] = source[0][0] if isinstance(source, list) and source and isinstance(source[0], list) else ""
+    out = {"object": "block", "id": raw["id"], "type": typ, typ: value,
+           "created_time": _time(raw.get("created_time")), "last_edited_time": _time(raw.get("last_edited_time")),
+           "created_by": {"id": raw.get("created_by_id") or raw.get("created_by")},
+           "last_edited_by": {"id": raw.get("last_edited_by_id") or raw.get("last_edited_by")},
+           "in_trash": raw.get("alive") in (0, False)}
+    return out
+
+
+def read_cache(source):
+    source = Path(source)
+    if not source.is_file():
+        raise FetchError("desktop_missing")
+    # SQLite backup includes the live WAL, unlike copying only notion.db.
+    with contextlib.closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as src, \
+            contextlib.closing(sqlite3.connect(":memory:")) as db:
+        src.backup(db)
+        db.row_factory = sqlite3.Row
+        available = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "block" not in available:
+            raise FetchError("unsupported_cache_schema")
+        wanted = ("id", "type", "properties", "content", "parent_id", "parent_table", "alive", "created_time", "last_edited_time",
+                  "created_by", "last_edited_by", "created_by_id", "last_edited_by_id", "format", "crdt_data", "crdt_format_version")
+        columns = {r[1] for r in db.execute('PRAGMA table_info("block")')}
+        selected = [c for c in wanted if c in columns]
+        if not {"id", "type", "properties", "content"}.issubset(columns):
+            raise FetchError("unsupported_cache_schema")
+        blocks, crdt_only = {}, 0
+        for row in db.execute('SELECT ' + ','.join('"' + c + '"' for c in selected) + ' FROM block'):
+            obj = dict(row)
+            ident = nt_id(obj["id"])
+            if not ident:
                 continue
-            if max_items and stats["pages_attempted"] >= max_items:
+            obj["id"] = ident
+            obj["properties"] = _json(obj.get("properties"), {})
+            obj["content"] = _json(obj.get("content"), [])
+            obj["format"] = _json(obj.get("format"), {})
+            if obj.get("crdt_data") and not obj["properties"]:
+                crdt_only += 1
+                obj["_crdt_only"] = True
+            obj.pop("crdt_data", None)
+            blocks[ident] = obj
+        users, comments, discussions = {}, {}, {}
+        for table, target, fields in (("notion_user", users, ("id", "name", "given_name", "family_name")),
+                                      ("comment", comments, ("id", "parent_id", "text", "created_time", "last_edited_time", "alive", "created_by_id")),
+                                      ("discussion", discussions, ("id", "parent_id", "resolved"))):
+            if table not in available:
+                continue
+            columns = {r[1] for r in db.execute('PRAGMA table_info("' + table + '")')}
+            names = [c for c in fields if c in columns]
+            for row in db.execute('SELECT ' + ','.join('"' + c + '"' for c in names) + ' FROM "' + table + '"'):
+                obj = dict(row)
+                if nt_id(obj.get("id")):
+                    target[nt_id(obj["id"])] = obj
+    return blocks, users, comments, discussions, crdt_only
+
+
+def sync(root, source, selected=(), max_items=0):
+    blocks, cached_users, cached_comments, discussions, crdt_only = read_cache(source)
+    root, stamp = Path(root), now()
+    selected = {nt_id(v) for v in selected}
+    if None in selected:
+        raise FetchError("bad_page_id")
+    stats = {"status": "ok", "source": "desktop", "coverage": "cached_only", "blocks_cached": len(blocks),
+             "crdt_only_blocks": crdt_only, "pages_written": 0, "pages_scanned": 0, "missing_children": 0,
+             "unsupported_pages": 0, "errors": 0, "limited": False}
+    with locked(root):
+        man = load(root / "manifest.json", {"version": 1, "pages": {}, "data_sources": {}})
+        users = load(root / "users.json", {})
+        for uid, raw in cached_users.items():
+            name = raw.get("name") or " ".join(v for v in (raw.get("given_name"), raw.get("family_name")) if isinstance(v, str))
+            users[uid] = {"object": "user", "id": uid, "name": name}
+        atomic(root, root / "users.json", users)
+        for pid, raw in blocks.items():
+            if raw["type"] not in PAGE_TYPES or selected and pid not in selected:
+                continue
+            if max_items and stats["pages_scanned"] >= max_items:
                 stats["limited"] = True
                 break
-            old = load(old_path)
-            stats["pages_attempted"] += 1
-            try:
-                value = fetch_page(client, pid, comments)
-            except FetchError as e:
-                # Only the page lookup can establish lost page access. A missing child
-                # or comments permission failure must preserve the previous full snapshot.
-                if e.category == "page_gone" and old:
-                    value = copy.deepcopy(old)
-                    value.setdefault("_gone_at", stamp)
-                    atomic(root, old_path, value)
-                    stats["pages_gone"] += 1
-                else:
-                    failed(e)
-                continue
-            stats["pages_fetched"] += 1
-            value = merge(old, value, stamp, comments)
-            for obj in [value["page"], *value["blocks"].values(), *value["comments"].values()]:
-                for field in ("created_by", "last_edited_by"):
-                    user = obj.get(field)
-                    uid = nt_id(user.get("id")) if isinstance(user, dict) else None
-                    if uid:
-                        users.setdefault(uid, user)
+            stats["pages_scanned"] += 1
+            path = inside(root, root / "pages" / pid[:2] / (pid + ".json"))
+            old = load(path)
+            own, order, seen, missing, unsupported = {}, [], set(), 0, False
+            def children(node, depth, parent):
+                nonlocal missing, unsupported
+                for ident in node.get("content", []):
+                    bid = nt_id(ident)
+                    if not bid or bid in seen:
+                        continue
+                    seen.add(bid)
+                    child = blocks.get(bid)
+                    if child is None:
+                        missing += 1
+                        continue
+                    if child["type"] in PAGE_TYPES:
+                        # Child pages have their own page-scoped containers.
+                        obj = native_block(child)
+                        obj["type"] = "child_page"
+                        obj["child_page"] = {"title": "".join(t["plain_text"] for t in rich_text(child["properties"].get("title", [])))}
+                    else:
+                        if child.get("_crdt_only"):
+                            unsupported = True
+                            continue
+                        obj = native_block(child)
+                    own[bid] = obj
+                    order.append([bid, depth, parent])
+                    if child["type"] not in PAGE_TYPES and depth < 200:
+                        children(child, depth + 1, bid)
+            children(raw, 0, None)
+            stats["missing_children"] += missing
+            if unsupported or raw.get("_crdt_only"):
+                # Keep readable siblings and any previously captured bodies.
+                # Unsupported cached CRDT data must not erase known content.
+                stats["unsupported_pages"] += 1
+            page_native = native_block(raw)
+            page_native = {k: v for k, v in page_native.items() if k not in ("type", TYPES.get(raw["type"], raw["type"]))}
+            properties = {"Name": {"type": "title", "title": rich_text(raw["properties"].get("title", []))}}
+            if raw.get("_crdt_only") and old:
+                properties = old["page"].get("properties", properties)
+            for key, value in raw["properties"].items():
+                if key != "title":
+                    text = rich_text(value)
+                    if text:
+                        properties[key] = {"type": "rich_text", "rich_text": text}
+            page_native.update(object="page", properties=properties,
+                               parent={"type": "page_id", "page_id": raw.get("parent_id")} if raw.get("parent_table") == "block" else {"type": "workspace", "workspace": True})
+            comment_map = {}
+            for cid, c in cached_comments.items():
+                discussion = discussions.get(nt_id(c.get("parent_id")), {})
+                parent = nt_id(discussion.get("parent_id"))
+                if parent != pid and parent not in own:
+                    continue
+                obj = {"object": "comment", "id": cid, "rich_text": rich_text(_json(c.get("text"), [])),
+                       "created_time": _time(c.get("created_time")), "last_edited_time": _time(c.get("last_edited_time")),
+                       "created_by": {"id": c.get("created_by_id")}}
+                if c.get("alive") in (0, False) or discussion.get("resolved") in (1, True):
+                    obj["_removed_at"] = _time(c.get("last_edited_time")) or stamp
+                comment_map[cid] = obj
+            value = {"page": page_native, "blocks": own, "comments": comment_map, "order": order}
+            if old:
+                # Missing rows/order entries can be cache eviction. Preserve old
+                # observations and relative order until API proves a deletion.
+                for kind in ("blocks", "comments"):
+                    for ident, obj in old.get(kind, {}).items():
+                        value[kind].setdefault(ident, obj)
+                present = {e[0] for e in order}
+                value["order"] += [e for e in old.get("order", []) if e[0] not in present]
             if old is None or project(old) != project(value):
-                atomic(root, old_path, value)
+                atomic(root, path, value)
                 stats["pages_written"] += 1
-            man["pages"][pid] = {"path": old_path.relative_to(root).as_posix(), "title": page_title(value["page"]),
-                                  "parent": value["page"].get("parent"), "last_edited_time": value["page"].get("last_edited_time"),
-                                  "in_trash": value["page"].get("in_trash", False), "fetched_at": stamp}
+            man["pages"][pid] = {"path": path.relative_to(root).as_posix(), "title": "".join(t["plain_text"] for t in page_native["properties"]["Name"]["title"]),
+                                  "parent": page_native["parent"], "last_edited_time": page_native.get("last_edited_time"),
+                                  "in_trash": page_native["in_trash"], "fetched_at": stamp, "source": "desktop",
+                                  "cache_complete": missing == 0 and not unsupported and not raw.get("_crdt_only")}
         man["generation"] = uuid.uuid4().hex
-        atomic(root, root / "users.json", users)
         atomic(root, root / "manifest.json", man)
-        if sweep and not stats["limited"] and not stats["errors"]:
-            state["last_full_sweep"] = stamp
-        atomic(root, root / "_collector_state.json", state)
-    stats["requests"] = getattr(client, "requests", 0)
     return stats
 
 
 def sync_config(cfg, auth_only=False, full=False, max_items=0):
-    if cfg.nt_source == "desktop":
-        from . import desktop
-        source = cfg.nt_desktop_path or desktop.default_path()
-        if auth_only:
-            if not Path(source).is_file():
-                raise FetchError("desktop_missing")
-            return {"status": "local_ready", "authentication_required": False}
-        return desktop.sync(cfg.sources["nt_archive"], source, cfg.nt_page_ids, max_items or cfg.nt_max_pages)
-    client = NotionClient(cfg.nt_cli)
+    source = cfg.nt_desktop_path or default_path()
     if auth_only:
-        value = client.request("/v1/users/me")
-        return {"status": "authenticated", "authenticated": bool(nt_id(value.get("id")))}
-    return sync(cfg.sources["nt_archive"], client, cfg.nt_page_ids, cfg.nt_comments, full, max_items or cfg.nt_max_pages)
+        if not Path(source).is_file():
+            raise FetchError("desktop_missing")
+        return {"status": "local_ready", "authentication_required": False}
+    return sync(cfg.sources["nt_archive"], source, cfg.nt_page_ids, max_items or cfg.nt_max_pages)
 
 
 if __name__ == "__main__":

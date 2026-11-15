@@ -1,7 +1,7 @@
 import gzip
 import json
 import unittest
-from discord.desktop import scan, sync
+from discord.fetch import dce_message, scan, sync
 from .fixtures import Fixture, CID, MID, UID
 from tests.core import appfix as h
 
@@ -65,3 +65,12 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(ch['guild_id'],'400')
         self.assertEqual(ch['files'],sorted(ch['files']))
         self.assertEqual(read_once(self.fx.root,[],set(),'dc_archive').notes['order_bad'],0)
+
+    def test_key_projection_reply_forward_sticker(self):
+        obj=dict(self.obj,message_reference={'message_id':MID,'channel_id':CID},
+                 sticker_items=[{'id':'400','name':'sticker'}],
+                 message_snapshots=[{'message':{'content':'forwarded'}}])
+        result=dce_message(obj)
+        self.assertEqual(result['reference']['messageId'],MID)
+        self.assertEqual(result['forwardedMessage'][0]['content'],'forwarded')
+        self.assertEqual(result['stickers'][0]['name'],'sticker')

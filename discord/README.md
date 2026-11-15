@@ -1,42 +1,29 @@
 # Discord raw-layer app
 
-`dc_archive` keeps a protected data root, append-only ledger and `index/discord.sqlite`.
-The app includes a stdlib fetch step (`fetch.py`) with API and token-free desktop-cache sources.
-Archive-only configs remain read-only; `dc_sync: true` makes live `manage.py capture discord` update the
-archive before capturing it.
-## Collection and authentication
+`dc_archive` keeps a protected data root, append-only ledger and `index/discord.sqlite`. The fetch step
+(`fetch.py`) reads Discord Desktop's HTTP cache; with `dc_sync: true`, `manage.py capture discord` runs it
+before capturing the archive.
 
-The configured source is `dc_source: "desktop"` or `"api"`. Desktop mode reads only Discord's HTTP cache,
-extracting embedded JSON and bounded gzip payloads; it does not read cookies, Local Storage or session tokens.
-`dc_desktop_path` defaults to `%APPDATA%/discord`. Cache coverage is partial: only locally retained messages
-can be imported. Unknown guilds retain a `cache_unknown` label rather than being classified as DMs.
-Cache eviction never produces tombstones, and older cached edits do not replace newer known edits.
-When a previously unknown guild is classified later, channel metadata updates while the historical partition
-directory remains fixed, preserving immutable source paths and manifest filename order.
+## Collection
 
-API mode uses a supplied bot/user token (`dc_token_type: "auto"|"bot"|"user"`), in a private token file named
-by `dc_token_file` under `<DATA_PARENT>`. In manual runs (`--auth-check`, `--capture`, `manage.py capture
-discord`), `DISCORD_BOT_TOKEN` / `DISCORD_TOKEN` take precedence over the file when they are set. The SYSTEM
-scheduled task sees no user variables, so with `dc_sync` on, `task_checks` (and `schedule install`) require an
-absolute `dc_token_file` under `<DATA_PARENT>` whose folder passes the data-root precheck, the file itself, and
-no machine-wide `DISCORD_BOT_TOKEN` or `DISCORD_TOKEN` (llm.md 6.2). In desktop mode, `dc_sync` needs an
-absolute, existing `dc_desktop_path`, because SYSTEM's `%APPDATA%` is the system profile's.
-The token is never printed or embedded in an archive. No token is extracted from Discord Desktop.
-`dc_channel_ids` restricts API collection to selected channels; an empty list discovers guild channels,
-active and joined archived threads, and user-visible DMs for user authentication. `dc_refresh_days` defaults
-to 7. Empty refreshes cannot prove mass deletion because loss of history permission can also return an empty
-array. Restricted message-content responses and failed channel fetches preserve the old cursor/partitions.
+The fetch step reads only Discord's HTTP cache under `dc_desktop_path` (default `%APPDATA%/discord`),
+extracting embedded JSON and bounded gzip payloads; it never reads cookies, Local Storage or session tokens, and
+needs no token. Coverage is partial: only locally retained messages can be imported. Unknown guilds keep a
+`cache_unknown` label rather than being classified as DMs. Cache eviction never produces tombstones, and older
+cached edits do not replace newer known edits. When a previously unknown guild is classified later, channel
+metadata updates while the historical partition directory stays fixed, preserving immutable source paths and
+manifest filename order. `dc_channel_ids` keeps only the channels it lists. With `dc_sync` on, `task_checks`
+needs an absolute, existing `dc_desktop_path`, because SYSTEM's `%APPDATA%` is the system profile's. Keys of
+the removed API source (`dc_source`, `dc_token_file`, `dc_token_type`, `dc_refresh_days`) are ignored.
 
 ```
 python -s -B -m discord.fetch --auth-check
 python -s -B -m discord.fetch --capture
-python -s -B manage.py capture discord
 ```
 
-The fetch step CLI prints counts/categories only; `--max-items N` bounds channel publication for a diagnostic
-run. `--capture` runs capture/index after collection, without collecting twice. Production configs and tokens
-remain outside the checkout. The DCE port covers the JSON fields used by this app's projection; it does not
-implement DCE HTML/text formats, media downloading, Markdown rewriting, or system-message fallback rendering.
+The fetch step prints counts only; `--max-items N` bounds channel publication. `--capture` runs capture/index
+after collection, without collecting twice. The DCE port covers the JSON fields this app's projection uses; it
+does not implement DCE HTML/text formats, media downloading, Markdown rewriting or system-message rendering.
 
 ## Archive contract, version 1
 
@@ -71,8 +58,8 @@ invalid message/user ids are skipped and counted as `pk_bad`.
 
 The fetch step publishes partitions, then users, then manifest, using temporary files plus atomic replace
 with retries for Windows shared readers. Partitions and their manifest references are retained permanently.
-New messages use `after=last_message_id`; an N-day refresh emits only changed projection signatures.
-Messages missing from a completed refresh window are retained as copies with `_removedAt` (ISO UTC).
+Only messages whose projection signature changed are published again. A message an older archive marked
+deleted carries `_removedAt` (ISO UTC).
 Do not remove known messages from an existing partition: missing keys in a successfully read container make
 the entire origin suspect (exit 3, no commit). A missing or invalid partition invalidates all observations
 for that channel (exit 75), including malformed embed URLs during projection; other healthy channels may
@@ -125,10 +112,7 @@ Scheduled capture runs as SYSTEM (times and limit:
 With `dc_sync` disabled, an external fetch step must finish before capture starts. With it enabled, collection
 runs inside the app's live read hook.
 
-## API implementation references
+## References
 
-The API client pins v10, pages backward from the newest message in batches of 100, then publishes messages in
-ascending snowflake order. Backward pagination covers bursts larger than 100 without relying on undocumented
-`after` ordering. It handles rate-limit headers/429 backoff and binds an API archive to the authenticated
-account digest. The archive format follows DiscordChatExporter (DCE) JSON, and the desktop-cache scan follows
-discrawl's MIT-licensed discorddesktop scanner (`desktop.py`).
+The archive format follows DiscordChatExporter (DCE) JSON, and the desktop-cache scan follows discrawl's
+MIT-licensed discorddesktop scanner.
